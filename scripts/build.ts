@@ -1,4 +1,4 @@
-// Bun bundler entry — produces dist/cli.mjs and dist/daemon.mjs.
+// Bun bundler entry — produces dist/{cli,daemon,control,configure}.js.
 // Reference: https://bun.sh/docs/bundler
 
 import { mkdir } from 'node:fs/promises';
@@ -12,6 +12,30 @@ await mkdir(outdir, { recursive: true });
 
 const minify = process.argv.includes('--minify');
 
+// Stub modules that ink/pino reference but Asterisk never executes (devtools
+// only fires when process.env.DEV === 'true'; pino-pretty is opt-in). Stubbing
+// at bundle time avoids the runtime "Cannot find package" errors that come
+// from leaving them external when the package isn't installed.
+const stubPlugin: import('bun').BunPlugin = {
+  name: 'stub-optional-deps',
+  setup(build) {
+    const stubs: Record<string, string> = {
+      'react-devtools-core': 'export default { connectToDevTools: () => {} };',
+      'pino-pretty':
+        'export default function pinoPretty() { throw new Error("pino-pretty is not bundled in Asterisk; install it manually if you need pretty logs"); }',
+    };
+    const filter = new RegExp(`^(${Object.keys(stubs).join('|')})$`);
+    build.onResolve({ filter }, (args) => ({
+      path: args.path,
+      namespace: 'asterisk-stub',
+    }));
+    build.onLoad({ filter: /.*/, namespace: 'asterisk-stub' }, (args) => ({
+      contents: stubs[args.path] ?? 'export default {};',
+      loader: 'js',
+    }));
+  },
+};
+
 const result = await Bun.build({
   entrypoints: [
     resolve(root, 'src/entrypoints/cli.tsx'),
@@ -24,14 +48,19 @@ const result = await Bun.build({
   format: 'esm',
   minify,
   sourcemap: minify ? 'none' : 'external',
+  // Force the production cjs bundles for react / react-reconciler. The dev
+  // bundles touch internals (ReactSharedInternals.ReactCurrentOwner) that
+  // were removed in React 19, so loading them under React 19 throws at
+  // module init.
+  define: {
+    'process.env.NODE_ENV': '"production"',
+  },
+  plugins: [stubPlugin],
   external: [
-    // Native deps stay external so Bun resolves them at runtime.
+    // Native deps stay external so Bun resolves them at runtime; Asterisk's
+    // installer ships them via `bun install` so they're always present.
     'whatsapp-web.js',
     'better-sqlite3',
-    // Ink optionally imports devtools when DEV is enabled — skip bundling.
-    'react-devtools-core',
-    // Pino's transports are loaded dynamically; let runtime resolve them.
-    'pino-pretty',
   ],
 });
 
