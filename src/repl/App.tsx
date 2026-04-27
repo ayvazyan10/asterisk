@@ -11,6 +11,7 @@ import { lookupCommand } from '../commands/registry.ts';
 import { loadConfig } from '../config/load.ts';
 import type { McpManager } from '../mcp/manager.ts';
 import { loadRules } from '../rules/loader.ts';
+import { loadSouls } from '../soul/loader.ts';
 import {
   type AskQuestion,
   answerAskQuestion,
@@ -261,10 +262,12 @@ export function App({ initialProvider, state, mcp }: Props) {
 
       try {
         const rules = loadRules();
+        const souls = loadSouls();
         const hooks = loadConfig().config.hooks;
         const turn = await runAgentTurn(provider, state, text, {
           session: { id: 'repl', scope: 'repl' },
           rules,
+          souls,
           hooks,
           onAssistantText: (t) => {
             setWorkingStatus('writing response');

@@ -11,6 +11,7 @@ import { createMcpManager } from '../mcp/manager.ts';
 import { createAnthropicProvider } from '../providers/anthropic.ts';
 import { createOllamaProvider } from '../providers/ollama.ts';
 import { loadRules } from '../rules/loader.ts';
+import { loadSouls } from '../soul/loader.ts';
 import { closeBrowser } from '../tools/browser/session.ts';
 import { setExtraTools } from '../tools/registry.ts';
 import type { Provider } from '../types/messages.ts';
@@ -89,6 +90,7 @@ manager
     }
 
     const rules = loadRules();
+    const souls = loadSouls();
     const hooks = loadConfig().config.hooks;
     const attachments: Array<{ kind: string; path: string; caption?: string }> = [];
     const turn = await runAgentTurn(provider, state, msg.text, {
@@ -98,6 +100,7 @@ manager
       // transports that we don't need to disambiguate here.
       session: { id: sessionId, scope: 'unknown' },
       rules,
+      souls,
       hooks,
       onToolUse: (name, input) => log.debug({ tool: name, input }, 'tool_use'),
       onToolResult: (name, _output, isError) =>
@@ -147,10 +150,12 @@ const scheduler = createScheduler({
   dispatch: async (prompt, source) => {
     const sched = createAgentState();
     const rules = loadRules();
+    const souls = loadSouls();
     const hooks = loadConfig().config.hooks;
     const result = await runAgentTurn(provider, sched, prompt, {
       session: { id: `scheduled:${source}`, scope: 'scheduled' },
       rules,
+      souls,
       hooks,
       onToolUse: (name) => log.debug({ tool: name }, 'scheduled tool_use'),
     });

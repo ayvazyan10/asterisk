@@ -13,6 +13,7 @@ import { createAnthropicProvider } from '../providers/anthropic.ts';
 import { createOllamaProvider } from '../providers/ollama.ts';
 import { loadRules } from '../rules/loader.ts';
 import { loadSkills, type Skill } from '../skills/loader.ts';
+import { DEFAULT_SOUL_TEMPLATE, loadSouls } from '../soul/loader.ts';
 import { listTools, setExtraTools } from '../tools/registry.ts';
 import type { Provider } from '../types/messages.ts';
 import { asteriskPaths } from '../daemon/paths.ts';
@@ -383,6 +384,42 @@ export const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: '/soul',
+    description: 'Show or initialise the SOUL.md persona file',
+    usage: '/soul [show|init|where]',
+    async execute(_ctx, args) {
+      const verb = args.trim().toLowerCase();
+      if (verb === 'where' || verb === 'paths') return formatSoulPaths();
+      if (verb === 'init') return await soulInit();
+      // default + 'show': render what's loaded.
+      const souls = loadSouls();
+      if (souls.length === 0) {
+        return [
+          'No SOUL.md loaded.',
+          '',
+          'Create one to give the agent a persona + tell it about you:',
+          '  ~/.asterisk/SOUL.md            (user-global, applies everywhere)',
+          `  ${process.cwd()}/.asterisk/SOUL.md   (project-local)`,
+          `  ${process.cwd()}/SOUL.md       (project root marker)`,
+          '',
+          'Run /soul init to drop a starter template at ~/.asterisk/SOUL.md.',
+        ].join('\n');
+      }
+      const lines: string[] = [`Soul · ${souls.length} loaded`];
+      for (const s of souls) {
+        lines.push(`  ${s.scope === 'user' ? 'user   ' : 'project'}  ${s.path}  (${s.content.length} chars)`);
+      }
+      lines.push('');
+      lines.push('--- content ---');
+      for (const s of souls) {
+        lines.push('');
+        lines.push(`# ${s.scope}: ${s.path}`);
+        lines.push(s.content);
+      }
+      return lines.join('\n');
+    },
+  },
+  {
     name: '/rules',
     description: 'List the rules currently loaded into the system prompt',
     execute() {
@@ -538,6 +575,30 @@ function hooksActionPicker(_ctx: CommandContext): ListSpec {
     },
     onCancel: () => null,
   };
+}
+
+function formatSoulPaths(): string {
+  const userRoot = process.env['ASTERISK_HOME'] ?? `${process.env['HOME'] ?? '~'}/.asterisk`;
+  return [
+    'SOUL.md candidates (in resolution order):',
+    `  user   ${userRoot}/SOUL.md`,
+    `  project ${process.cwd()}/.asterisk/SOUL.md`,
+    `  project ${process.cwd()}/SOUL.md`,
+    '',
+    'User soul applies everywhere; project soul layers on top in repos.',
+  ].join('\n');
+}
+
+async function soulInit(): Promise<string> {
+  const userRoot = process.env['ASTERISK_HOME'] ?? `${process.env['HOME']}/.asterisk`;
+  const path = `${userRoot}/SOUL.md`;
+  const { existsSync, mkdirSync, writeFileSync } = await import('node:fs');
+  if (existsSync(path)) {
+    return `SOUL.md already exists at ${path}. Edit it with your editor; /soul shows the loaded content.`;
+  }
+  mkdirSync(userRoot, { recursive: true });
+  writeFileSync(path, DEFAULT_SOUL_TEMPLATE, { mode: 0o644 });
+  return `✓ wrote starter SOUL.md to ${path}\nEdit it with your editor — applies on the next turn.`;
 }
 
 function formatHookList(): string {

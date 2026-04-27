@@ -9,6 +9,7 @@
 import type { AgentState } from '../agent/loop.ts';
 import { currentSessionId } from '../agent/context.ts';
 import { loadConfig } from '../config/load.ts';
+import { loadSouls } from '../soul/loader.ts';
 import { _allTasks, clearTasksForCurrentSession } from '../tools/tasks.ts';
 import { activeWorktree } from '../tools/worktree.ts';
 import { isPlanMode, setPlanMode } from '../tools/planmode.ts';
@@ -28,6 +29,7 @@ export const BOT_COMMAND_LIST: BotCommandSpec[] = [
   { command: 'reset', description: 'Clear history + tasks + plan mode + worktree' },
   { command: 'tasks', description: 'List your tasks' },
   { command: 'plan', description: 'Toggle plan mode (read-only research mode)' },
+  { command: 'soul', description: 'Show the SOUL.md persona currently in effect' },
 ];
 
 const HELP_TEXT = `👋 I'm Asterisk, a personal AI assistant. Just message me anything — I can read files, run shell commands, browse the web, take screenshots, schedule tasks, and more.
@@ -95,6 +97,9 @@ export function tryHandleBotCommand(
           : '✓ Plan Mode OFF · all tools re-enabled.',
       };
 
+    case 'soul':
+      return { text: renderSoul() };
+
     default:
       // Unknown slash command — fall through. The agent might still want to
       // do something with it (e.g. user types "/etc/hosts" thinking of a path).
@@ -135,4 +140,23 @@ function renderTasks(): string {
     lines.push(`${icon(t.status)} #${t.id}  ${t.title}${t.description ? ` — ${t.description}` : ''}`);
   }
   return lines.join('\n');
+}
+
+function renderSoul(): string {
+  const souls = loadSouls();
+  if (souls.length === 0) {
+    return [
+      'No SOUL.md loaded — I have only my default behaviour.',
+      'The operator can drop one at ~/.asterisk/SOUL.md to give me a persona.',
+    ].join('\n');
+  }
+  const lines: string[] = ['Soul currently in effect:', ''];
+  for (const s of souls) {
+    lines.push(`# ${s.scope} · ${s.path}`);
+    const body =
+      s.content.length > 1500 ? `${s.content.slice(0, 1500)}\n…(truncated)` : s.content;
+    lines.push(body);
+    lines.push('');
+  }
+  return lines.join('\n').trim();
 }

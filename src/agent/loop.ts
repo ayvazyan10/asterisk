@@ -18,6 +18,7 @@ import type { HookConfig } from '../config/schema.ts';
 import { fireHooks, type HookResult } from '../hooks/runner.ts';
 import { ProviderError, isAbort, isRetryable, retryAfterMs } from '../providers/errors.ts';
 import { rulesToPromptSection, type Rule } from '../rules/loader.ts';
+import { soulsToPromptSection, type Soul } from '../soul/loader.ts';
 import { getTool, toolDefinitions } from '../tools/registry.ts';
 import { retry } from '../utils/retry.ts';
 import { type AgentSession, runWithSession } from './context.ts';
@@ -81,6 +82,9 @@ export interface RunOptions {
   toolTimeoutMs?: number;
   signal?: AbortSignal;
   rules?: readonly Rule[];
+  /** SOUL.md content — persona + user-context block prepended to the
+   *  system prompt so the agent knows who it is and who it's talking to. */
+  souls?: readonly Soul[];
   hooks?: readonly HookConfig[];
   /** Session that owns this turn's tool state. Tasks, plan mode, worktrees,
    *  browser pages, and monitors are keyed by session.id so Telegram /
@@ -125,11 +129,13 @@ async function runAgentTurnInner(
   const signal = opts.signal;
   const hooks = opts.hooks ?? [];
   const rules = opts.rules ?? [];
+  const souls = opts.souls ?? [];
 
-  const rulesPromptSection = rulesToPromptSection(rules);
-  const systemPrompt = rulesPromptSection
-    ? `${SYSTEM_PROMPT}\n\n${rulesPromptSection}`
-    : SYSTEM_PROMPT;
+  const soulSection = soulsToPromptSection(souls);
+  const rulesSection = rulesToPromptSection(rules);
+  const systemPrompt = [SYSTEM_PROMPT, soulSection, rulesSection]
+    .filter((s) => s && s.length > 0)
+    .join('\n\n');
 
   state.history.push({
     role: 'user',

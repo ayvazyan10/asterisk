@@ -72,6 +72,7 @@ describe('command registry', () => {
         '/rules',
         '/skill',
         '/skills',
+        '/soul',
         '/status',
         '/tools',
       ].sort(),
