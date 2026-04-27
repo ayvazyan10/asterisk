@@ -17,12 +17,14 @@ import {
   type StreamEvent,
 } from '../adapter.ts';
 import { BOT_COMMAND_LIST } from '../commands.ts';
+import { balanceOpenTags, escapeHtml, markdownToTelegramHtml } from './format.ts';
 
 const MAX_TELEGRAM_CHARS = 4096;
 const PLACEHOLDER = '◐ working…';
 const STREAM_TYPING_TAIL = ' ◐';
 
 export type TelegramStreamMode = 'final' | 'status' | 'stream';
+export type TelegramParseMode = 'plain' | 'html';
 
 export interface TelegramAdapterOptions {
   token: string;
@@ -31,6 +33,8 @@ export interface TelegramAdapterOptions {
   streamMode?: TelegramStreamMode;
   /** Minimum gap between editMessageText calls per placeholder. Default 1000ms. */
   streamThrottleMs?: number;
+  /** plain | html — render markdown emphasis / code / links / etc. */
+  parseMode?: TelegramParseMode;
 }
 
 export function createTelegramAdapter(opts: TelegramAdapterOptions): BotAdapter {
@@ -40,6 +44,7 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): BotAdapter 
   const allowed = new Set(opts.allowedUserIds);
   const streamMode: TelegramStreamMode = opts.streamMode ?? 'final';
   const throttleMs = Math.max(opts.streamThrottleMs ?? 1000, 250);
+  const parseMode: TelegramParseMode = opts.parseMode ?? 'html';
   const bot = new Bot(opts.token);
   let started = false;
 
@@ -62,7 +67,7 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): BotAdapter 
           timestamp: Date.now(),
         };
         try {
-          await handleTurn(ctx, msg, handler, streamMode, throttleMs);
+          await handleTurn(ctx, msg, handler, streamMode, throttleMs, parseMode);
         } catch (e) {
           await ctx.reply(`asterisk error: ${(e as Error).message}`);
         }
@@ -102,10 +107,11 @@ async function handleTurn(
   handler: Handler,
   mode: TelegramStreamMode,
   throttleMs: number,
+  parseMode: TelegramParseMode,
 ): Promise<void> {
   if (mode === 'final') {
     const result = await handler(msg);
-    await deliverFinal(ctx, asOutgoingMessage(result));
+    await deliverFinal(ctx, asOutgoingMessage(result), parseMode);
     return;
   }
 
@@ -114,12 +120,18 @@ async function handleTurn(
   if (chatId === undefined) {
     // No chat to attach edits to — degrade to final mode.
     const result = await handler(msg);
-    await deliverFinal(ctx, asOutgoingMessage(result));
+    await deliverFinal(ctx, asOutgoingMessage(result), parseMode);
     return;
   }
 
   const placeholder = await ctx.reply(PLACEHOLDER);
-  const writer = createPlaceholderWriter(ctx, chatId, placeholder.message_id, throttleMs);
+  const writer = createPlaceholderWriter(
+    ctx,
+    chatId,
+    placeholder.message_id,
+    throttleMs,
+    parseMode,
+  );
 
   let assistantText = '';
   let lastStatus = '';
@@ -128,20 +140,26 @@ async function handleTurn(
     if (mode === 'status') {
       if (e.type === 'status') {
         lastStatus = e.text;
-        writer.schedule(`◐ ${truncate(lastStatus, 200)}`);
+        const txt = truncate(lastStatus, 200);
+        writer.schedule(
+          parseMode === 'html' ? `◐ <i>${escapeHtml(txt)}</i>` : `◐ ${txt}`,
+        );
       }
       // ignore 'text' events in status mode — final reply replaces placeholder
     } else {
       // stream mode
       if (e.type === 'text') {
         assistantText += e.text;
-        writer.schedule(streamView(assistantText));
+        writer.schedule(streamView(assistantText, parseMode));
       } else if (e.type === 'status') {
-        // In stream mode we still want to surface an active tool call as
-        // a tail line so the user sees progress between text chunks.
+        const tail = truncate(e.text, 120);
         const view = assistantText
-          ? `${streamView(assistantText)}\n\n_${truncate(e.text, 120)}_`
-          : `◐ ${truncate(e.text, 200)}`;
+          ? `${streamView(assistantText, parseMode)}\n\n${
+              parseMode === 'html' ? `<i>${escapeHtml(tail)}</i>` : `_${tail}_`
+            }`
+          : parseMode === 'html'
+            ? `◐ <i>${escapeHtml(truncate(e.text, 200))}</i>`
+            : `◐ ${truncate(e.text, 200)}`;
         writer.schedule(view);
       }
     }
@@ -153,15 +171,16 @@ async function handleTurn(
   // Final delivery: replace placeholder with the canonical final text.
   await writer.flush();
   if (out.text) {
-    const chunks = chunkText(out.text, MAX_TELEGRAM_CHARS);
+    const rendered = parseMode === 'html' ? markdownToTelegramHtml(out.text) : out.text;
+    const chunks = chunkText(rendered, MAX_TELEGRAM_CHARS);
     const head = chunks[0] ?? '(empty)';
-    await safeEdit(ctx, chatId, placeholder.message_id, head);
+    await safeEdit(ctx, chatId, placeholder.message_id, head, parseMode);
     for (let i = 1; i < chunks.length; i++) {
       const c = chunks[i];
-      if (c) await ctx.reply(c);
+      if (c) await replyText(ctx, c, parseMode);
     }
   } else {
-    await safeEdit(ctx, chatId, placeholder.message_id, '(no reply)');
+    await safeEdit(ctx, chatId, placeholder.message_id, '(no reply)', parseMode);
   }
 
   for (const a of out.attachments ?? []) {
@@ -173,10 +192,15 @@ async function handleTurn(
   }
 }
 
-async function deliverFinal(ctx: Context, out: ReturnType<typeof asOutgoingMessage>): Promise<void> {
+async function deliverFinal(
+  ctx: Context,
+  out: ReturnType<typeof asOutgoingMessage>,
+  parseMode: TelegramParseMode,
+): Promise<void> {
   if (out.text) {
-    for (const chunk of chunkText(out.text, MAX_TELEGRAM_CHARS)) {
-      await ctx.reply(chunk);
+    const rendered = parseMode === 'html' ? markdownToTelegramHtml(out.text) : out.text;
+    for (const chunk of chunkText(rendered, MAX_TELEGRAM_CHARS)) {
+      await replyText(ctx, chunk, parseMode);
     }
   }
   for (const a of out.attachments ?? []) {
@@ -186,6 +210,33 @@ async function deliverFinal(ctx: Context, out: ReturnType<typeof asOutgoingMessa
       await ctx.reply(`(failed to send ${a.kind} ${a.path}: ${(sendErr as Error).message})`);
     }
   }
+}
+
+async function replyText(ctx: Context, text: string, parseMode: TelegramParseMode): Promise<void> {
+  if (parseMode === 'html') {
+    try {
+      await ctx.reply(text, { parse_mode: 'HTML' });
+      return;
+    } catch (e) {
+      // Telegram rejected the markup (e.g. an unbalanced tag we missed).
+      // Fall back to plain text so the user still gets the reply.
+      if (e instanceof GrammyError) {
+        await ctx.reply(stripTags(text));
+        return;
+      }
+      throw e;
+    }
+  }
+  await ctx.reply(text);
+}
+
+function stripTags(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&');
 }
 
 interface PlaceholderWriter {
@@ -200,6 +251,7 @@ function createPlaceholderWriter(
   chatId: number,
   messageId: number,
   throttleMs: number,
+  parseMode: TelegramParseMode,
 ): PlaceholderWriter {
   let pending: string | null = null;
   let lastSent = '';
@@ -211,7 +263,7 @@ function createPlaceholderWriter(
     if (text === lastSent) return;
     lastSent = text;
     lastEditAt = Date.now();
-    await safeEdit(ctx, chatId, messageId, text);
+    await safeEdit(ctx, chatId, messageId, text, parseMode);
   };
 
   const drain = (): void => {
@@ -252,9 +304,16 @@ function createPlaceholderWriter(
   };
 }
 
-function streamView(text: string): string {
+function streamView(text: string, parseMode: TelegramParseMode): string {
   // Show the streaming text with a small "still typing" tail so the user
-  // sees the message is live rather than thinking the bot stalled.
+  // sees the message is live rather than thinking the bot stalled. In HTML
+  // mode we render the markdown then re-balance any tag we may have left
+  // half-open by truncating mid-formatter — Telegram rejects unbalanced
+  // edits otherwise.
+  if (parseMode === 'html') {
+    const rendered = markdownToTelegramHtml(text);
+    return balanceOpenTags(rendered) + STREAM_TYPING_TAIL;
+  }
   return `${text}${STREAM_TYPING_TAIL}`;
 }
 
@@ -263,15 +322,28 @@ async function safeEdit(
   chatId: number,
   messageId: number,
   text: string,
+  parseMode: TelegramParseMode,
 ): Promise<void> {
+  const opts = parseMode === 'html' ? { parse_mode: 'HTML' as const } : undefined;
   try {
-    await ctx.api.editMessageText(chatId, messageId, text);
+    if (opts) {
+      await ctx.api.editMessageText(chatId, messageId, text, opts);
+    } else {
+      await ctx.api.editMessageText(chatId, messageId, text);
+    }
   } catch (e) {
-    // "message is not modified" is benign — happens when we coalesce to the
-    // same content. Anything else we swallow but the original reply still
-    // goes through, so the user isn't blocked.
-    if (e instanceof GrammyError && /not modified|MESSAGE_NOT_MODIFIED/i.test(e.description)) {
-      return;
+    if (e instanceof GrammyError) {
+      // Benign — coalesced to identical content.
+      if (/not modified|MESSAGE_NOT_MODIFIED/i.test(e.description)) return;
+      // Markup rejected — retry as plain text so the user still sees an update.
+      if (parseMode === 'html' && /can't parse|unsupported start tag|entity/i.test(e.description)) {
+        try {
+          await ctx.api.editMessageText(chatId, messageId, stripTags(text));
+        } catch {
+          // give up silently
+        }
+        return;
+      }
     }
     // Don't propagate — failed edits shouldn't break the turn.
   }

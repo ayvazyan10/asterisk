@@ -25,11 +25,21 @@ const AnthropicSchema = z.object({
 export const TelegramStreamMode = z.enum(['final', 'status', 'stream']);
 export type TelegramStreamModeT = z.infer<typeof TelegramStreamMode>;
 
+// Parse mode: how the agent's reply text is rendered in Telegram.
+//   plain — exactly what the agent emitted, no formatting (markdown
+//           markers visible as literal text — *not* what most users want)
+//   html  — markdown converted to Telegram HTML so **bold**, *italic*,
+//           `code`, fenced code blocks, links, etc. render properly.
+//           Reference: https://core.telegram.org/bots/api#html-style
+export const TelegramParseMode = z.enum(['plain', 'html']);
+export type TelegramParseModeT = z.infer<typeof TelegramParseMode>;
+
 const TelegramSchema = z.object({
   enabled: z.boolean().default(false),
   allowedUserIds: z.array(z.number().int().positive()).default([]),
   streamMode: TelegramStreamMode.default('final'),
   streamThrottleMs: z.number().int().min(250).max(10000).default(1000),
+  parseMode: TelegramParseMode.default('html'),
 });
 
 const WhatsappTransport = z.enum(['meta-cloud', 'web-js']);

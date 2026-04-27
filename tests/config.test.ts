@@ -48,6 +48,7 @@ describe('config schema and persistence', () => {
     expect(config.bots.telegram.enabled).toBe(false);
     expect(config.bots.telegram.streamMode).toBe('final');
     expect(config.bots.telegram.streamThrottleMs).toBe(1000);
+    expect(config.bots.telegram.parseMode).toBe('html');
     expect(config.bots.whatsapp.transport).toBe('meta-cloud');
     expect(secrets).toEqual({});
   });

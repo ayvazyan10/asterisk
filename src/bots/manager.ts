@@ -27,6 +27,7 @@ export function createBotManager(loaded: LoadedConfig): BotManager {
         allowedUserIds: tg.allowedUserIds,
         streamMode: tg.streamMode,
         streamThrottleMs: tg.streamThrottleMs,
+        parseMode: tg.parseMode,
       }),
     );
   }

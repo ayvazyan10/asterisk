@@ -117,6 +117,26 @@ const STEPS: Step[] = [
     },
   },
   {
+    key: 'telegram.parseMode',
+    prompt:
+      'Telegram text formatting — "html" renders **bold**, *italic*, `code`, links; "plain" leaves markdown markers visible',
+    initial: (s) => s.config.bots.telegram.parseMode,
+    apply: (s, v) => {
+      const raw = v.trim().toLowerCase();
+      const mode = raw === 'plain' ? 'plain' : 'html';
+      return {
+        ...s,
+        config: {
+          ...s.config,
+          bots: {
+            ...s.config.bots,
+            telegram: { ...s.config.bots.telegram, parseMode: mode },
+          },
+        },
+      };
+    },
+  },
+  {
     key: 'whatsapp.enabled',
     prompt: 'Enable WhatsApp bot? (y/n)',
     initial: (s) => (s.config.bots.whatsapp.enabled ? 'y' : 'n'),

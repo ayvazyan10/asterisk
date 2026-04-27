@@ -1304,6 +1304,16 @@ const CONFIG_SECTIONS: ConfigSection[] = [
             label: 'Edit throttle (ms, 250–10000) · only used by status/stream',
             defaultValue: String(cfg.config.bots.telegram.streamThrottleMs),
           },
+          {
+            kind: 'select',
+            key: 'parseMode',
+            label: 'Text formatting',
+            options: [
+              { value: 'html', label: 'html — render **bold**, *italic*, `code`, links (recommended)' },
+              { value: 'plain', label: 'plain — show markdown markers as literal text' },
+            ],
+            defaultValue: cfg.config.bots.telegram.parseMode,
+          },
         ],
         onSubmit: (v) => {
           const next = loadConfig();
@@ -1319,6 +1329,8 @@ const CONFIG_SECTIONS: ConfigSection[] = [
           if (Number.isFinite(throttle) && throttle >= 250 && throttle <= 10000) {
             next.config.bots.telegram.streamThrottleMs = throttle;
           }
+          const rawParse = (v['parseMode'] ?? 'html').trim().toLowerCase();
+          next.config.bots.telegram.parseMode = rawParse === 'plain' ? 'plain' : 'html';
           saveConfig(next.config);
           const token = (v['token'] ?? '').trim();
           if (token) {

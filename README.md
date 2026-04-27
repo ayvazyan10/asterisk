@@ -242,6 +242,18 @@ Telegram's Bot API rate-limits edits to ~1/sec/chat; `streamThrottleMs`
 WhatsApp transports don't expose `editMessageText`, so this knob is
 Telegram-only — WhatsApp always uses the equivalent of `final` mode.
 
+**Text formatting** (`bots.telegram.parseMode`):
+
+- `html` *(default)* — the agent's markdown is converted to Telegram HTML
+  on the way out, so `**bold**`, `*italic*`, `` `code` ``, fenced code
+  blocks, `[links](https://…)`, headings, bullets and `> quotes` all
+  render as the user expects. Mid-stream tag balancing keeps live edits
+  valid; if Telegram still rejects the markup we silently fall back to
+  plain text rather than dropping the reply.
+- `plain` — send exactly what the agent emits. Use this if you want the
+  raw markdown markers visible (debugging, or if your persona instructs
+  the model to avoid markup entirely).
+
 **Per-user isolation.** Each chat — Telegram chatId, WhatsApp number, or
 the local REPL — gets its own task list, plan-mode flag, browser context,
 monitored processes, and SOUL.md persona. Two users sharing a daemon
@@ -324,7 +336,8 @@ the REPL and each per-chat conversation in the daemon.
       "enabled": false,
       "allowedUserIds": [],
       "streamMode": "final",                  // "final" | "status" | "stream"
-      "streamThrottleMs": 1000                // min gap between editMessageText calls
+      "streamThrottleMs": 1000,               // min gap between editMessageText calls
+      "parseMode": "html"                     // "html" renders markdown · "plain" leaves it literal
     },
     "whatsapp": {
       "enabled": false,
