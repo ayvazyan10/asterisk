@@ -324,6 +324,11 @@ export function App({ initialProvider, state, mcp }: Props) {
       const bump = (): void => {
         lastSignalAt = Date.now();
       };
+      // Did any assistant text actually reach the transcript? Used to
+      // decide whether to fall back to turn.finalText below — when the
+      // model emits only tool calls (no closing summary), the agent loop
+      // synthesises a stub. Without this fallback the REPL would drop it.
+      let renderedAnyText = false;
 
       try {
         const rules = loadRules();
@@ -346,6 +351,7 @@ export function App({ initialProvider, state, mcp }: Props) {
           },
           onAssistantDelta: (delta: string) => {
             bump();
+            renderedAnyText = true;
             streamingText += delta;
             streamingChars += delta.length;
             if (streamingEntryId === null) {
@@ -371,6 +377,7 @@ export function App({ initialProvider, state, mcp }: Props) {
               streamingText = '';
               streamingChars = 0;
               thinkingChars = 0;
+              renderedAnyText = true;
               return;
             }
             thinkingChars = 0;
@@ -378,6 +385,7 @@ export function App({ initialProvider, state, mcp }: Props) {
             // append-once behaviour so the user still sees the reply.
             setWorkingStatus('writing response');
             append('assistant', t);
+            renderedAnyText = true;
           },
           onToolUse: (name, toolInput) => {
             bump();
@@ -436,6 +444,16 @@ export function App({ initialProvider, state, mcp }: Props) {
             append(result.exitCode === 0 ? 'tool-result' : 'error', parts.join(' · '));
           },
         });
+        // Fallback: if the model finished a successful turn but no
+        // assistant text reached the transcript (e.g. it emitted only
+        // tool calls and qwen3.5-style models often skip the closing
+        // summary), surface turn.finalText — which the agent loop
+        // populates with either the last non-empty text or a synthesised
+        // "(done — ran 3× Edit, …)" stub. Without this the REPL drops
+        // the loop's fallback on the floor.
+        if (!renderedAnyText && turn.reason === 'end-turn' && turn.finalText.trim()) {
+          append('assistant', turn.finalText.trim());
+        }
         if (turn.reason === 'max-turns') {
           append('error', 'reached the per-turn safety cap (12 turns); stopping');
         } else if (turn.reason === 'context-overflow') {
