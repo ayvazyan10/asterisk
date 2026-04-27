@@ -311,6 +311,12 @@ export const browserWaitTool: Tool = {
     const selector = typeof input['selector'] === 'string' ? input['selector'] : '';
     const networkIdle = input['networkIdle'] === true;
     const timeoutMs = typeof input['timeoutMs'] === 'number' ? input['timeoutMs'] : 0;
+    // Validate before touching the browser — launching Chromium just to fail
+    // with a usage error wastes time and confuses CI environments where the
+    // browser isn't installed.
+    if (!selector && !networkIdle && timeoutMs <= 0) {
+      return err('specify selector, networkIdle, or timeoutMs');
+    }
     try {
       const page = await getPage();
       if (selector) {
@@ -321,11 +327,9 @@ export const browserWaitTool: Tool = {
         await page.waitForLoadState('networkidle', { timeout: DEFAULT_TIMEOUT_MS });
         return ok('network idle');
       }
-      if (timeoutMs > 0) {
-        await new Promise((r) => setTimeout(r, Math.min(timeoutMs, 60_000)));
-        return ok(`waited ${timeoutMs}ms`);
-      }
-      return err('specify selector, networkIdle, or timeoutMs');
+      // timeoutMs > 0 — fixed delay.
+      await new Promise((r) => setTimeout(r, Math.min(timeoutMs, 60_000)));
+      return ok(`waited ${timeoutMs}ms`);
     } catch (e) {
       return err(`BrowserWait failed: ${(e as Error).message}`);
     }
