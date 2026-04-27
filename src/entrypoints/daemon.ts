@@ -1,23 +1,31 @@
-// Daemon entrypoint — Phase 2 lands real lifecycle here. For now the body just
-// logs a heartbeat so the build target exists and the bin dispatcher has
-// something to bundle.
+// Daemon entrypoint — long-running process body.
+// Phase 4 will load bot adapters here. For now it just heartbeats so we can
+// exercise lifecycle and log-tailing.
 
-const HEARTBEAT_MS = 60_000;
+import { createDaemonLogger } from '../daemon/logger.ts';
+import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
 
-function log(line: string) {
-  // Pino integration is added in Phase 2; plain stderr is fine for a stub.
-  process.stderr.write(`[asterisk-daemon ${new Date().toISOString()}] ${line}\n`);
-}
+const paths = asteriskPaths();
+ensurePaths(paths);
+const log = createDaemonLogger(paths.daemonLog);
 
-log('starting (stub — Phase 2 wires real lifecycle)');
+log.info({ pid: process.pid }, 'asterisk daemon starting');
 
-const interval = setInterval(() => log('heartbeat'), HEARTBEAT_MS);
+const HEARTBEAT_MS = Number(process.env['ASTERISK_HEARTBEAT_MS'] ?? 60_000);
+const interval = setInterval(() => log.info('heartbeat'), HEARTBEAT_MS);
+interval.unref();
+// Keep the process alive even if interval is unrefd (no other handles yet).
+const keepAlive = setInterval(() => {}, 1 << 30);
 
-function shutdown(signal: string) {
-  log(`received ${signal}, exiting`);
+function shutdown(signal: string): void {
+  log.info({ signal }, 'shutdown');
   clearInterval(interval);
-  process.exit(0);
+  clearInterval(keepAlive);
+  // Give pino a moment to flush.
+  setTimeout(() => process.exit(0), 50);
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('uncaughtException', (e) => log.error({ err: e }, 'uncaught'));
+process.on('unhandledRejection', (e) => log.error({ err: e }, 'unhandled rejection'));

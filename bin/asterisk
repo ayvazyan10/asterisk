@@ -8,8 +8,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_CLI="$ROOT/dist/cli.js"
 DIST_DAEMON="$ROOT/dist/daemon.js"
+DIST_CONTROL="$ROOT/dist/control.js"
+DIST_CONFIGURE="$ROOT/dist/configure.js"
 SRC_CLI="$ROOT/src/entrypoints/cli.tsx"
-SRC_DAEMON="$ROOT/src/entrypoints/daemon.ts"
+SRC_CONTROL="$ROOT/src/entrypoints/control.ts"
+SRC_CONFIGURE="$ROOT/src/entrypoints/configure.tsx"
 
 # Sensible defaults — local Ollama, telemetry off.
 export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
@@ -22,31 +25,35 @@ cmd="${1:-repl}"
 run_cli() {
   if [[ -f "$DIST_CLI" ]]; then
     exec bun "$DIST_CLI" "$@"
-  else
-    exec bun "$SRC_CLI" "$@"
   fi
+  exec bun "$SRC_CLI" "$@"
 }
 
-run_daemon_inline() {
-  if [[ -f "$DIST_DAEMON" ]]; then
-    exec bun "$DIST_DAEMON" "$@"
-  else
-    exec bun "$SRC_DAEMON" "$@"
+run_control() {
+  local sub="$1"
+  shift || true
+  if [[ -f "$DIST_CONTROL" ]]; then
+    exec bun "$DIST_CONTROL" "$sub" "$@"
   fi
+  exec bun "$SRC_CONTROL" "$sub" "$@"
+}
+
+run_configure() {
+  if [[ -f "$DIST_CONFIGURE" ]]; then
+    exec bun "$DIST_CONFIGURE" "$@"
+  fi
+  exec bun "$SRC_CONFIGURE" "$@"
 }
 
 case "$cmd" in
   repl|"")
     run_cli "$@"
     ;;
-  start|stop|restart|status|logs|configure)
-    # Phase 2/3 land these subcommands. For now stub politely.
-    if [[ "$cmd" == "configure" ]]; then
-      echo "asterisk configure — not yet implemented (Phase 3)"
-      exit 1
-    fi
-    echo "asterisk $cmd — not yet implemented (Phase 2)"
-    exit 1
+  start|stop|restart|status|logs)
+    run_control "$cmd" "$@"
+    ;;
+  configure)
+    run_configure "$@"
     ;;
   --help|-h|help)
     cat <<'USAGE'
@@ -54,18 +61,19 @@ asterisk — local-first AI agent CLI
 
 Usage:
   asterisk                Start the interactive REPL
-  asterisk start          Start the daemon (Phase 2)
-  asterisk stop           Stop the daemon (Phase 2)
-  asterisk restart        Restart the daemon (Phase 2)
-  asterisk status         Show daemon status (Phase 2)
-  asterisk logs           Tail daemon logs (Phase 2)
-  asterisk configure      Interactive config wizard (Phase 3)
+  asterisk start          Start the daemon
+  asterisk stop           Stop the daemon
+  asterisk restart        Restart the daemon
+  asterisk status         Show daemon status
+  asterisk logs [N]       Tail last N daemon log lines (default 50)
+  asterisk configure      Interactive config wizard
 
 Environment:
   OLLAMA_BASE_URL         Ollama HTTP base URL (default http://127.0.0.1:11434)
   OLLAMA_MODEL            Ollama model name (default qwen3.5:9b-q8-max)
   ASTERISK_PROVIDER       Force provider: ollama | anthropic
   ANTHROPIC_API_KEY       Required for Anthropic provider
+  ASTERISK_HOME           Override config root (default ~/.asterisk)
 USAGE
     ;;
   *)

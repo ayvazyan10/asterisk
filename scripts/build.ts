@@ -2,9 +2,10 @@
 // Reference: https://bun.sh/docs/bundler
 
 import { mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = resolve(import.meta.dir, '..');
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const outdir = resolve(root, 'dist');
 
 await mkdir(outdir, { recursive: true });
@@ -15,6 +16,7 @@ const result = await Bun.build({
   entrypoints: [
     resolve(root, 'src/entrypoints/cli.tsx'),
     resolve(root, 'src/entrypoints/daemon.ts'),
+    resolve(root, 'src/entrypoints/control.ts'),
   ],
   outdir,
   target: 'bun',
