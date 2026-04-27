@@ -4,7 +4,7 @@
 
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { type AgentState, runAgentTurn } from '../agent/loop.ts';
 import { lookupCommand } from '../commands/registry.ts';
@@ -62,6 +62,10 @@ export function App({ initialProvider, state, mcp }: Props) {
   const [modal, setModal] = useState<Modal>(null);
   const [workingSince, setWorkingSince] = useState<number | null>(null);
   const [workingStatus, setWorkingStatus] = useState<string>('thinking');
+  // Side-question queue: messages the user typed while the agent was busy.
+  // Drained automatically when the current turn ends.
+  const queueRef = useRef<string[]>([]);
+  const [queueLen, setQueueLen] = useState(0);
   const cwd = useMemo(() => process.cwd(), []);
 
   const menuOpen = !modal && input.startsWith('/');
@@ -350,56 +354,85 @@ export function App({ initialProvider, state, mcp }: Props) {
     [append, applyResult, exit, mcp, provider, state],
   );
 
-  const onSubmit = useCallback(
+  // Resolve a single submitted line into the right action. Used both for
+  // direct submits and for queued side questions drained when busy ends.
+  const dispatch = useCallback(
     async (raw: string) => {
       const trimmed = raw.trim();
-      if (!trimmed || busy) return;
+      if (!trimmed) return;
 
       if (!trimmed.startsWith('/')) {
-        setInput('');
         await runChat(trimmed);
         return;
       }
 
-      // Slash path. If the user typed an exact name we run it. If it's a
-      // partial name with a unique highlighted match we either complete-and-
-      // wait (when the command takes args) or run the highlighted one.
       const directMatch = lookupCommand(trimmed);
       if (directMatch) {
-        setInput('');
         await runSlashCommand(trimmed, trimmed);
         return;
       }
 
       const matches = filterCommands(trimmed);
       if (matches.length === 0) {
-        setInput('');
         append('user', trimmed);
         append('error', `unknown command: ${trimmed.split(' ')[0]}`);
         return;
       }
       const target = matches[clampSelection(trimmed, menuIndex)];
-      if (!target) {
-        setInput('');
-        return;
-      }
+      if (!target) return;
       const wantsArgs = !!target.usage && /\s/.test(target.usage.trim());
       const namePartOnly = trimmed.indexOf(' ') === -1;
       if (wantsArgs && namePartOnly) {
-        setInput(`${target.name} `);
+        // Picker-resolution wanted args we don't have — show usage instead
+        // of running blank.
+        append('user', trimmed);
+        append('error', `${target.name} expects: ${target.usage}`);
         return;
       }
-      // Echo the *resolved* command in the transcript, not the partial
-      // input the user typed (so `/` Enter on highlighted /status echoes
-      // "› /status", not "› /").
       const space = trimmed.indexOf(' ');
       const argsPart = space === -1 ? '' : trimmed.slice(space);
       const fullCommand = `${target.name}${argsPart}`;
-      setInput('');
       await runSlashCommand(fullCommand, fullCommand);
     },
-    [append, busy, menuIndex, runChat, runSlashCommand],
+    [append, menuIndex, runChat, runSlashCommand],
   );
+
+  const onSubmit = useCallback(
+    async (raw: string) => {
+      const trimmed = raw.trim();
+      if (!trimmed) return;
+      setInput('');
+
+      // Agent is busy → queue the message. The drainer effect below will
+      // run it when the current turn finishes.
+      if (busy) {
+        queueRef.current.push(trimmed);
+        setQueueLen(queueRef.current.length);
+        append(
+          'progress',
+          `queued: "${truncate(trimmed, 80)}" — will run after current turn`,
+        );
+        return;
+      }
+
+      await dispatch(trimmed);
+    },
+    [append, busy, dispatch],
+  );
+
+  // Drain the queue when the agent transitions from busy → idle.
+  useEffect(() => {
+    if (busy) return;
+    if (queueRef.current.length === 0) return;
+    const next = queueRef.current.shift();
+    setQueueLen(queueRef.current.length);
+    if (next !== undefined) {
+      // queueMicrotask so React's state update for busy=false has flushed.
+      queueMicrotask(() => {
+        void dispatch(next);
+      });
+    }
+  }, [busy, dispatch]);
 
   return (
     <Box flexDirection="column">
@@ -432,26 +465,30 @@ export function App({ initialProvider, state, mcp }: Props) {
           )
         ) : (
           <>
+            {busy && workingSince !== null && (
+              <Box marginBottom={1}>
+                <WorkingIndicator since={workingSince} status={workingStatus} />
+                {queueLen > 0 && (
+                  <Text dimColor>{`  · ${queueLen} queued`}</Text>
+                )}
+              </Box>
+            )}
             <Box
               borderStyle="round"
-              borderColor={busy ? 'yellow' : menuOpen ? 'cyan' : 'gray'}
+              borderColor={menuOpen ? 'cyan' : 'gray'}
               paddingX={1}
             >
-              <Text color="cyan">{busy ? '  ' : '› '}</Text>
-              {busy ? (
-                workingSince !== null ? (
-                  <WorkingIndicator since={workingSince} status={workingStatus} />
-                ) : (
-                  <Text color="yellow">working…</Text>
-                )
-              ) : (
-                <TextInput
-                  value={input}
-                  onChange={setInput}
-                  onSubmit={onSubmit}
-                  placeholder="ask anything, or / for commands"
-                />
-              )}
+              <Text color="cyan">{'› '}</Text>
+              <TextInput
+                value={input}
+                onChange={setInput}
+                onSubmit={onSubmit}
+                placeholder={
+                  busy
+                    ? 'agent is working — your message will run after'
+                    : 'ask anything, or / for commands'
+                }
+              />
             </Box>
             <CommandMenu input={input} selectedIndex={menuIndex} />
           </>
