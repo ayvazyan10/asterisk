@@ -64,6 +64,10 @@ export function App({ initialProvider, state, mcp }: Props) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [entries, setEntries] = useState<Entry[]>([]);
+  // In-progress streaming assistant text. Lives OUTSIDE the <Static> log
+  // (which never updates committed items), so we can mutate the rendered
+  // text per delta. Committed to `entries` once the turn ends.
+  const [liveAssistant, setLiveAssistant] = useState<string>('');
   const [menuIndex, setMenuIndex] = useState(0);
   const [modal, setModal] = useState<Modal>(null);
   const [workingSince, setWorkingSince] = useState<number | null>(null);
@@ -277,25 +281,27 @@ export function App({ initialProvider, state, mcp }: Props) {
             renderedAnyText = true;
             streamingText += delta;
             streamingChars += delta.length;
-            if (streamingEntryId === null) {
-              const id = `stream_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-              streamingEntryId = id;
-              setEntries((prev) => [...prev, { id, kind: 'assistant', text: streamingText }]);
-            } else {
-              const idToUpdate = streamingEntryId;
-              setEntries((prev) =>
-                prev.map((e) => (e.id === idToUpdate ? { ...e, text: streamingText } : e)),
-              );
-            }
-            // Surface progress in the working indicator so the user sees
-            // characters land even before any newline ships.
+            // Update the LIVE state (rendered outside <Static>). Static
+            // refuses to update items it has already rendered, so we
+            // can't mutate an entry there mid-stream.
+            setLiveAssistant(streamingText);
             setWorkingStatus(`writing · ${streamingChars} chars`);
           },
           onAssistantText: (t) => {
             // After streaming has populated an entry, the post-turn whole-
-            // text event is a duplicate — skip it and reset the bookkeeping
-            // for the next model turn in this agent loop.
-            if (streamingEntryId !== null) {
+            // text event is a duplicate — commit the streamed text into
+            // the static log, clear the live state, and skip the duplicate.
+            if (streamingText) {
+              const finalText = streamingText;
+              setEntries((prev) => [
+                ...prev,
+                {
+                  id: `stream_${prev.length}_${Date.now()}`,
+                  kind: 'assistant',
+                  text: finalText,
+                },
+              ]);
+              setLiveAssistant('');
               streamingEntryId = null;
               streamingText = '';
               streamingChars = 0;
@@ -365,6 +371,21 @@ export function App({ initialProvider, state, mcp }: Props) {
             append(result.exitCode === 0 ? 'tool-result' : 'error', parts.join(' · '));
           },
         });
+        // If streaming finished but onAssistantText never fired (some
+        // turn-shapes don't trigger the post-turn whole-text event),
+        // commit the live buffer into the static log so it isn't lost.
+        if (streamingText) {
+          const stillLive = streamingText;
+          setEntries((prev) => [
+            ...prev,
+            {
+              id: `stream_${prev.length}_${Date.now()}`,
+              kind: 'assistant',
+              text: stillLive,
+            },
+          ]);
+          setLiveAssistant('');
+        }
         // Fallback: if the model finished a successful turn but no
         // assistant text reached the transcript (e.g. it emitted only
         // tool calls and qwen3.5-style models often skip the closing
@@ -390,6 +411,9 @@ export function App({ initialProvider, state, mcp }: Props) {
         setBusy(false);
         setWorkingSince(null);
         setWorkingStatus('thinking');
+        // Defensive: if any path left text in the live state without
+        // committing, drop it now so the next turn starts clean.
+        setLiveAssistant('');
       }
     },
     [append, provider, state],
@@ -519,6 +543,14 @@ export function App({ initialProvider, state, mcp }: Props) {
           return renderEntry(entry);
         }}
       </Static>
+      {liveAssistant ? (
+        <Box marginLeft={2} marginTop={1}>
+          <Text color="cyan" bold>
+            {'⏺  '}
+          </Text>
+          <Text>{liveAssistant}</Text>
+        </Box>
+      ) : null}
       <Box flexDirection="column" marginTop={1}>
         {askQuestion ? (
           askQuestion.options && askQuestion.options.length > 0 ? (

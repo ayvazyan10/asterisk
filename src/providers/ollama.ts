@@ -28,6 +28,12 @@ interface OllamaToolCall {
 interface OllamaMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** Newer thinking-aware Ollama models (qwen3-*-thinking, deepseek-r1, …)
+   *  put their chain-of-thought in this structured field instead of inline
+   *  <think>…</think> tags. We surface its tokens via onThinking but keep
+   *  it OUT of the assistant's visible content so the agent doesn't see
+   *  reasoning as part of its reply. */
+  thinking?: string;
   tool_calls?: OllamaToolCall[];
   tool_name?: string;
 }
@@ -259,6 +265,18 @@ async function readStreamingChat(
             } catch {
               // sink errors must not abort the model call
             }
+          }
+        }
+        // Newer Ollama API: thinking arrives as a STRUCTURED field per
+        // frame (separate from message.content). Surface its tokens via
+        // onThinking so the UI shows reasoning progress; never let it
+        // bleed into onText (the agent must not see chain-of-thought).
+        const thinkDelta = ev.message?.thinking ?? '';
+        if (thinkDelta && onThinking) {
+          try {
+            onThinking(thinkDelta);
+          } catch {
+            // ignore
           }
         }
         if (ev.message?.tool_calls && ev.message.tool_calls.length > 0) {
