@@ -119,7 +119,14 @@ manager
       rules,
       souls,
       hooks,
-      onAssistantText: (t) => sink?.({ type: 'text', text: t }),
+      // Streaming: forward per-token deltas to the sink as they arrive.
+      // Also fire a 'text' event from the post-turn whole-text callback so
+      // bots running against a non-streaming provider (or Ollama models that
+      // ignore stream:true for tool-only turns) still get something to show.
+      // The sink-side Telegram adapter dedupes by tracking whether deltas
+      // have already arrived for the current turn — see streamMode='stream'.
+      onAssistantText: (t) => sink?.({ type: 'text-final', text: t }),
+      onAssistantDelta: (d) => sink?.({ type: 'text', text: d }),
       onToolUse: (name, input) => {
         log.debug({ tool: name, input }, 'tool_use');
         sink?.({ type: 'status', text: formatToolStatus(name, input) });

@@ -42,6 +42,11 @@ export interface ProviderRequest {
   tools: ToolDefinition[];
   maxTokens?: number;
   signal?: AbortSignal;
+  /** Optional. If set, the provider should request a streamed response from
+   *  the upstream API and call this with each text delta as it arrives.
+   *  The returned ProviderResponse must still contain the full assembled
+   *  content blocks (including any tool_use) — onText is purely for live UI. */
+  onText?: (delta: string) => void;
 }
 
 export interface ProviderResponse {

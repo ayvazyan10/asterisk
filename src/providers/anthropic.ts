@@ -31,25 +31,39 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
       let response: Anthropic.Messages.Message;
       try {
         const requestOptions = req.signal ? { signal: req.signal } : {};
-        response = await client.messages.create(
-          {
-            model,
-            max_tokens: req.maxTokens ?? 4096,
-            system: req.system,
-            // The SDK's input message shape matches our internal Message shape
-            // closely enough; cast through unknown to bridge the structural gap.
-            messages: req.messages.map((m) => ({
-              role: m.role === 'system' ? 'user' : m.role,
-              content: m.content as unknown as Anthropic.Messages.MessageParam['content'],
-            })),
-            tools: req.tools.map((t) => ({
-              name: t.name,
-              description: t.description,
-              input_schema: t.input_schema as Anthropic.Messages.Tool.InputSchema,
-            })),
-          },
-          requestOptions,
-        );
+        const params: Anthropic.Messages.MessageCreateParamsNonStreaming = {
+          model,
+          max_tokens: req.maxTokens ?? 4096,
+          system: req.system,
+          // The SDK's input message shape matches our internal Message shape
+          // closely enough; cast through unknown to bridge the structural gap.
+          messages: req.messages.map((m) => ({
+            role: m.role === 'system' ? 'user' : m.role,
+            content: m.content as unknown as Anthropic.Messages.MessageParam['content'],
+          })),
+          tools: req.tools.map((t) => ({
+            name: t.name,
+            description: t.description,
+            input_schema: t.input_schema as Anthropic.Messages.Tool.InputSchema,
+          })),
+        };
+        if (req.onText) {
+          // Streaming path — SDK gives per-delta text events plus a final
+          // assembled message (incl. tool_use blocks) on .finalMessage().
+          // Reference: https://github.com/anthropics/anthropic-sdk-typescript#streaming
+          const onText = req.onText;
+          const stream = client.messages.stream(params, requestOptions);
+          stream.on('text', (delta) => {
+            try {
+              onText(delta);
+            } catch {
+              // ignore — UI sink errors must not abort the model call
+            }
+          });
+          response = await stream.finalMessage();
+        } else {
+          response = await client.messages.create(params, requestOptions);
+        }
       } catch (e) {
         throw mapAnthropicError(e);
       }

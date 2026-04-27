@@ -135,6 +135,7 @@ async function handleTurn(
 
   let assistantText = '';
   let lastStatus = '';
+  let sawDelta = false;
 
   const sink = (e: StreamEvent): void => {
     if (mode === 'status') {
@@ -145,23 +146,28 @@ async function handleTurn(
           parseMode === 'html' ? `◐ <i>${escapeHtml(txt)}</i>` : `◐ ${txt}`,
         );
       }
-      // ignore 'text' events in status mode — final reply replaces placeholder
-    } else {
-      // stream mode
-      if (e.type === 'text') {
-        assistantText += e.text;
-        writer.schedule(streamView(assistantText, parseMode));
-      } else if (e.type === 'status') {
-        const tail = truncate(e.text, 120);
-        const view = assistantText
-          ? `${streamView(assistantText, parseMode)}\n\n${
-              parseMode === 'html' ? `<i>${escapeHtml(tail)}</i>` : `_${tail}_`
-            }`
-          : parseMode === 'html'
-            ? `◐ <i>${escapeHtml(truncate(e.text, 200))}</i>`
-            : `◐ ${truncate(e.text, 200)}`;
-        writer.schedule(view);
-      }
+      // ignore text events in status mode — final reply replaces placeholder
+      return;
+    }
+    // stream mode
+    if (e.type === 'text') {
+      sawDelta = true;
+      assistantText += e.text;
+      writer.schedule(streamView(assistantText, parseMode));
+    } else if (e.type === 'text-final' && !sawDelta) {
+      // Provider didn't stream — fall back to showing the whole block once.
+      assistantText = e.text;
+      writer.schedule(streamView(assistantText, parseMode));
+    } else if (e.type === 'status') {
+      const tail = truncate(e.text, 120);
+      const view = assistantText
+        ? `${streamView(assistantText, parseMode)}\n\n${
+            parseMode === 'html' ? `<i>${escapeHtml(tail)}</i>` : `_${tail}_`
+          }`
+        : parseMode === 'html'
+          ? `◐ <i>${escapeHtml(truncate(e.text, 200))}</i>`
+          : `◐ ${truncate(e.text, 200)}`;
+      writer.schedule(view);
     }
   };
 

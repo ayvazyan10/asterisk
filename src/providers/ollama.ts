@@ -150,9 +150,10 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
   return {
     name: `ollama:${cfg.model}`,
     async send(req: ProviderRequest): Promise<ProviderResponse> {
+      const streaming = !!req.onText;
       const body = {
         model: cfg.model,
-        stream: false,
+        stream: streaming,
         options: { num_ctx: cfg.contextWindow },
         messages: [
           { role: 'system', content: req.system } satisfies OllamaMessage,
@@ -186,14 +187,164 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
         throw classifyHttpError(res.status, text, retryAfterSeconds);
       }
 
-      const data = (await res.json()) as OllamaChatResponse;
-      const content = blocksFromOllama(data.message);
+      const finalMessage = streaming
+        ? await readStreamingChat(res, req.onText!)
+        : (await res.json() as OllamaChatResponse).message;
+
+      const content = blocksFromOllama(finalMessage);
       const stopReason: ProviderResponse['stopReason'] = content.some(
         (b) => b.type === 'tool_use',
       )
         ? 'tool_use'
         : 'end_turn';
       return { content, stopReason };
+    },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  NDJSON streaming reader. Ollama emits one JSON object per line:
+//    { "message": { "role": "assistant", "content": "<delta>" }, "done": false }
+//  with the last line carrying done:true and possibly any tool_calls.
+// ─────────────────────────────────────────────────────────────────────────
+
+async function readStreamingChat(
+  res: Response,
+  onText: (delta: string) => void,
+): Promise<OllamaMessage> {
+  if (!res.body) {
+    // No streaming body — fall back to a single read.
+    const data = (await res.json()) as OllamaChatResponse;
+    return data.message;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let aggregatedContent = '';
+  let toolCalls: OllamaToolCall[] | undefined;
+  const filter = createThinkFilter();
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        let ev: OllamaChatResponse;
+        try {
+          ev = JSON.parse(line) as OllamaChatResponse;
+        } catch {
+          // Skip malformed lines defensively.
+          continue;
+        }
+        const delta = ev.message?.content ?? '';
+        if (delta) {
+          aggregatedContent += delta;
+          const visible = filter.feed(delta);
+          if (visible) {
+            try {
+              onText(visible);
+            } catch {
+              // sink errors must not abort the model call
+            }
+          }
+        }
+        if (ev.message?.tool_calls && ev.message.tool_calls.length > 0) {
+          toolCalls = ev.message.tool_calls;
+        }
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // ignore
+    }
+  }
+  // Flush any held-back tail through the think filter so onText sees the
+  // tail of the final answer that arrived without a trailing newline.
+  const tail = filter.flush();
+  if (tail) {
+    try {
+      onText(tail);
+    } catch {
+      // ignore
+    }
+  }
+
+  const out: OllamaMessage = { role: 'assistant', content: aggregatedContent };
+  if (toolCalls) out.tool_calls = toolCalls;
+  return out;
+}
+
+/** Hide the chain-of-thought block (<think>…</think>) from streaming output.
+ *  Some Ollama models (qwen3-thinking, deepseek-r1) interleave reasoning into
+ *  the same content stream; the agent only wants the final answer surfaced.
+ *
+ *  The trick during streaming: chars after the last `<` in the buffer might
+ *  be the start of an unfinished tag. We hold those back; everything before
+ *  the last `<` is safe to emit. flush() drains whatever remained at EOS. */
+function createThinkFilter(): {
+  feed(chunk: string): string;
+  flush(): string;
+} {
+  let buf = '';
+  let inside = false;
+  return {
+    feed(chunk: string): string {
+      buf += chunk;
+      let out = '';
+      // Loop until no more *complete* tag can be resolved this turn.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (!inside) {
+          const open = buf.toLowerCase().indexOf('<think>');
+          if (open !== -1) {
+            out += buf.slice(0, open);
+            buf = buf.slice(open + '<think>'.length);
+            inside = true;
+            continue;
+          }
+          // No complete open tag yet. Hold back from the LAST '<' onward —
+          // those bytes might still complete into '<think>'.
+          const lt = buf.lastIndexOf('<');
+          if (lt === -1) {
+            out += buf;
+            buf = '';
+          } else {
+            out += buf.slice(0, lt);
+            buf = buf.slice(lt);
+          }
+          break;
+        }
+        const close = buf.toLowerCase().indexOf('</think>');
+        if (close !== -1) {
+          buf = buf.slice(close + '</think>'.length);
+          inside = false;
+          continue;
+        }
+        // Inside but no close yet — keep at most the last '<' onward in case
+        // it grows into '</think>'; drop the rest (it's chain-of-thought).
+        const lt = buf.lastIndexOf('<');
+        buf = lt === -1 ? '' : buf.slice(lt);
+        break;
+      }
+      return out;
+    },
+    flush(): string {
+      // End of stream. If still inside an unclosed block, drop it. Otherwise
+      // emit any held-back tail (couldn't have been a real tag after all).
+      if (inside) {
+        buf = '';
+        return '';
+      }
+      const out = buf;
+      buf = '';
+      return out;
     },
   };
 }

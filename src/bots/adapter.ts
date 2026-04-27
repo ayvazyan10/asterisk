@@ -27,8 +27,16 @@ export interface OutgoingMessage {
  *  events while the agent loop runs. Adapters that don't (REPL, WhatsApp web-js)
  *  simply omit the sink and consume the handler's eventual return value. */
 export type StreamEvent =
+  /** Tool calls, retries, etc. — short single-line summary. */
   | { type: 'status'; text: string }
+  /** Streaming token / delta as the model produces it. Streaming-aware
+   *  providers fire many of these per turn. */
   | { type: 'text'; text: string }
+  /** Whole text block delivered at the end of a model turn. Adapters can
+   *  use this when the provider didn't stream (so no 'text' events fired). */
+  | { type: 'text-final'; text: string }
+  /** Turn finished. The handler's resolved value carries the canonical
+   *  reply; this event lets adapters know to flush + finalise their UI. */
   | { type: 'final' };
 
 export type StreamSink = (e: StreamEvent) => void;

@@ -109,7 +109,13 @@ export interface RunOptions {
    *  WhatsApp users never see each other's stuff. The REPL passes
    *  { id: 'repl', scope: 'repl' }; the daemon passes the chatId. */
   session?: AgentSession;
+  /** Fired once per text block at the end of a model turn. Always set, but
+   *  use `onAssistantDelta` if you want per-token streaming. */
   onAssistantText?(text: string): void;
+  /** Fired per text delta as the model streams its response. Only fires when
+   *  the underlying provider supports streaming (Anthropic, Ollama). If unset,
+   *  no streaming is requested from the provider. */
+  onAssistantDelta?(delta: string): void;
   onToolUse?(name: string, input: Record<string, unknown>): void;
   onToolResult?(name: string, output: string, isError: boolean): void;
   onRetry?(attempt: number, delayMs: number, reason: string): void;
@@ -184,8 +190,9 @@ async function runAgentTurnInner(
       try {
         response = await retry(
           () => {
-            const sendOpts: { signal?: AbortSignal } = {};
+            const sendOpts: { signal?: AbortSignal; onText?: (delta: string) => void } = {};
             if (signal) sendOpts.signal = signal;
+            if (opts.onAssistantDelta) sendOpts.onText = opts.onAssistantDelta;
             return provider.send({
               system: systemPrompt,
               messages: state.history,
