@@ -68,7 +68,7 @@ case "$cmd" in
     ;;
   --help|-h|help)
     cat <<'USAGE'
-asterisk — local-first AI agent CLI
+asterisk — lightweight, personal AI assistant
 
 Usage:
   asterisk                Start the interactive REPL

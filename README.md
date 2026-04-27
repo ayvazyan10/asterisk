@@ -1,8 +1,8 @@
 # Asterisk
 
-A lightweight, local-first AI agent CLI. Asterisk gives you an interactive
+A lightweight, personal AI assistant. Asterisk gives you an interactive
 agent in your terminal and an optional long-running daemon that bridges the
-same agent to Telegram and WhatsApp.
+same assistant to Telegram and WhatsApp.
 
 - **Local by default** — talks to a local [Ollama](https://ollama.com) model
   out of the box; the public `@anthropic-ai/sdk` is wired in as an opt-in

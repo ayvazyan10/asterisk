@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ─────────────────────────────────────────────
-#  Asterisk — local-first AI agent CLI
+#  Asterisk — lightweight, personal AI assistant
 #  Install script for macOS and Linux
 #  Usage: curl -fsSL https://raw.githubusercontent.com/ayvazyan10/asterisk/master/install.sh | bash
 # ─────────────────────────────────────────────
@@ -21,7 +21,7 @@ BIN_DIR="${ASTERISK_BIN_DIR:-$HOME/.local/bin}"
 BRANCH="${ASTERISK_BRANCH:-master}"
 
 echo ""
-echo -e "${BOLD}  ✱  Asterisk — local-first AI agent CLI${RESET}"
+echo -e "${BOLD}  ✱  Asterisk — lightweight, personal AI assistant${RESET}"
 echo -e "${DIM}  https://github.com/ayvazyan10/asterisk${RESET}"
 echo ""
 

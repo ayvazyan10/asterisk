@@ -1,7 +1,7 @@
 {
   "name": "asterisk",
   "version": "0.1.0",
-  "description": "Asterisk — lightweight local AI agent CLI with Ollama-first model support, daemon controls, and Telegram/WhatsApp bot bridges.",
+  "description": "Asterisk — lightweight, personal AI assistant with Ollama-first model support, daemon controls, and Telegram/WhatsApp bot bridges.",
   "license": "Apache-2.0",
   "type": "module",
   "private": false,
