@@ -507,6 +507,12 @@ Every tool call is timeboxed (default 120s) by an inner `AbortController`
 that ANDs the parent signal with the timeout — runaway shell commands
 can't lock the loop.
 
+## Roadmap
+
+See [ROADMAP.md](./ROADMAP.md) for the prioritised list of upcoming work
+— skill marketplace, token/cost tracking, REPL streaming, Ctrl+C abort,
+image content blocks, context compaction, and others.
+
 ## Limitations
 
 - Conversation history, tasks, plan-mode, and worktree state live in
