@@ -1,0 +1,55 @@
+{
+  "name": "asterisk",
+  "version": "0.1.0",
+  "description": "Asterisk — lightweight local AI agent CLI with Ollama-first model support, daemon controls, and Telegram/WhatsApp bot bridges.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": false,
+  "bin": {
+    "asterisk": "./bin/asterisk"
+  },
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src/ tests/",
+    "lint:fix": "biome check --write src/ tests/",
+    "format": "biome format --write src/ tests/",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "bun src/entrypoints/cli.tsx"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "chalk": "^5.4.0",
+    "execa": "^9.5.0",
+    "grammy": "^1.30.0",
+    "ink": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "pino": "^9.5.0",
+    "react": "^19.0.0",
+    "undici": "^7.3.0",
+    "whatsapp-web.js": "^1.26.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.0"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "packageManager": "bun@1.1.0",
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "ollama",
+    "anthropic",
+    "telegram-bot",
+    "whatsapp-bot",
+    "local-first"
+  ]
+}
