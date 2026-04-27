@@ -3,6 +3,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { type Tool, ok, err } from './types.ts';
+import { checkWorkspaceWritable } from './workspace.ts';
 
 export const writeTool: Tool = {
   name: 'Write',
@@ -21,6 +22,8 @@ export const writeTool: Tool = {
     const path = typeof input['path'] === 'string' ? input['path'] : '';
     const content = typeof input['content'] === 'string' ? input['content'] : '';
     if (!path) return err('path is required');
+    const guard = checkWorkspaceWritable(path);
+    if (guard) return err(guard);
 
     try {
       const abs = resolve(path);

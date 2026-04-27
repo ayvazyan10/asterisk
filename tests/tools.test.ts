@@ -82,11 +82,19 @@ describe('tool registry', () => {
 describe('Read / Write / Edit / Glob', () => {
   let dir: string;
 
+  let prevGuard: string | undefined;
+
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'asterisk-test-'));
+    // The workspace guard refuses writes outside cwd; tests target a
+    // tempdir, so disable the guard for this suite.
+    prevGuard = process.env['ASTERISK_NO_WORKSPACE_GUARD'];
+    process.env['ASTERISK_NO_WORKSPACE_GUARD'] = '1';
   });
 
   afterEach(async () => {
+    if (prevGuard === undefined) delete process.env['ASTERISK_NO_WORKSPACE_GUARD'];
+    else process.env['ASTERISK_NO_WORKSPACE_GUARD'] = prevGuard;
     await rm(dir, { recursive: true, force: true });
   });
 
