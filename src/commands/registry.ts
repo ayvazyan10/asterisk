@@ -433,7 +433,8 @@ export const COMMANDS: SlashCommand[] = [
       }
       const lines = [`Skills  ${skills.length} loaded`];
       for (const s of skills) {
-        lines.push(`  ${s.scope === 'user' ? 'user   ' : 'project'}  ${s.name}`);
+        const tag = s.scope === 'bundled' ? 'bundled' : s.scope === 'user' ? 'user   ' : 'project';
+        lines.push(`  ${tag}  ${s.name}`);
         if (s.description) lines.push(`    ${s.description}`);
       }
       lines.push('');
@@ -464,6 +465,7 @@ export const COMMANDS: SlashCommand[] = [
           };
           if (s.description) item.description = s.description;
           if (s.scope === 'project') item.badge = '* project';
+          else if (s.scope === 'bundled') item.badge = '* bundled';
           return item;
         }),
         onPick: (name) => {

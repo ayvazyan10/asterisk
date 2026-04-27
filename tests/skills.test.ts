@@ -60,11 +60,14 @@ describe('loadSkills', () => {
     await rm(projectRoot, { recursive: true, force: true });
   });
 
-  it('returns empty when no skills present', () => {
-    expect(loadSkills(projectRoot)).toEqual([]);
+  it('returns the bundled set when no user/project skills are installed', () => {
+    const skills = loadSkills(projectRoot);
+    const names = skills.map((s) => s.name).sort();
+    expect(names).toEqual(['batch', 'dream', 'simplify', 'skillify', 'stuck']);
+    for (const s of skills) expect(s.scope).toBe('bundled');
   });
 
-  it('discovers user and project skills, tagging scope', async () => {
+  it('discovers user and project skills alongside bundled, tagging scope', async () => {
     await mkdir(join(userHome, '.asterisk', 'skills', 'review'), { recursive: true });
     await writeFile(
       join(userHome, '.asterisk', 'skills', 'review', 'SKILL.md'),
@@ -76,16 +79,33 @@ describe('loadSkills', () => {
       'Just plain prompt body, no frontmatter',
     );
     const skills = loadSkills(projectRoot);
-    expect(skills).toHaveLength(2);
     const byName = Object.fromEntries(skills.map((s) => [s.name, s]));
     expect(byName['review']?.scope).toBe('user');
     expect(byName['review']?.prompt).toBe('Do a review.');
     expect(byName['release']?.scope).toBe('project');
     expect(byName['release']?.prompt).toBe('Just plain prompt body, no frontmatter');
+    // Bundled skills still present alongside user + project additions.
+    expect(byName['simplify']?.scope).toBe('bundled');
+    expect(byName['stuck']?.scope).toBe('bundled');
   });
 
-  it('skips skill directories without SKILL.md', async () => {
+  it('lets a project-local skill override a bundled skill of the same name', async () => {
+    await mkdir(join(projectRoot, '.asterisk', 'skills', 'simplify'), { recursive: true });
+    await writeFile(
+      join(projectRoot, '.asterisk', 'skills', 'simplify', 'SKILL.md'),
+      '---\nname: simplify\ndescription: Project override\n---\nProject body.',
+    );
+    const skills = loadSkills(projectRoot);
+    const simplify = skills.find((s) => s.name === 'simplify');
+    expect(simplify?.scope).toBe('project');
+    expect(simplify?.description).toBe('Project override');
+    expect(simplify?.prompt).toBe('Project body.');
+  });
+
+  it('skips empty skill directories but still returns bundled skills', async () => {
     await mkdir(join(userHome, '.asterisk', 'skills', 'empty'), { recursive: true });
-    expect(loadSkills(projectRoot)).toEqual([]);
+    const skills = loadSkills(projectRoot);
+    expect(skills.length).toBeGreaterThanOrEqual(5);
+    expect(skills.every((s) => s.scope === 'bundled')).toBe(true);
   });
 });

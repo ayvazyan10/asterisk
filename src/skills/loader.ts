@@ -2,28 +2,38 @@
 // frontmatter declares name + description; the body is the prompt that
 // gets injected as a user message when the skill is invoked.
 //
-//   ~/.asterisk/skills/<name>/SKILL.md           user-global skill
-//   <cwd>/.asterisk/skills/<name>/SKILL.md       project-local skill
+// Resolution order (later overrides earlier on name match):
+//   bundled (src/skills/bundled.ts) → user (~/.asterisk/skills/<name>/SKILL.md)
+//   → project (<cwd>/.asterisk/skills/<name>/SKILL.md)
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { BUNDLED_SKILLS } from './bundled.ts';
+
 export interface Skill {
   name: string;
   description: string;
   prompt: string;
-  scope: 'user' | 'project';
+  scope: 'user' | 'project' | 'bundled';
   path: string;
 }
 
 export function loadSkills(cwd: string = process.cwd()): Skill[] {
+  const byName = new Map<string, Skill>();
+
+  // 1. Bundled (lowest priority).
+  for (const s of BUNDLED_SKILLS) byName.set(s.name, s);
+
+  // 2. User-global.
+  // 3. Project-local — listed last so it wins on name collision.
   const userRoot = process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk');
-  const dirs: { scope: Skill['scope']; root: string }[] = [
+  const dirs: { scope: 'user' | 'project'; root: string }[] = [
     { scope: 'user', root: join(userRoot, 'skills') },
     { scope: 'project', root: join(cwd, '.asterisk', 'skills') },
   ];
-  const skills: Skill[] = [];
+
   for (const { scope, root } of dirs) {
     if (!existsSync(root) || !statSync(root).isDirectory()) continue;
     for (const entry of readdirSync(root).sort()) {
@@ -33,10 +43,24 @@ export function loadSkills(cwd: string = process.cwd()): Skill[] {
       if (!existsSync(file)) continue;
       const parsed = parseSkillMarkdown(readFileSync(file, 'utf8'), entry);
       if (!parsed.prompt) continue;
-      skills.push({ ...parsed, scope, path: file });
+      byName.set(parsed.name, { ...parsed, scope, path: file });
     }
   }
-  return skills;
+
+  // Stable ordering: bundled first, then user, then project — within each
+  // scope, alphabetical by name.
+  const ordered = [...byName.values()].sort((a, b) => {
+    const scopeOrder: Record<Skill['scope'], number> = {
+      bundled: 0,
+      user: 1,
+      project: 2,
+    };
+    if (scopeOrder[a.scope] !== scopeOrder[b.scope]) {
+      return scopeOrder[a.scope] - scopeOrder[b.scope];
+    }
+    return a.name.localeCompare(b.name);
+  });
+  return ordered;
 }
 
 interface ParsedSkill {
