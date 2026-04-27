@@ -236,6 +236,14 @@ async function runAgentTurnInner(
   // Tally of tool calls — used to synthesise a stub final reply when the
   // model emitted no text at all across the whole turn.
   const toolTally: Record<string, number> = {};
+  // Forced-summary state. When the model returns an empty response after
+  // a tool batch, we push a synthetic user message asking for a summary
+  // and re-invoke the model. This matches what claude-code-main does to
+  // get small Ollama models (qwen3.5, deepseek-r1) to reliably summarise.
+  // Capped at one prod per turn to avoid loops if the model never
+  // cooperates.
+  let summaryProdsUsed = 0;
+  const MAX_SUMMARY_PRODS = 1;
   let reason: TerminalReason = 'unknown-error';
 
   try {
@@ -319,10 +327,42 @@ async function runAgentTurnInner(
       const toolUses = response.content.filter((b): b is ToolUseBlock => b.type === 'tool_use');
 
       if (toolUses.length === 0 || response.stopReason === 'end_turn') {
-        // Prefer this turn's text, then any earlier non-empty text, then a
-        // synthesised stub from tool calls so the user never sees a blank
-        // reply after a successful run.
-        finalText = turnText || lastNonEmptyText || synthesiseStub(toolTally);
+        // Model says it's done. Three sub-cases:
+        //   a) text was emitted → use it (happy path)
+        //   b) empty AND no tools have ever run this turn → use stub
+        //   c) empty BUT we've run tools earlier → force a summary turn.
+        //      This is the architectural fix that gets small Ollama models
+        //      (qwen3.5, deepseek-r1) to actually emit closing summaries.
+        if (turnText) {
+          finalText = turnText;
+          reason = 'end-turn';
+          break;
+        }
+        const ranToolsThisTurn = Object.values(toolTally).some((n) => n > 0);
+        if (ranToolsThisTurn && summaryProdsUsed < MAX_SUMMARY_PRODS) {
+          // Force one more turn with an explicit "now summarise" hint.
+          summaryProdsUsed++;
+          const toolList = Object.entries(toolTally)
+            .sort(([, a], [, b]) => b - a)
+            .map(([name, n]) => `${n}× ${name}`)
+            .join(', ');
+          state.history.push({
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text:
+                  `You ran ${toolList} but haven't sent a closing reply yet. ` +
+                  `Now respond — in one or two sentences — with a short summary of what changed. ` +
+                  `Do NOT call more tools; text only.`,
+              },
+            ],
+          });
+          continue;
+        }
+        // No text, no more prods left. Fall back through last non-empty
+        // text from earlier in the turn, then a synthesised stub.
+        finalText = lastNonEmptyText || synthesiseStub(toolTally);
         reason = 'end-turn';
         break;
       }

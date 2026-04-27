@@ -78,10 +78,11 @@ describe('agent loop', () => {
     expect(onToolResult).toHaveBeenCalledWith('NotATool', expect.stringContaining('not found'), true);
   });
 
-  it('falls back to the most recent non-empty text when the terminal turn is silent', async () => {
-    // Simulates qwen3.5-style behaviour: model emits text in turn 1, calls
-    // tools, then turn 3 is end_turn with NO text. finalText should be the
-    // earlier text rather than '' so the user sees something.
+  it('falls back to the most recent non-empty text when even the forced summary turn is silent', async () => {
+    // Simulates uncooperative qwen3.5: emits text + tool in turn 1, runs
+    // tool, then emits empty in turn 2. The loop forces a summary prod →
+    // turn 3, which the model also returns empty. Fallback then uses the
+    // last non-empty text from turn 1 so the user sees something.
     const provider = fakeProvider([
       {
         content: [
@@ -90,11 +91,8 @@ describe('agent loop', () => {
         ],
         stopReason: 'tool_use',
       },
-      {
-        // Empty terminal response — this is the bug condition.
-        content: [],
-        stopReason: 'end_turn',
-      },
+      { content: [], stopReason: 'end_turn' }, // empty post-tool
+      { content: [], stopReason: 'end_turn' }, // empty even after prod
     ]);
     const state = createAgentState();
     const result = await runAgentTurn(provider, state, 'edit it');
@@ -102,7 +100,66 @@ describe('agent loop', () => {
     expect(result.finalText).toBe('let me edit the file');
   });
 
-  it('synthesises a stub from tool tally when no text was emitted at all', async () => {
+  it('forces a summary turn when the post-tool response is empty', async () => {
+    // Repro of the user's qwen3.5 symptom: model emits tool, results
+    // come back, model returns empty content, end_turn. Without the
+    // forced-summary turn we'd give up with a stub. With it, we push
+    // a synthetic "now summarise" message and the model gets another
+    // shot — which it takes, producing the expected text.
+    const provider = fakeProvider([
+      {
+        content: [
+          { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'echo a' } },
+        ],
+        stopReason: 'tool_use',
+      },
+      {
+        // Empty post-tool response — the bug condition.
+        content: [],
+        stopReason: 'end_turn',
+      },
+      {
+        // After our forced "now summarise" prod, the model produces text.
+        content: [{ type: 'text', text: 'Ran the echo command successfully.' }],
+        stopReason: 'end_turn',
+      },
+    ]);
+    const state = createAgentState();
+    const result = await runAgentTurn(provider, state, 'do it');
+    expect(result.reason).toBe('end-turn');
+    expect(result.finalText).toBe('Ran the echo command successfully.');
+    // The synthetic prod should be in history.
+    const userMessages = state.history.filter((m) => m.role === 'user');
+    const promptedSummary = userMessages.some((m) =>
+      m.content.some(
+        (b) => b.type === 'text' && /short summary/i.test(b.text),
+      ),
+    );
+    expect(promptedSummary).toBe(true);
+  });
+
+  it('falls back to stub if even the forced summary turn comes back empty', async () => {
+    // The model is uncooperative — both the original post-tool turn
+    // and the forced-summary turn return empty. Cap kicks in; we give
+    // up with the synthesised stub rather than looping forever.
+    const provider = fakeProvider([
+      {
+        content: [
+          { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'echo a' } },
+        ],
+        stopReason: 'tool_use',
+      },
+      { content: [], stopReason: 'end_turn' }, // empty post-tool
+      { content: [], stopReason: 'end_turn' }, // empty even after prod
+    ]);
+    const state = createAgentState();
+    const result = await runAgentTurn(provider, state, 'do it');
+    expect(result.reason).toBe('end-turn');
+    expect(result.finalText).toMatch(/done/);
+    expect(result.finalText).toMatch(/1× Bash/);
+  });
+
+  it('synthesises a stub from tool tally when even the forced summary turn is silent', async () => {
     const provider = fakeProvider([
       {
         content: [
@@ -112,10 +169,8 @@ describe('agent loop', () => {
         ],
         stopReason: 'tool_use',
       },
-      {
-        content: [],
-        stopReason: 'end_turn',
-      },
+      { content: [], stopReason: 'end_turn' }, // empty post-tool
+      { content: [], stopReason: 'end_turn' }, // empty even after prod
     ]);
     const state = createAgentState();
     const result = await runAgentTurn(provider, state, 'do stuff');
