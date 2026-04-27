@@ -16,6 +16,7 @@ describe('tool registry', () => {
       [
         'Agent',
         'AskUserQuestion',
+        'Attach',
         'Bash',
         'BrowserClick',
         'BrowserClose',

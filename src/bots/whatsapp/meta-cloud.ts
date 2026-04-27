@@ -1,9 +1,17 @@
 // WhatsApp Meta Cloud API adapter — official, ToS-compliant transport.
 // Reference: https://developers.facebook.com/docs/whatsapp/cloud-api
 
+import { createReadStream } from 'node:fs';
+import { basename } from 'node:path';
 import { createServer, type IncomingMessage as HttpIncoming, type ServerResponse } from 'node:http';
 
-import type { BotAdapter, Handler, IncomingMessage } from '../adapter.ts';
+import {
+  asOutgoingMessage,
+  type Attachment,
+  type BotAdapter,
+  type Handler,
+  type IncomingMessage,
+} from '../adapter.ts';
 
 export interface MetaCloudOptions {
   accessToken: string;
@@ -122,10 +130,22 @@ async function processWebhook(
           timestamp: Number(message.timestamp ?? Math.floor(Date.now() / 1000)) * 1000,
         };
         try {
-          const reply = await handler(incoming);
-          await sendReply(opts, message.from, reply);
+          const result = await handler(incoming);
+          const out = asOutgoingMessage(result);
+          if (out.text) await sendText(opts, message.from, out.text);
+          for (const a of out.attachments ?? []) {
+            try {
+              await sendMedia(opts, message.from, a);
+            } catch (sendErr) {
+              await sendText(
+                opts,
+                message.from,
+                `(failed to send ${a.kind} ${a.path}: ${(sendErr as Error).message})`,
+              ).catch(() => {});
+            }
+          }
         } catch (e) {
-          await sendReply(opts, message.from, `asterisk error: ${(e as Error).message}`).catch(
+          await sendText(opts, message.from, `asterisk error: ${(e as Error).message}`).catch(
             () => {},
           );
         }
@@ -134,7 +154,7 @@ async function processWebhook(
   }
 }
 
-async function sendReply(opts: MetaCloudOptions, to: string, text: string): Promise<void> {
+async function sendText(opts: MetaCloudOptions, to: string, text: string): Promise<void> {
   const url = `https://graph.facebook.com/v20.0/${opts.phoneNumberId}/messages`;
   const res = await fetch(url, {
     method: 'POST',
@@ -153,4 +173,80 @@ async function sendReply(opts: MetaCloudOptions, to: string, text: string): Prom
     const body = await res.text().catch(() => '');
     throw new Error(`Meta Cloud send failed (${res.status}): ${body}`);
   }
+}
+
+// Two-step media send: upload the file to /media to get an id, then send
+// a message that references it. Mirrors the Meta Cloud Media API:
+// https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media
+async function sendMedia(opts: MetaCloudOptions, to: string, a: Attachment): Promise<void> {
+  const id = await uploadMedia(opts, a);
+  const url = `https://graph.facebook.com/v20.0/${opts.phoneNumberId}/messages`;
+  const payloadKey = a.kind === 'image' ? 'image' : a.kind === 'video' ? 'video' : a.kind === 'audio' ? 'audio' : 'document';
+  const mediaPayload: Record<string, unknown> = { id };
+  if (a.caption && (payloadKey === 'image' || payloadKey === 'video' || payloadKey === 'document')) {
+    mediaPayload['caption'] = a.caption;
+  }
+  if (payloadKey === 'document') mediaPayload['filename'] = basename(a.path);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${opts.accessToken}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to,
+      type: payloadKey,
+      [payloadKey]: mediaPayload,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Meta Cloud media-send failed (${res.status}): ${body}`);
+  }
+}
+
+async function uploadMedia(opts: MetaCloudOptions, a: Attachment): Promise<string> {
+  const url = `https://graph.facebook.com/v20.0/${opts.phoneNumberId}/media`;
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', mimeFor(a));
+  // Bun's FormData supports Blob; build one from the file stream-as-buffer.
+  const { readFileSync } = await import('node:fs');
+  const buf = readFileSync(a.path);
+  form.append('file', new Blob([new Uint8Array(buf)], { type: mimeFor(a) }), basename(a.path));
+  // Suppress unused — createReadStream stays imported for future streaming
+  void createReadStream;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${opts.accessToken}` },
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Meta Cloud media-upload failed (${res.status}): ${body}`);
+  }
+  const data = (await res.json()) as { id?: string };
+  if (!data.id) throw new Error('Meta Cloud upload returned no id');
+  return data.id;
+}
+
+function mimeFor(a: Attachment): string {
+  const ext = a.path.toLowerCase().split('.').pop() ?? '';
+  if (a.kind === 'image') {
+    if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+    if (ext === 'png') return 'image/png';
+    if (ext === 'webp') return 'image/webp';
+    return 'image/jpeg';
+  }
+  if (a.kind === 'video') return ext === 'mp4' ? 'video/mp4' : 'video/mp4';
+  if (a.kind === 'audio') {
+    if (ext === 'mp3') return 'audio/mpeg';
+    if (ext === 'ogg') return 'audio/ogg';
+    if (ext === 'm4a') return 'audio/mp4';
+    return 'audio/mpeg';
+  }
+  if (ext === 'pdf') return 'application/pdf';
+  if (ext === 'txt') return 'text/plain';
+  return 'application/octet-stream';
 }

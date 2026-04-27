@@ -74,6 +74,7 @@ manager
     const state = stateFor(msg.chatId);
     const rules = loadRules();
     const hooks = loadConfig().config.hooks;
+    const attachments: Array<{ kind: string; path: string; caption?: string }> = [];
     const turn = await runAgentTurn(provider, state, msg.text, {
       rules,
       hooks,
@@ -87,9 +88,26 @@ manager
           { hook: result.hook, exit: result.exitCode, ms: result.durationMs },
           'hook fired',
         ),
+      onAttachment: (a: { kind: string; path: string; caption?: string }) =>
+        attachments.push(a),
     });
-    if (turn.reason !== 'end-turn') log.warn({ chatId: msg.chatId, reason: turn.reason }, 'turn ended early');
-    return turn.finalText;
+    if (turn.reason !== 'end-turn')
+      log.warn({ chatId: msg.chatId, reason: turn.reason }, 'turn ended early');
+    if (attachments.length > 0)
+      log.info({ chatId: msg.chatId, attachments: attachments.length }, 'sending attachments');
+    return {
+      text: turn.finalText,
+      attachments: attachments.map((a) => {
+        const out: { kind: 'image' | 'video' | 'audio' | 'document'; path: string; caption?: string } = {
+          kind: (['image', 'video', 'audio', 'document'].includes(a.kind)
+            ? a.kind
+            : 'document') as 'image' | 'video' | 'audio' | 'document',
+          path: a.path,
+        };
+        if (a.caption !== undefined) out.caption = a.caption;
+        return out;
+      }),
+    };
   })
   .then((started) => log.info({ adapters: started }, 'adapters started'))
   .catch((e) => log.error({ err: e }, 'failed to start adapters'));

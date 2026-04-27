@@ -3,6 +3,7 @@
 // alongside the built-ins without a special code path.
 
 import { ASK_TOOLS } from './ask.ts';
+import { attachTool } from './attach.ts';
 import { bashTool } from './bash.ts';
 import { BROWSER_TOOLS } from './browser/tools.ts';
 import { editTool } from './edit.ts';
@@ -39,6 +40,7 @@ export const BUILTIN_TOOLS: Tool[] = [
   ...MONITOR_TOOLS,
   ...ASK_TOOLS,
   ...SCHEDULE_TOOLS,
+  attachTool,
 ];
 
 let extraTools: Tool[] = [];

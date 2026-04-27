@@ -29,6 +29,10 @@ Tools you have:
 - Browser (real Chromium): BrowserNavigate, BrowserClick, BrowserType,
   BrowserPress, BrowserSnapshot, BrowserScreenshot, BrowserWait, BrowserClose
 - Web: WebFetch (load a URL as text), WebSearch (DuckDuckGo, no key)
+- Sharing: Attach — send a file (image / video / audio / document) to the
+  user out-of-band. In the Telegram / WhatsApp daemon this becomes a real
+  media message; in the REPL, images render inline on supporting terminals
+  and everything else is shown as "📎 path".
 - Planning: TaskCreate, TaskUpdate, TaskList, TaskGet, TaskStop — your own
   todo list. Use it for any non-trivial multi-step work.
 - Delegation: Agent — spawn a sub-agent in an isolated conversation for
@@ -82,6 +86,10 @@ export interface RunOptions {
   onToolResult?(name: string, output: string, isError: boolean): void;
   onRetry?(attempt: number, delayMs: number, reason: string): void;
   onHook?(result: HookResult): void;
+  /** Called for every attachment a tool emitted during the turn. The bot
+   *  daemon collects these and ships them via Telegram / WhatsApp media
+   *  APIs; the REPL renders inline when the terminal supports it. */
+  onAttachment?(attachment: { kind: string; path: string; caption?: string }): void;
 }
 
 export interface AgentTurnResult {
@@ -228,6 +236,16 @@ export async function runAgentTurn(
           );
           output = exec.output;
           isError = exec.isError;
+          if (exec.attachments && opts.onAttachment) {
+            for (const a of exec.attachments) {
+              const forwarded: { kind: string; path: string; caption?: string } = {
+                kind: a.kind,
+                path: a.path,
+              };
+              if (a.caption !== undefined) forwarded.caption = a.caption;
+              opts.onAttachment(forwarded);
+            }
+          }
         }
         opts.onToolResult?.(use.name, output, isError);
         if (hooks.length > 0) {
@@ -293,12 +311,23 @@ export async function runAgentTurn(
   return { finalText, reason };
 }
 
+interface ToolExecResult {
+  output: string;
+  isError: boolean;
+  attachments?: Array<{ kind: string; path: string; caption?: string }>;
+}
+
 async function runToolWithTimeout(
-  tool: { execute: (input: Record<string, unknown>, opts?: { signal?: AbortSignal }) => Promise<{ output: string; isError: boolean }> },
+  tool: {
+    execute: (
+      input: Record<string, unknown>,
+      opts?: { signal?: AbortSignal },
+    ) => Promise<ToolExecResult>;
+  },
   input: Record<string, unknown>,
   timeoutMs: number,
   parent?: AbortSignal,
-): Promise<{ output: string; isError: boolean }> {
+): Promise<ToolExecResult> {
   const ctrl = new AbortController();
   const onParentAbort = () => ctrl.abort(parent?.reason);
   if (parent) {

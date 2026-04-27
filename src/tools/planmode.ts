@@ -20,6 +20,7 @@ const READ_ONLY_NAMES = new Set([
   'EnterPlanMode',
   'ExitPlanMode',
   'Agent',
+  'Attach',
 ]);
 
 export function isPlanMode(): boolean {

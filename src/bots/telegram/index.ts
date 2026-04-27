@@ -1,9 +1,15 @@
 // Telegram adapter — long-polls Telegram via grammy.
 // Reference: https://grammy.dev/
 
-import { Bot, type Context } from 'grammy';
+import { Bot, type Context, InputFile } from 'grammy';
 
-import type { BotAdapter, Handler, IncomingMessage } from '../adapter.ts';
+import {
+  asOutgoingMessage,
+  type Attachment,
+  type BotAdapter,
+  type Handler,
+  type IncomingMessage,
+} from '../adapter.ts';
 
 const MAX_TELEGRAM_CHARS = 4096;
 
@@ -39,9 +45,19 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): BotAdapter 
           timestamp: Date.now(),
         };
         try {
-          const reply = await handler(msg);
-          for (const chunk of chunkText(reply, MAX_TELEGRAM_CHARS)) {
-            await ctx.reply(chunk);
+          const result = await handler(msg);
+          const out = asOutgoingMessage(result);
+          if (out.text) {
+            for (const chunk of chunkText(out.text, MAX_TELEGRAM_CHARS)) {
+              await ctx.reply(chunk);
+            }
+          }
+          for (const a of out.attachments ?? []) {
+            try {
+              await sendAttachment(ctx, a);
+            } catch (sendErr) {
+              await ctx.reply(`(failed to send ${a.kind} ${a.path}: ${(sendErr as Error).message})`);
+            }
           }
         } catch (e) {
           await ctx.reply(`asterisk error: ${(e as Error).message}`);
@@ -58,6 +74,26 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): BotAdapter 
       await bot.stop();
     },
   };
+}
+
+async function sendAttachment(ctx: Context, a: Attachment): Promise<void> {
+  const file = new InputFile(a.path);
+  const captionOpts = a.caption ? { caption: a.caption } : {};
+  switch (a.kind) {
+    case 'image':
+      await ctx.replyWithPhoto(file, captionOpts);
+      return;
+    case 'video':
+      await ctx.replyWithVideo(file, captionOpts);
+      return;
+    case 'audio':
+      await ctx.replyWithAudio(file, captionOpts);
+      return;
+    case 'document':
+    default:
+      await ctx.replyWithDocument(file, captionOpts);
+      return;
+  }
 }
 
 function chunkText(text: string, max: number): string[] {

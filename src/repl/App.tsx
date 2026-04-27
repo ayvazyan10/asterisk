@@ -307,6 +307,15 @@ export function App({ initialProvider, state, mcp }: Props) {
             setWorkingStatus(`retrying (#${attempt} in ${Math.round(delayMs / 1000)}s)`);
             append('progress', `retrying after ${why} · attempt ${attempt} · waiting ${Math.round(delayMs / 1000)}s`);
           },
+          onAttachment: (a: { kind: string; path: string; caption?: string }) => {
+            append(
+              'system',
+              `📎 ${a.kind}: ${a.path}${a.caption ? `\n   "${a.caption}"` : ''}`,
+            );
+            if (a.kind === 'image' && detectInlineProtocol()) {
+              renderInlineImage(a.path);
+            }
+          },
           onHook: (result) => {
             const tag = result.exitCode === 0 ? 'hook' : 'hook-err';
             const parts = [`${tag}: ${result.hook}`];
