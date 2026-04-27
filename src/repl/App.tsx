@@ -32,7 +32,12 @@ import { WorkingIndicator } from './WorkingIndicator.tsx';
 
 type Modal = FormSpec | ListSpec | null;
 
-const PROGRESS_INTERVAL_MS = 60_000;
+// Drumbeat cadence for the in-transcript progress entry. claude-code-main
+// updates its inline indicator every 50ms; we don't need that resolution
+// for a transcript line, but 60s is way too sparse — long silent
+// generations look hung. 15s is a good middle ground: noticeable updates
+// without spamming the transcript.
+const PROGRESS_INTERVAL_MS = 15_000;
 
 const VERSION = '0.1.0';
 

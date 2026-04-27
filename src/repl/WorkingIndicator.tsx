@@ -1,11 +1,55 @@
 // Animated "working" indicator shown in the input area while the agent is
-// busy. Spins at ~80ms, re-renders the elapsed counter every tick.
+// busy. Spinner glyph cycles every 80ms. The verb (one of ~30 gerunds) is
+// picked once at mount and stays for the whole turn — same pattern claude-
+// code-main uses for its "Crunched / Worked" UX so a long silent
+// tool-call-generation phase doesn't look frozen.
+//
+// Status text comes from event hooks (setWorkingStatus). When no event has
+// updated it in >SILENCE_THRESHOLD_MS we fall back to "<verb> · Xm Ys" so
+// the user sees a self-updating phrase instead of a frozen "thinking".
 
 import { Box, Text } from 'ink';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const FRAME_MS = 80;
+// After this many ms without a status update, the indicator falls back to
+// the cycled verb. Empirically, after ~5 seconds of silence a static
+// "thinking" label feels frozen even if the spinner is still spinning.
+const SILENCE_THRESHOLD_MS = 5_000;
+
+const VERBS = [
+  'Pondering',
+  'Crunching',
+  'Calculating',
+  'Cogitating',
+  'Computing',
+  'Reasoning',
+  'Brewing',
+  'Cooking',
+  'Working',
+  'Thinking',
+  'Considering',
+  'Mulling',
+  'Weighing',
+  'Reflecting',
+  'Plotting',
+  'Synthesising',
+  'Composing',
+  'Drafting',
+  'Sketching',
+  'Mapping',
+  'Charting',
+  'Forging',
+  'Spinning',
+  'Sifting',
+  'Distilling',
+  'Tinkering',
+  'Pacing',
+  'Searching',
+  'Tracing',
+  'Pursuing',
+];
 
 interface Props {
   since: number;
@@ -14,9 +58,31 @@ interface Props {
 
 export function WorkingIndicator({ since, status }: Props) {
   const [frame, setFrame] = useState(0);
+  // Tick every 250ms so the silence-fallback status updates without waiting
+  // on a setState elsewhere.
+  const [, setTick] = useState(0);
+  // Track when the externally-supplied status was last set so we can fall
+  // back to the cycled verb during long silences.
+  const [statusSetAt, setStatusSetAt] = useState(Date.now());
+
+  // Pick one verb per turn — re-randomised when `since` changes (i.e. a new
+  // turn starts). Same pattern as claude-code-main's spinner.
+  const verb = useMemo(() => {
+    const i = Math.floor(Math.random() * VERBS.length);
+    return VERBS[i] ?? 'Working';
+  }, [since]);
+
+  useEffect(() => {
+    setStatusSetAt(Date.now());
+  }, [status]);
 
   useEffect(() => {
     const id = setInterval(() => setFrame((f) => (f + 1) % SPINNER_FRAMES.length), FRAME_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 250);
     return () => clearInterval(id);
   }, []);
 
@@ -25,13 +91,15 @@ export function WorkingIndicator({ since, status }: Props) {
     elapsedSec < 60
       ? `${elapsedSec}s`
       : `${Math.floor(elapsedSec / 60)}m ${(elapsedSec % 60).toString().padStart(2, '0')}s`;
+  const silenceMs = Date.now() - statusSetAt;
+  const displayStatus = silenceMs > SILENCE_THRESHOLD_MS ? `${verb}…` : status;
 
   return (
     <Box>
       <Text color="yellow" bold>
         {SPINNER_FRAMES[frame]}
       </Text>
-      <Text color="yellow">{` ${status}`}</Text>
+      <Text color="yellow">{` ${displayStatus}`}</Text>
       <Text dimColor>{`  · ${elapsedLabel}`}</Text>
     </Box>
   );
