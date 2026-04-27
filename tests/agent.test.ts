@@ -78,6 +78,56 @@ describe('agent loop', () => {
     expect(onToolResult).toHaveBeenCalledWith('NotATool', expect.stringContaining('not found'), true);
   });
 
+  it('falls back to the most recent non-empty text when the terminal turn is silent', async () => {
+    // Simulates qwen3.5-style behaviour: model emits text in turn 1, calls
+    // tools, then turn 3 is end_turn with NO text. finalText should be the
+    // earlier text rather than '' so the user sees something.
+    const provider = fakeProvider([
+      {
+        content: [
+          { type: 'text', text: 'let me edit the file' },
+          { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'echo a' } },
+        ],
+        stopReason: 'tool_use',
+      },
+      {
+        // Empty terminal response — this is the bug condition.
+        content: [],
+        stopReason: 'end_turn',
+      },
+    ]);
+    const state = createAgentState();
+    const result = await runAgentTurn(provider, state, 'edit it');
+    expect(result.reason).toBe('end-turn');
+    expect(result.finalText).toBe('let me edit the file');
+  });
+
+  it('synthesises a stub from tool tally when no text was emitted at all', async () => {
+    const provider = fakeProvider([
+      {
+        content: [
+          { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'echo a' } },
+          { type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'echo b' } },
+          { type: 'tool_use', id: 't3', name: 'Read', input: { path: '/etc/hostname' } },
+        ],
+        stopReason: 'tool_use',
+      },
+      {
+        content: [],
+        stopReason: 'end_turn',
+      },
+    ]);
+    const state = createAgentState();
+    const result = await runAgentTurn(provider, state, 'do stuff');
+    expect(result.reason).toBe('end-turn');
+    // The stub names the tools by frequency and tells the user the model
+    // didn't summarise.
+    expect(result.finalText).toMatch(/done/);
+    expect(result.finalText).toMatch(/2× Bash/);
+    expect(result.finalText).toMatch(/1× Read/);
+    expect(result.finalText).toMatch(/no closing summary|didn't return/i);
+  });
+
   it('returns reason=aborted when the signal fires before send', async () => {
     const ctrl = new AbortController();
     ctrl.abort();

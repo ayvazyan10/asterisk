@@ -83,7 +83,14 @@ same string, use Edit's replaceAll:true flag instead of one Edit per
 match — far cheaper than scanning for each occurrence.
 
 Be concise. Prefer doing work directly with tools over describing what you
-would do. When a task is complete, respond with a short summary.`;
+would do.
+
+Always close with a short text reply when you finish — even after a long
+tool batch. One or two sentences saying what changed is enough; the user
+sees the tool trace, you don't need to enumerate every Edit. NEVER end a
+turn with only tool calls and no text — the user will think you crashed.
+If the work was trivial, "done" is fine; if there was a non-obvious
+choice, name it. The closing reply is mandatory, not optional.`;
 
 // 30 fits most agentic tasks: 12 was empirically too tight for things like
 // "rewrite every color in a 700-line CSS file" once the model split work
@@ -201,6 +208,15 @@ async function runAgentTurnInner(
   }
 
   let finalText = '';
+  // Tracks the most recent non-empty assistant text across the whole turn
+  // loop. Smaller models (qwen3.5:9b, deepseek-r1, …) sometimes return
+  // stop_reason: end_turn with EMPTY text after a successful tool batch —
+  // they think they're done but never emit a closing summary. When the
+  // terminal turn has no text, fall back to whatever the model said last.
+  let lastNonEmptyText = '';
+  // Tally of tool calls — used to synthesise a stub final reply when the
+  // model emitted no text at all across the whole turn.
+  const toolTally: Record<string, number> = {};
   let reason: TerminalReason = 'unknown-error';
 
   try {
@@ -269,11 +285,20 @@ async function runAgentTurnInner(
       for (const t of textBlocks) {
         if (t.text) opts.onAssistantText?.(t.text);
       }
+      const turnText = textBlocks
+        .map((b) => b.text)
+        .filter((s) => s)
+        .join('\n')
+        .trim();
+      if (turnText) lastNonEmptyText = turnText;
 
       const toolUses = response.content.filter((b): b is ToolUseBlock => b.type === 'tool_use');
 
       if (toolUses.length === 0 || response.stopReason === 'end_turn') {
-        finalText = textBlocks.map((b) => b.text).join('\n');
+        // Prefer this turn's text, then any earlier non-empty text, then a
+        // synthesised stub from tool calls so the user never sees a blank
+        // reply after a successful run.
+        finalText = turnText || lastNonEmptyText || synthesiseStub(toolTally);
         reason = 'end-turn';
         break;
       }
@@ -287,6 +312,7 @@ async function runAgentTurnInner(
           reason = 'aborted';
           break;
         }
+        toolTally[use.name] = (toolTally[use.name] ?? 0) + 1;
         opts.onToolUse?.(use.name, use.input);
         if (hooks.length > 0) {
           const before = await fireHooks(
@@ -424,4 +450,18 @@ async function runToolWithTimeout(
     clearTimeout(timer);
     if (parent) parent.removeEventListener('abort', onParentAbort);
   }
+}
+
+/** Build a stub final reply when the model finished a turn without
+ *  emitting any closing text. Lists what tools ran so the user at least
+ *  sees that work happened. Empty string when no tools were called either
+ *  (the loop will fall back to "(no reply)" downstream). */
+function synthesiseStub(tally: Record<string, number>): string {
+  const entries = Object.entries(tally).filter(([, n]) => n > 0);
+  if (entries.length === 0) return '';
+  const summary = entries
+    .sort(([, a], [, b]) => b - a)
+    .map(([name, n]) => `${n}× ${name}`)
+    .join(', ');
+  return `(done — ran ${summary}; the model didn't return a closing summary)`;
 }
