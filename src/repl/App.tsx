@@ -2,7 +2,7 @@
 // visual command picker triggered by `/`.
 // Reference: https://github.com/vadimdemedes/ink + ink-text-input examples.
 
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Static, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -62,7 +62,6 @@ export function App({ initialProvider, state, mcp }: Props) {
   const [modal, setModal] = useState<Modal>(null);
   const [workingSince, setWorkingSince] = useState<number | null>(null);
   const [workingStatus, setWorkingStatus] = useState<string>('thinking');
-  const [allExpanded, setAllExpanded] = useState(false);
   const cwd = useMemo(() => process.cwd(), []);
 
   const menuOpen = !modal && input.startsWith('/');
@@ -84,13 +83,26 @@ export function App({ initialProvider, state, mcp }: Props) {
     [],
   );
 
-  // Ctrl+O toggles expand/collapse for every entry that has hidden content.
-  // Disabled while a modal is open so it doesn't fight the form/list keys.
+  // Ctrl+O appends an "expanded" entry below containing the full text of
+  // the most recent collapsed entry. Existing entries are immutable (they
+  // live inside <Static>) — flipping their expand state would require
+  // re-rendering the whole transcript, which is what causes the flicker we
+  // had previously. Append-only is cheap and stays compatible with Static.
   useInput(
     (inputChar, key) => {
       if (modal) return;
       if (key.ctrl && (inputChar === 'o' || inputChar === 'O')) {
-        setAllExpanded((prev) => !prev);
+        setEntries((prev) => {
+          const lastCollapsed = [...prev].reverse().find((e) => e.fullText);
+          if (!lastCollapsed) return prev;
+          const id = `${prev.length}_${Date.now()}_x`;
+          const expanded: Entry = {
+            id,
+            kind: 'system',
+            text: `expanded: ${lastCollapsed.text}\n${lastCollapsed.fullText}`,
+          };
+          return [...prev, expanded];
+        });
       }
     },
     { isActive: !modal },
@@ -391,8 +403,16 @@ export function App({ initialProvider, state, mcp }: Props) {
 
   return (
     <Box flexDirection="column">
-      <Banner providerName={provider.name} cwd={cwd} version={VERSION} />
-      {entries.map((entry) => renderEntry(entry, allExpanded))}
+      <Static items={[{ id: '__banner__' } as Entry, ...entries]}>
+        {(entry) => {
+          if (entry.id === '__banner__') {
+            return (
+              <Banner key="__banner__" providerName={provider.name} cwd={cwd} version={VERSION} />
+            );
+          }
+          return renderEntry(entry);
+        }}
+      </Static>
       <Box flexDirection="column" marginTop={1}>
         {modal ? (
           modal.kind === 'form' ? (
@@ -447,7 +467,7 @@ export function App({ initialProvider, state, mcp }: Props) {
   );
 }
 
-function renderEntry(entry: Entry, expanded: boolean) {
+function renderEntry(entry: Entry) {
   switch (entry.kind) {
     case 'user':
       return (
@@ -476,9 +496,9 @@ function renderEntry(entry: Entry, expanded: boolean) {
             <Text color="cyan" dimColor>
               {'  → '}
             </Text>
-            <Text dimColor>{expanded && entry.fullText ? entry.fullText : entry.text}</Text>
+            <Text dimColor>{entry.text}</Text>
           </Box>
-          {!expanded && entry.fullText && (
+          {entry.fullText && (
             <Box marginLeft={4}>
               <Text dimColor>
                 {`[+${entry.fullText.length - entry.text.length} chars · Ctrl+O]`}
@@ -488,23 +508,18 @@ function renderEntry(entry: Entry, expanded: boolean) {
         </Box>
       );
     case 'tool-result': {
-      const showFull = expanded && entry.fullText;
-      const body = showFull ? entry.fullText! : entry.text;
-      const bodyLines = body.split('\n');
-      const hint = !expanded && entry.fullText
-        ? renderCollapseHint(entry.text, entry.fullText)
-        : null;
+      const lines = entry.text.split('\n');
       return (
         <Box key={entry.id} flexDirection="column">
-          {bodyLines.map((line, i) => (
+          {lines.map((line, i) => (
             <Box key={`${entry.id}_l_${i}`}>
               <Text dimColor>{i === 0 ? '  ← ' : '    '}</Text>
               <Text dimColor>{line}</Text>
             </Box>
           ))}
-          {hint && (
+          {entry.fullText && (
             <Box marginLeft={4}>
-              <Text dimColor>{hint}</Text>
+              <Text dimColor>{renderCollapseHint(entry.text, entry.fullText)}</Text>
             </Box>
           )}
         </Box>
