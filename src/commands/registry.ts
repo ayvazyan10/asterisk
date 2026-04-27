@@ -1261,7 +1261,7 @@ const CONFIG_SECTIONS: ConfigSection[] = [
   {
     key: 'telegram',
     label: 'Telegram bot',
-    summary: 'enable, allowed user IDs, bot token',
+    summary: 'enable, allowed user IDs, token, reply mode',
     open() {
       const cfg = loadConfig();
       return {
@@ -1287,6 +1287,23 @@ const CONFIG_SECTIONS: ConfigSection[] = [
             placeholder: cfg.secrets.ASTERISK_TELEGRAM_BOT_TOKEN ? '(set)' : '(unset)',
             secret: true,
           },
+          {
+            kind: 'select',
+            key: 'streamMode',
+            label: 'Reply delivery mode',
+            options: [
+              { value: 'final', label: 'final — one message at end (cheapest)' },
+              { value: 'status', label: 'status — live tool-call status, replaced by final reply' },
+              { value: 'stream', label: 'stream — text streams as it arrives' },
+            ],
+            defaultValue: cfg.config.bots.telegram.streamMode,
+          },
+          {
+            kind: 'text',
+            key: 'streamThrottleMs',
+            label: 'Edit throttle (ms, 250–10000) · only used by status/stream',
+            defaultValue: String(cfg.config.bots.telegram.streamThrottleMs),
+          },
         ],
         onSubmit: (v) => {
           const next = loadConfig();
@@ -1295,6 +1312,13 @@ const CONFIG_SECTIONS: ConfigSection[] = [
             .split(',')
             .map((s) => Number.parseInt(s.trim(), 10))
             .filter((n) => Number.isFinite(n) && n > 0);
+          const rawMode = (v['streamMode'] ?? 'final').trim().toLowerCase();
+          next.config.bots.telegram.streamMode =
+            rawMode === 'status' || rawMode === 'stream' ? rawMode : 'final';
+          const throttle = Number.parseInt(v['streamThrottleMs'] ?? '', 10);
+          if (Number.isFinite(throttle) && throttle >= 250 && throttle <= 10000) {
+            next.config.bots.telegram.streamThrottleMs = throttle;
+          }
           saveConfig(next.config);
           const token = (v['token'] ?? '').trim();
           if (token) {
