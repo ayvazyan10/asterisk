@@ -16,12 +16,22 @@ import { Form } from './forms/Form.tsx';
 import { ListPicker } from './forms/ListPicker.tsx';
 import type { CommandResult, FormSpec, ListSpec } from './forms/types.ts';
 import { StatusBar } from './StatusBar.tsx';
+import { WorkingIndicator } from './WorkingIndicator.tsx';
 
 type Modal = FormSpec | ListSpec | null;
 
+const PROGRESS_INTERVAL_MS = 60_000;
+
 const VERSION = '0.1.0';
 
-type EntryKind = 'user' | 'assistant' | 'tool' | 'tool-result' | 'system' | 'error';
+type EntryKind =
+  | 'user'
+  | 'assistant'
+  | 'tool'
+  | 'tool-result'
+  | 'system'
+  | 'progress'
+  | 'error';
 
 interface Entry {
   id: string;
@@ -43,6 +53,8 @@ export function App({ initialProvider, state, mcp }: Props) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [menuIndex, setMenuIndex] = useState(0);
   const [modal, setModal] = useState<Modal>(null);
+  const [workingSince, setWorkingSince] = useState<number | null>(null);
+  const [workingStatus, setWorkingStatus] = useState<string>('thinking');
   const cwd = useMemo(() => process.cwd(), []);
 
   const menuOpen = !modal && input.startsWith('/');
@@ -162,19 +174,57 @@ export function App({ initialProvider, state, mcp }: Props) {
   const runChat = useCallback(
     async (text: string) => {
       append('user', text);
+      const start = Date.now();
+      const tally: Record<string, number> = {};
+      let lastTool = '';
       setBusy(true);
+      setWorkingSince(start);
+      setWorkingStatus('thinking');
+
+      // Drumbeat: every PROGRESS_INTERVAL_MS while still busy, append a
+      // progress entry summarising what the agent has been up to since the
+      // turn started.
+      const progressTimer = setInterval(() => {
+        const elapsedSec = Math.floor((Date.now() - start) / 1000);
+        const minutes = Math.floor(elapsedSec / 60);
+        const tallyText =
+          Object.keys(tally).length === 0
+            ? 'still thinking, no tools called yet'
+            : Object.entries(tally)
+                .sort((a, b) => b[1] - a[1])
+                .map(([name, count]) => `${count}× ${name}`)
+                .join(', ');
+        const last = lastTool ? ` · last: ${lastTool}` : '';
+        append(
+          'progress',
+          `still working · ${minutes}m elapsed · ${tallyText}${last}`,
+        );
+      }, PROGRESS_INTERVAL_MS);
+
       try {
         await runAgentTurn(provider, state, text, {
-          onAssistantText: (t) => append('assistant', t),
-          onToolUse: (name, toolInput) =>
-            append('tool', `${name}(${formatArgs(toolInput)})`),
-          onToolResult: (name, output, isError) =>
-            append(isError ? 'error' : 'tool-result', `${name} → ${truncate(output, 800)}`),
+          onAssistantText: (t) => {
+            setWorkingStatus('writing response');
+            append('assistant', t);
+          },
+          onToolUse: (name, toolInput) => {
+            tally[name] = (tally[name] ?? 0) + 1;
+            lastTool = name;
+            setWorkingStatus(`${name}(${truncate(formatArgs(toolInput), 60)})`);
+            append('tool', `${name}(${formatArgs(toolInput)})`);
+          },
+          onToolResult: (name, output, isError) => {
+            setWorkingStatus('thinking');
+            append(isError ? 'error' : 'tool-result', `${name} → ${truncate(output, 800)}`);
+          },
         });
       } catch (e) {
         append('error', `agent error: ${(e as Error).message}`);
       } finally {
+        clearInterval(progressTimer);
         setBusy(false);
+        setWorkingSince(null);
+        setWorkingStatus('thinking');
       }
     },
     [append, provider, state],
@@ -298,9 +348,13 @@ export function App({ initialProvider, state, mcp }: Props) {
               borderColor={busy ? 'yellow' : menuOpen ? 'cyan' : 'gray'}
               paddingX={1}
             >
-              <Text color="cyan">{busy ? '◐ ' : '› '}</Text>
+              <Text color="cyan">{busy ? '  ' : '› '}</Text>
               {busy ? (
-                <Text color="yellow">working…</Text>
+                workingSince !== null ? (
+                  <WorkingIndicator since={workingSince} status={workingStatus} />
+                ) : (
+                  <Text color="yellow">working…</Text>
+                )
               ) : (
                 <TextInput
                   value={input}
@@ -359,6 +413,14 @@ function renderEntry(entry: Entry) {
       );
     case 'system':
       return renderSystemPanel(entry);
+    case 'progress':
+      return (
+        <Box key={entry.id} flexDirection="column" marginTop={1}>
+          <Box borderStyle="round" borderColor="yellow" paddingX={2} flexDirection="column">
+            <Text color="yellow">{`⏳ ${entry.text}`}</Text>
+          </Box>
+        </Box>
+      );
     case 'error':
       return (
         <Box key={entry.id} flexDirection="column" marginTop={1}>
