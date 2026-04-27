@@ -224,6 +224,24 @@ enable it via `asterisk configure`. Both bots can also send media: any
 attachment the agent emits via the `Attach` tool (image, video, audio,
 document) is delivered as a real Telegram / WhatsApp media message.
 
+**Telegram reply modes** (`bots.telegram.streamMode`):
+
+- `final` *(default)* — one message at the end of the turn. Cheapest, no
+  edit churn, identical to a typical chat reply.
+- `status` — sends a `◐ working…` placeholder, edits it with live
+  tool-call status (`BrowserNavigate · https://wttr.in/...`,
+  `WebFetch · https://...`), and replaces it with the final reply when
+  the turn ends. Good for visibility into long-running tool chains.
+- `stream` — placeholder is progressively edited with the model's text
+  as it arrives, so the reply types itself out in front of the user.
+  Active tool calls surface as a faded tail line under the streaming
+  text.
+
+Telegram's Bot API rate-limits edits to ~1/sec/chat; `streamThrottleMs`
+(default 1000) coalesces rapid updates so we stay under the limit.
+WhatsApp transports don't expose `editMessageText`, so this knob is
+Telegram-only — WhatsApp always uses the equivalent of `final` mode.
+
 **Per-user isolation.** Each chat — Telegram chatId, WhatsApp number, or
 the local REPL — gets its own task list, plan-mode flag, browser context,
 monitored processes, and SOUL.md persona. Two users sharing a daemon
@@ -302,7 +320,12 @@ the REPL and each per-chat conversation in the daemon.
   },
   "anthropic": { "model": "claude-3-5-haiku-latest" },
   "bots": {
-    "telegram": { "enabled": false, "allowedUserIds": [] },
+    "telegram": {
+      "enabled": false,
+      "allowedUserIds": [],
+      "streamMode": "final",                  // "final" | "status" | "stream"
+      "streamThrottleMs": 1000                // min gap between editMessageText calls
+    },
     "whatsapp": {
       "enabled": false,
       "transport": "meta-cloud",              // or "web-js"

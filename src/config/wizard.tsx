@@ -97,6 +97,26 @@ const STEPS: Step[] = [
     },
   },
   {
+    key: 'telegram.streamMode',
+    prompt:
+      'Telegram reply mode — "final" (one message at end), "status" (live tool-call status, final reply replaces it), "stream" (text streams live)',
+    initial: (s) => s.config.bots.telegram.streamMode,
+    apply: (s, v) => {
+      const raw = v.trim().toLowerCase();
+      const mode = raw === 'status' || raw === 'stream' ? raw : 'final';
+      return {
+        ...s,
+        config: {
+          ...s.config,
+          bots: {
+            ...s.config.bots,
+            telegram: { ...s.config.bots.telegram, streamMode: mode },
+          },
+        },
+      };
+    },
+  },
+  {
     key: 'whatsapp.enabled',
     prompt: 'Enable WhatsApp bot? (y/n)',
     initial: (s) => (s.config.bots.whatsapp.enabled ? 'y' : 'n'),

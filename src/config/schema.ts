@@ -15,9 +15,21 @@ const AnthropicSchema = z.object({
   model: z.string().default('claude-3-5-haiku-latest'),
 });
 
+// Telegram streaming modes — Telegram has no native server-sent events for
+// bots, so "streaming" here means progressively editing a placeholder
+// message via editMessageText (rate-limited to ~1 edit/sec/chat per the
+// Bot API guidelines). Reference: https://core.telegram.org/bots/api#editmessagetext
+//   final  — single message at end of turn (cheapest, current default)
+//   status — placeholder updated with tool-use status; final reply replaces it
+//   stream — placeholder progressively edited with the model's text as it arrives
+export const TelegramStreamMode = z.enum(['final', 'status', 'stream']);
+export type TelegramStreamModeT = z.infer<typeof TelegramStreamMode>;
+
 const TelegramSchema = z.object({
   enabled: z.boolean().default(false),
   allowedUserIds: z.array(z.number().int().positive()).default([]),
+  streamMode: TelegramStreamMode.default('final'),
+  streamThrottleMs: z.number().int().min(250).max(10000).default(1000),
 });
 
 const WhatsappTransport = z.enum(['meta-cloud', 'web-js']);

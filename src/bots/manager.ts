@@ -21,7 +21,14 @@ export function createBotManager(loaded: LoadedConfig): BotManager {
     if (!token) {
       throw new Error('Telegram bot enabled but ASTERISK_TELEGRAM_BOT_TOKEN is not set');
     }
-    adapters.push(createTelegramAdapter({ token, allowedUserIds: tg.allowedUserIds }));
+    adapters.push(
+      createTelegramAdapter({
+        token,
+        allowedUserIds: tg.allowedUserIds,
+        streamMode: tg.streamMode,
+        streamThrottleMs: tg.streamThrottleMs,
+      }),
+    );
   }
 
   const wa = loaded.config.bots.whatsapp;

@@ -46,8 +46,25 @@ describe('config schema and persistence', () => {
     expect(config.provider).toBe('ollama');
     expect(config.ollama.baseUrl).toBe('http://127.0.0.1:11434');
     expect(config.bots.telegram.enabled).toBe(false);
+    expect(config.bots.telegram.streamMode).toBe('final');
+    expect(config.bots.telegram.streamThrottleMs).toBe(1000);
     expect(config.bots.whatsapp.transport).toBe('meta-cloud');
     expect(secrets).toEqual({});
+  });
+
+  it('accepts streamMode + streamThrottleMs and rejects garbage', () => {
+    const ok = ConfigSchema.parse({
+      bots: { telegram: { streamMode: 'stream', streamThrottleMs: 1500 } },
+    });
+    expect(ok.bots.telegram.streamMode).toBe('stream');
+    expect(ok.bots.telegram.streamThrottleMs).toBe(1500);
+
+    expect(() =>
+      ConfigSchema.parse({ bots: { telegram: { streamMode: 'real-time' } } }),
+    ).toThrow();
+    expect(() =>
+      ConfigSchema.parse({ bots: { telegram: { streamThrottleMs: 100 } } }),
+    ).toThrow();
   });
 
   it('round-trips a saved config', () => {

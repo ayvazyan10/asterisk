@@ -57,6 +57,20 @@ mcp
   })
   .catch((e) => log.warn({ err: e }, 'mcp reload failed'));
 
+function formatToolStatus(name: string, input: Record<string, unknown>): string {
+  // Concise single-line status for streaming bot placeholders. Pick the most
+  // identifying field for common tools so the user sees what's happening.
+  const arg =
+    (typeof input['url'] === 'string' && input['url']) ||
+    (typeof input['path'] === 'string' && input['path']) ||
+    (typeof input['query'] === 'string' && input['query']) ||
+    (typeof input['command'] === 'string' && input['command']) ||
+    (typeof input['title'] === 'string' && input['title']) ||
+    '';
+  const trimmed = arg.length > 80 ? `${arg.slice(0, 80)}…` : arg;
+  return trimmed ? `${name} · ${trimmed}` : name;
+}
+
 const conversations = new Map<string, AgentState>();
 function stateFor(chatId: string): AgentState {
   let state = conversations.get(chatId);
@@ -73,10 +87,11 @@ const { tryHandleBotCommand } = await import('../bots/commands.ts');
 const { runWithSession } = await import('../agent/context.ts');
 
 manager
-  .start(async (msg) => {
+  .start(async (msg, hopts) => {
     log.debug({ chatId: msg.chatId }, 'incoming message');
     const state = stateFor(msg.chatId);
     const sessionId = `bot:${msg.chatId}`;
+    const sink = hopts?.sink;
 
     // Bot-level slash commands run inside the chat's session ALS scope so
     // they can read/mutate per-session state (tasks, plan mode). Handled
@@ -86,6 +101,7 @@ manager
     );
     if (handled) {
       log.debug({ chatId: msg.chatId, command: msg.text.split(' ')[0] }, 'bot command');
+      sink?.({ type: 'final' });
       return handled;
     }
 
@@ -103,11 +119,17 @@ manager
       rules,
       souls,
       hooks,
-      onToolUse: (name, input) => log.debug({ tool: name, input }, 'tool_use'),
+      onAssistantText: (t) => sink?.({ type: 'text', text: t }),
+      onToolUse: (name, input) => {
+        log.debug({ tool: name, input }, 'tool_use');
+        sink?.({ type: 'status', text: formatToolStatus(name, input) });
+      },
       onToolResult: (name, _output, isError) =>
         isError ? log.warn({ tool: name }, 'tool_error') : undefined,
-      onRetry: (attempt, delayMs, why) =>
-        log.warn({ attempt, delayMs, why }, 'provider retry'),
+      onRetry: (attempt, delayMs, why) => {
+        log.warn({ attempt, delayMs, why }, 'provider retry');
+        sink?.({ type: 'status', text: `retrying provider (${attempt}) — ${why}` });
+      },
       onHook: (result) =>
         log.info(
           { hook: result.hook, exit: result.exitCode, ms: result.durationMs },
@@ -116,6 +138,7 @@ manager
       onAttachment: (a: { kind: string; path: string; caption?: string }) =>
         attachments.push(a),
     });
+    sink?.({ type: 'final' });
     if (turn.reason !== 'end-turn')
       log.warn({ chatId: msg.chatId, reason: turn.reason }, 'turn ended early');
     if (attachments.length > 0)
