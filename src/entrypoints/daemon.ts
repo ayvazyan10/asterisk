@@ -7,8 +7,10 @@ import { createBotManager } from '../bots/manager.ts';
 import { loadConfig } from '../config/load.ts';
 import { createDaemonLogger } from '../daemon/logger.ts';
 import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
+import { createMcpManager } from '../mcp/manager.ts';
 import { createAnthropicProvider } from '../providers/anthropic.ts';
 import { createOllamaProvider } from '../providers/ollama.ts';
+import { setExtraTools } from '../tools/registry.ts';
 import type { Provider } from '../types/messages.ts';
 import type { AgentState } from '../agent/loop.ts';
 
@@ -39,6 +41,18 @@ function pickProvider(): Provider {
 
 const provider = pickProvider();
 log.info({ provider: provider.name }, 'provider ready');
+
+const mcp = createMcpManager();
+mcp
+  .reload()
+  .then((res) => {
+    setExtraTools(mcp.tools);
+    log.info(
+      { connected: res.connected, failed: res.failed.map((f) => f.name) },
+      'mcp servers',
+    );
+  })
+  .catch((e) => log.warn({ err: e }, 'mcp reload failed'));
 
 const conversations = new Map<string, AgentState>();
 function stateFor(chatId: string): AgentState {
@@ -75,6 +89,7 @@ async function shutdown(signal: string): Promise<void> {
   clearInterval(interval);
   clearInterval(keepAlive);
   await manager.stop().catch(() => {});
+  await mcp.shutdown().catch(() => {});
   setTimeout(() => process.exit(0), 100);
 }
 

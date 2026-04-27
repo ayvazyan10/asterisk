@@ -1,13 +1,16 @@
 #!/usr/bin/env bun
-// Asterisk REPL entry. Selects a provider based on env, then mounts the Ink app.
+// Asterisk REPL entry. Selects a provider based on env, connects MCP servers,
+// then mounts the Ink app.
 
 import { render } from 'ink';
 import React from 'react';
 
 import { createAgentState } from '../agent/loop.ts';
+import { createMcpManager } from '../mcp/manager.ts';
 import { createAnthropicProvider } from '../providers/anthropic.ts';
 import { createOllamaProvider } from '../providers/ollama.ts';
 import { App } from '../repl/App.tsx';
+import { setExtraTools } from '../tools/registry.ts';
 import type { Provider } from '../types/messages.ts';
 
 function pickProvider(): Provider {
@@ -25,5 +28,23 @@ function pickProvider(): Provider {
 
 const provider = pickProvider();
 const state = createAgentState();
+const mcp = createMcpManager();
 
-render(<App provider={provider} state={state} />);
+// Connect any pre-configured MCP servers in the background. We don't block
+// REPL startup on this — the user sees `/mcp list` reflecting state once the
+// connections finish (or fail).
+void mcp
+  .reload()
+  .then(() => setExtraTools(mcp.tools))
+  .catch(() => {
+    /* a failed MCP server is reported via /mcp list, not a startup crash */
+  });
+
+process.on('SIGINT', () => {
+  void mcp.shutdown();
+});
+process.on('exit', () => {
+  void mcp.shutdown();
+});
+
+render(<App initialProvider={provider} state={state} mcp={mcp} />);

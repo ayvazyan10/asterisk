@@ -6,12 +6,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { editTool } from '../src/tools/edit.ts';
 import { globTool } from '../src/tools/glob.ts';
 import { readTool } from '../src/tools/read.ts';
-import { ALL_TOOLS, getTool, toolDefinitions } from '../src/tools/registry.ts';
+import { BUILTIN_TOOLS, getTool, listTools, setExtraTools, toolDefinitions } from '../src/tools/registry.ts';
 import { writeTool } from '../src/tools/write.ts';
 
 describe('tool registry', () => {
   it('exposes the six expected starter tools', () => {
-    const names = ALL_TOOLS.map((t) => t.name).sort();
+    const names = BUILTIN_TOOLS.map((t) => t.name).sort();
     expect(names).toEqual(['Bash', 'Edit', 'Glob', 'Grep', 'Read', 'Write']);
   });
 
@@ -24,6 +24,20 @@ describe('tool registry', () => {
   it('getTool returns the right entry or undefined', () => {
     expect(getTool('Read')?.name).toBe('Read');
     expect(getTool('Nope')).toBeUndefined();
+  });
+
+  it('setExtraTools merges into the live tool list', () => {
+    const extra = {
+      name: 'TestExtra',
+      description: 'just a test',
+      input_schema: { type: 'object', properties: {}, additionalProperties: true } as const,
+      execute: async () => ({ output: 'ok', isError: false }),
+    };
+    setExtraTools([extra]);
+    expect(listTools().some((t) => t.name === 'TestExtra')).toBe(true);
+    expect(getTool('TestExtra')?.name).toBe('TestExtra');
+    setExtraTools([]);
+    expect(listTools().some((t) => t.name === 'TestExtra')).toBe(false);
   });
 });
 

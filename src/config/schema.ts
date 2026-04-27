@@ -50,12 +50,39 @@ const DaemonSchema = z.object({
   heartbeatSeconds: z.number().int().min(5).default(60),
 });
 
+// MCP server entry — either stdio (spawned subprocess) or http (Streamable
+// HTTP endpoint). Reference: https://modelcontextprotocol.io/specification
+const McpStdioServerSchema = z.object({
+  name: z.string().min(1),
+  transport: z.literal('stdio'),
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  env: z.record(z.string()).default({}),
+  enabled: z.boolean().default(true),
+});
+
+const McpHttpServerSchema = z.object({
+  name: z.string().min(1),
+  transport: z.literal('http'),
+  url: z.string().url(),
+  headers: z.record(z.string()).default({}),
+  enabled: z.boolean().default(true),
+});
+
+export const McpServerSchema = z.discriminatedUnion('transport', [
+  McpStdioServerSchema,
+  McpHttpServerSchema,
+]);
+
+export type McpServerConfig = z.infer<typeof McpServerSchema>;
+
 export const ConfigSchema = z.object({
   provider: ProviderSchema.default('ollama'),
   ollama: OllamaSchema.default({}),
   anthropic: AnthropicSchema.default({}),
   bots: BotsSchema.default({}),
   daemon: DaemonSchema.default({}),
+  mcpServers: z.array(McpServerSchema).default([]),
 });
 
 export type AsteriskConfig = z.infer<typeof ConfigSchema>;

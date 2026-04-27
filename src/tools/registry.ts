@@ -1,4 +1,6 @@
-// Tool registry — central registration of all tools.
+// Tool registry — central registration. The built-in set is static; MCP tools
+// can be added at runtime via setExtraTools so the agent loop sees them
+// alongside the built-ins without a special code path.
 
 import { bashTool } from './bash.ts';
 import { editTool } from './edit.ts';
@@ -8,14 +10,31 @@ import { readTool } from './read.ts';
 import type { Tool } from './types.ts';
 import { writeTool } from './write.ts';
 
-export const ALL_TOOLS: Tool[] = [bashTool, readTool, writeTool, editTool, grepTool, globTool];
+export const BUILTIN_TOOLS: Tool[] = [
+  bashTool,
+  readTool,
+  writeTool,
+  editTool,
+  grepTool,
+  globTool,
+];
+
+let extraTools: Tool[] = [];
+
+export function setExtraTools(tools: Tool[]): void {
+  extraTools = tools;
+}
+
+export function listTools(): Tool[] {
+  return [...BUILTIN_TOOLS, ...extraTools];
+}
 
 export function getTool(name: string): Tool | undefined {
-  return ALL_TOOLS.find((t) => t.name === name);
+  return listTools().find((t) => t.name === name);
 }
 
 export function toolDefinitions() {
-  return ALL_TOOLS.map((t) => ({
+  return listTools().map((t) => ({
     name: t.name,
     description: t.description,
     input_schema: t.input_schema,
