@@ -16,8 +16,8 @@ same assistant to Telegram and WhatsApp.
   API, [Model Context Protocol](https://modelcontextprotocol.io), Playwright.
 - **Apache 2.0** licensed.
 
-Status `0.1.0` — early but real. ~30 built-in tools, 15 slash commands,
-14 daemon-managed scheduling/lifecycle features, 5 bundled skills, and a
+Status `0.1.0` — early but real. ~30 built-in tools, 17 slash commands,
+14 daemon-managed scheduling/lifecycle features, 8 bundled skills, and a
 SOUL.md persona system that bot users can manage per-chat.
 
 ## Install
@@ -117,6 +117,8 @@ asterisk help
 | `/skills`          | List installed skills (bundled + user + project)            |
 | `/skill [name]`    | Run a skill — picker if no name given                       |
 | `/soul [verb]`     | Show / `init` / `where` your SOUL.md persona                |
+| `/plan`            | Toggle Plan Mode (read-only research mode)                  |
+| `/tasks`           | List the agent's in-flight tasks for this session           |
 | `/hooks`           | Manage agent-loop lifecycle hooks (visual)                  |
 | `/quit`            | Exit the REPL                                               |
 
@@ -169,13 +171,19 @@ Plus any tools exposed by configured MCP servers, namespaced as
 
 ## Skills, rules, hooks, souls
 
-**Skills** — reusable workflows. 5 bundled out of the box:
+**Skills** — reusable workflows. 8 bundled out of the box:
 
 - `simplify` — review your recent changes for reuse / quality / efficiency
 - `batch` — apply one operation across many targets, with progress tracking
 - `stuck` — diagnose why a task is blocked, propose alternatives
 - `dream` — free-form roam, find one improvement worth making
 - `skillify` — capture the current conversation as a new SKILL.md
+- `verify` — run typecheck / lint / tests / build for the project, classify
+  each result, and isolate root causes for any failures
+- `debug` — diagnose a specific failure end-to-end: reproduce, read the
+  error literally, hypothesise + verify, propose a concrete fix, re-run
+- `feature` — drive a feature plan → implement → review → verify →
+  commit, with Plan Mode discipline on the planning phase
 
 Add your own at `~/.asterisk/skills/<name>/SKILL.md` (user-global) or
 `<repo>/.asterisk/skills/<name>/SKILL.md` (project-local). User/project

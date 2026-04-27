@@ -14,6 +14,9 @@ import { createOllamaProvider } from '../providers/ollama.ts';
 import { loadRules } from '../rules/loader.ts';
 import { loadSkills, type Skill } from '../skills/loader.ts';
 import { DEFAULT_SOUL_TEMPLATE, type Soul, loadSouls } from '../soul/loader.ts';
+import { isPlanMode, setPlanMode } from '../tools/planmode.ts';
+import { _allTasks } from '../tools/tasks.ts';
+import { runWithSession } from '../agent/context.ts';
 import { listTools, setExtraTools } from '../tools/registry.ts';
 import type { Provider } from '../types/messages.ts';
 import { asteriskPaths } from '../daemon/paths.ts';
@@ -540,6 +543,40 @@ export const COMMANDS: SlashCommand[] = [
         return toggleHookByName(name);
       }
       return `unknown /hooks verb: ${verb}`;
+    },
+  },
+  {
+    name: '/plan',
+    description: 'Toggle Plan Mode — read-only research mode (no Edit/Write/Bash)',
+    execute() {
+      // Plan mode is per-session; the REPL session is "repl".
+      return runWithSession({ id: 'repl', scope: 'repl' }, async () => {
+        const next = !isPlanMode();
+        setPlanMode(next);
+        return next
+          ? '✓ Plan Mode ON · only read-only tools available until /plan again.'
+          : '✓ Plan Mode OFF · all tools re-enabled.';
+      });
+    },
+  },
+  {
+    name: '/tasks',
+    description: 'List the agent\'s in-flight tasks for this session',
+    execute() {
+      return runWithSession({ id: 'repl', scope: 'repl' }, () => {
+        const tasks = _allTasks();
+        if (tasks.length === 0) {
+          return '(no tasks · the agent creates them as it tackles multi-step work)';
+        }
+        const icon = (s: string): string =>
+          s === 'completed' ? '✓' : s === 'in_progress' ? '◐' : s === 'cancelled' ? '✗' : '○';
+        const lines = [`Tasks · ${tasks.length} total`];
+        for (const t of tasks) {
+          const desc = t.description ? ` — ${t.description}` : '';
+          lines.push(`  ${icon(t.status)} #${t.id}  ${t.title}${desc}`);
+        }
+        return lines.join('\n');
+      });
     },
   },
   {

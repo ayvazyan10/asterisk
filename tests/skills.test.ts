@@ -63,7 +63,16 @@ describe('loadSkills', () => {
   it('returns the bundled set when no user/project skills are installed', () => {
     const skills = loadSkills(projectRoot);
     const names = skills.map((s) => s.name).sort();
-    expect(names).toEqual(['batch', 'dream', 'simplify', 'skillify', 'stuck']);
+    expect(names).toEqual([
+      'batch',
+      'debug',
+      'dream',
+      'feature',
+      'simplify',
+      'skillify',
+      'stuck',
+      'verify',
+    ]);
     for (const s of skills) expect(s.scope).toBe('bundled');
   });
 

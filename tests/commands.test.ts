@@ -66,6 +66,7 @@ describe('command registry', () => {
         '/hooks',
         '/mcp',
         '/model',
+        '/plan',
         '/provider',
         '/quit',
         '/reset',
@@ -74,6 +75,7 @@ describe('command registry', () => {
         '/skills',
         '/soul',
         '/status',
+        '/tasks',
         '/tools',
       ].sort(),
     );
