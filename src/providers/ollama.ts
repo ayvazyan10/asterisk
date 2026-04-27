@@ -10,6 +10,7 @@ import type {
   ToolDefinition,
   ToolUseBlock,
 } from '../types/messages.ts';
+import { ProviderError, classifyHttpError, parseRetryAfter } from './errors.ts';
 
 interface OllamaConfig {
   baseUrl: string;
@@ -161,15 +162,28 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
       };
 
       const url = `${cfg.baseUrl.replace(/\/$/, '')}/api/chat`;
-      const res = await fetch(url, {
+      const fetchInit: RequestInit = {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
-      });
+      };
+      if (req.signal) fetchInit.signal = req.signal;
+      let res: Response;
+      try {
+        res = await fetch(url, fetchInit);
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') {
+          throw new ProviderError('aborted', 'request aborted', { cause: e });
+        }
+        throw new ProviderError('network', `network error reaching ${url}: ${(e as Error).message}`, {
+          cause: e,
+        });
+      }
 
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Ollama request failed (${res.status}): ${text}`);
+        const text = await res.text().catch(() => '');
+        const retryAfterSeconds = parseRetryAfter(res.headers.get('retry-after'));
+        throw classifyHttpError(res.status, text, retryAfterSeconds);
       }
 
       const data = (await res.json()) as OllamaChatResponse;

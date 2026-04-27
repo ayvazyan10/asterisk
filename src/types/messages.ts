@@ -41,6 +41,7 @@ export interface ProviderRequest {
   messages: Message[];
   tools: ToolDefinition[];
   maxTokens?: number;
+  signal?: AbortSignal;
 }
 
 export interface ProviderResponse {

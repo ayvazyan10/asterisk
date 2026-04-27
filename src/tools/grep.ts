@@ -26,7 +26,7 @@ export const grepTool: Tool = {
     required: ['pattern'],
     additionalProperties: false,
   },
-  async execute(input) {
+  async execute(input, opts) {
     const pattern = typeof input['pattern'] === 'string' ? input['pattern'] : '';
     if (!pattern) return err('pattern is required');
     const path = typeof input['path'] === 'string' ? input['path'] : '.';
@@ -44,7 +44,9 @@ export const grepTool: Tool = {
           })()
         : ['-rn', '-E', pattern, path];
 
-      const result = await execa(cmd, args, { reject: false, encoding: 'utf8' });
+      const baseOpts = { reject: false as const, encoding: 'utf8' as const };
+      const execOpts = opts?.signal ? { ...baseOpts, cancelSignal: opts.signal } : baseOpts;
+      const result = await execa(cmd, args, execOpts);
       const stdout = typeof result.stdout === 'string' ? result.stdout : '';
       const stderr = typeof result.stderr === 'string' ? result.stderr : '';
       // grep / rg return exit 1 on no-match; surface that politely.

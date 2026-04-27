@@ -24,8 +24,9 @@ describe('agent loop', () => {
       },
     ]);
     const state = createAgentState();
-    const text = await runAgentTurn(provider, state, 'hello');
-    expect(text).toBe('hi there');
+    const result = await runAgentTurn(provider, state, 'hello');
+    expect(result.finalText).toBe('hi there');
+    expect(result.reason).toBe('end-turn');
     expect(state.history).toHaveLength(2);
   });
 
@@ -49,8 +50,9 @@ describe('agent loop', () => {
     ]);
     const state = createAgentState();
     const onToolUse = vi.fn();
-    const text = await runAgentTurn(provider, state, 'run echo', { onToolUse });
-    expect(text).toBe('done');
+    const result = await runAgentTurn(provider, state, 'run echo', { onToolUse });
+    expect(result.finalText).toBe('done');
+    expect(result.reason).toBe('end-turn');
     expect(onToolUse).toHaveBeenCalledWith('Bash', { command: 'echo loop-ok' });
     // user, assistant(tool_use), user(tool_result), assistant(text) = 4 entries
     expect(state.history).toHaveLength(4);
@@ -71,7 +73,35 @@ describe('agent loop', () => {
     ]);
     const state = createAgentState();
     const onToolResult = vi.fn();
-    await runAgentTurn(provider, state, 'q', { onToolResult });
+    const result = await runAgentTurn(provider, state, 'q', { onToolResult });
+    expect(result.reason).toBe('end-turn');
     expect(onToolResult).toHaveBeenCalledWith('NotATool', expect.stringContaining('not found'), true);
+  });
+
+  it('returns reason=aborted when the signal fires before send', async () => {
+    const ctrl = new AbortController();
+    ctrl.abort();
+    const provider = fakeProvider([]);
+    const state = createAgentState();
+    const result = await runAgentTurn(provider, state, 'hello', { signal: ctrl.signal });
+    expect(result.reason).toBe('aborted');
+  });
+
+  it('caps the loop at maxTurns and returns max-turns', async () => {
+    // Provider always asks for a tool call → infinite loop without a cap.
+    const provider: Provider = {
+      name: 'loop',
+      async send() {
+        return {
+          content: [
+            { type: 'tool_use', id: 'i', name: 'Bash', input: { command: 'echo x' } },
+          ],
+          stopReason: 'tool_use',
+        };
+      },
+    };
+    const state = createAgentState();
+    const result = await runAgentTurn(provider, state, 'go', { maxTurns: 3 });
+    expect(result.reason).toBe('max-turns');
   });
 });

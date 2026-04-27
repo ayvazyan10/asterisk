@@ -202,7 +202,7 @@ export function App({ initialProvider, state, mcp }: Props) {
       }, PROGRESS_INTERVAL_MS);
 
       try {
-        await runAgentTurn(provider, state, text, {
+        const turn = await runAgentTurn(provider, state, text, {
           onAssistantText: (t) => {
             setWorkingStatus('writing response');
             append('assistant', t);
@@ -217,7 +217,20 @@ export function App({ initialProvider, state, mcp }: Props) {
             setWorkingStatus('thinking');
             append(isError ? 'error' : 'tool-result', `${name} → ${truncate(output, 800)}`);
           },
+          onRetry: (attempt, delayMs, why) => {
+            setWorkingStatus(`retrying (#${attempt} in ${Math.round(delayMs / 1000)}s)`);
+            append('progress', `retrying after ${why} · attempt ${attempt} · waiting ${Math.round(delayMs / 1000)}s`);
+          },
         });
+        if (turn.reason === 'max-turns') {
+          append('error', 'reached the per-turn safety cap (12 turns); stopping');
+        } else if (turn.reason === 'context-overflow') {
+          append('error', 'the conversation exceeded the model context window — try /clear to reset');
+        } else if (turn.reason === 'auth-error') {
+          append('error', 'authentication failed — check ANTHROPIC_API_KEY or run /config');
+        } else if (turn.reason === 'aborted') {
+          append('progress', 'turn cancelled');
+        }
       } catch (e) {
         append('error', `agent error: ${(e as Error).message}`);
       } finally {

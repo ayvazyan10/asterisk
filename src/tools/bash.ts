@@ -20,7 +20,7 @@ export const bashTool: Tool = {
     required: ['command'],
     additionalProperties: false,
   },
-  async execute(input) {
+  async execute(input, opts) {
     const command = typeof input['command'] === 'string' ? input['command'] : '';
     if (!command) return err('command is required');
 
@@ -29,12 +29,16 @@ export const bashTool: Tool = {
     const timeoutMs = Math.min(Math.max(rawTimeout, 1), 600) * 1000;
 
     try {
-      const { stdout, stderr, exitCode } = await execa('bash', ['-lc', command], {
+      const baseOpts = {
         timeout: timeoutMs,
-        reject: false,
+        reject: false as const,
         all: true,
-        encoding: 'utf8',
-      });
+        encoding: 'utf8' as const,
+      };
+      const execOpts = opts?.signal
+        ? { ...baseOpts, cancelSignal: opts.signal }
+        : baseOpts;
+      const { stdout, stderr, exitCode } = await execa('bash', ['-lc', command], execOpts);
       const combined = [stdout, stderr].filter((s) => s && s.length > 0).join('\n');
       const truncated =
         combined.length > 30000

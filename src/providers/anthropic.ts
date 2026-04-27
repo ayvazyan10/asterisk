@@ -8,6 +8,7 @@ import type {
   ProviderRequest,
   ProviderResponse,
 } from '../types/messages.ts';
+import { ProviderError, classifyHttpError } from './errors.ts';
 
 interface AnthropicConfig {
   apiKey: string;
@@ -27,22 +28,31 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
   return {
     name: `anthropic:${model}`,
     async send(req: ProviderRequest): Promise<ProviderResponse> {
-      const response = await client.messages.create({
-        model,
-        max_tokens: req.maxTokens ?? 4096,
-        system: req.system,
-        // The SDK's input message shape matches our internal Message shape
-        // closely enough; cast through unknown to bridge the structural gap.
-        messages: req.messages.map((m) => ({
-          role: m.role === 'system' ? 'user' : m.role,
-          content: m.content as unknown as Anthropic.Messages.MessageParam['content'],
-        })),
-        tools: req.tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-          input_schema: t.input_schema as Anthropic.Messages.Tool.InputSchema,
-        })),
-      });
+      let response: Anthropic.Messages.Message;
+      try {
+        const requestOptions = req.signal ? { signal: req.signal } : {};
+        response = await client.messages.create(
+          {
+            model,
+            max_tokens: req.maxTokens ?? 4096,
+            system: req.system,
+            // The SDK's input message shape matches our internal Message shape
+            // closely enough; cast through unknown to bridge the structural gap.
+            messages: req.messages.map((m) => ({
+              role: m.role === 'system' ? 'user' : m.role,
+              content: m.content as unknown as Anthropic.Messages.MessageParam['content'],
+            })),
+            tools: req.tools.map((t) => ({
+              name: t.name,
+              description: t.description,
+              input_schema: t.input_schema as Anthropic.Messages.Tool.InputSchema,
+            })),
+          },
+          requestOptions,
+        );
+      } catch (e) {
+        throw mapAnthropicError(e);
+      }
 
       const content: ContentBlock[] = [];
       for (const block of response.content) {
@@ -71,4 +81,25 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
       return { content, stopReason };
     },
   };
+}
+
+function mapAnthropicError(e: unknown): ProviderError {
+  if ((e as Error)?.name === 'AbortError') {
+    return new ProviderError('aborted', 'request aborted', { cause: e });
+  }
+  if (e instanceof Anthropic.APIError) {
+    const headers = (e.headers ?? {}) as Record<string, string>;
+    const retryAfterRaw = headers['retry-after'] ?? headers['Retry-After'];
+    const retryAfterSeconds = retryAfterRaw ? Number.parseInt(retryAfterRaw, 10) : undefined;
+    const body = typeof e.message === 'string' ? e.message : '';
+    return classifyHttpError(
+      e.status ?? 0,
+      body,
+      Number.isFinite(retryAfterSeconds) ? retryAfterSeconds : undefined,
+    );
+  }
+  if (e instanceof Anthropic.APIConnectionError) {
+    return new ProviderError('network', e.message ?? 'network error', { cause: e });
+  }
+  return new ProviderError('unknown', (e as Error)?.message ?? 'unknown error', { cause: e });
 }

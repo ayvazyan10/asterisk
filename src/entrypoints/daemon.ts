@@ -70,11 +70,15 @@ manager
   .start(async (msg) => {
     log.debug({ chatId: msg.chatId }, 'incoming message');
     const state = stateFor(msg.chatId);
-    return await runAgentTurn(provider, state, msg.text, {
+    const turn = await runAgentTurn(provider, state, msg.text, {
       onToolUse: (name, input) => log.debug({ tool: name, input }, 'tool_use'),
       onToolResult: (name, _output, isError) =>
         isError ? log.warn({ tool: name }, 'tool_error') : undefined,
+      onRetry: (attempt, delayMs, why) =>
+        log.warn({ attempt, delayMs, why }, 'provider retry'),
     });
+    if (turn.reason !== 'end-turn') log.warn({ chatId: msg.chatId, reason: turn.reason }, 'turn ended early');
+    return turn.finalText;
   })
   .then((started) => log.info({ adapters: started }, 'adapters started'))
   .catch((e) => log.error({ err: e }, 'failed to start adapters'));
