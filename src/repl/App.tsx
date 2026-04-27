@@ -17,6 +17,7 @@ import { CommandMenu, clampSelection, filterCommands } from './CommandMenu.tsx';
 import { Form } from './forms/Form.tsx';
 import { ListPicker } from './forms/ListPicker.tsx';
 import type { CommandResult, FormSpec, ListSpec } from './forms/types.ts';
+import { MarkdownText } from './MarkdownText.tsx';
 import { StatusBar } from './StatusBar.tsx';
 import { WorkingIndicator } from './WorkingIndicator.tsx';
 
@@ -418,8 +419,13 @@ function renderEntry(entry: Entry) {
       );
     case 'assistant':
       return (
-        <Box key={entry.id} flexDirection="column" marginTop={1}>
-          <Text>{entry.text}</Text>
+        <Box key={entry.id} marginTop={1} marginBottom={1}>
+          <Box marginRight={1}>
+            <Text color="cyan">{'⏺ '}</Text>
+          </Box>
+          <Box flexDirection="column" flexGrow={1}>
+            <MarkdownText text={entry.text} />
+          </Box>
         </Box>
       );
     case 'tool':
