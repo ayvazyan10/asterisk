@@ -10,7 +10,22 @@ import { fileURLToPath } from 'node:url';
 import { ensurePaths, asteriskPaths } from './paths.ts';
 import { clearPid, statusFromPidFile, writePid } from './pidfile.ts';
 
-const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+// Walk up from this file's location until we find package.json. Works in both
+// source mode (file is src/daemon/lifecycle.ts) and bundled mode (file is
+// dist/control.js) — the directory layout differs but the marker is the same.
+function findProjectRoot(startFile: string): string {
+  let dir = dirname(startFile);
+  for (let i = 0; i < 8; i++) {
+    if (existsSync(resolve(dir, 'package.json'))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Fallback to a sensible guess: the caller's directory two levels up.
+  return resolve(dirname(startFile), '..', '..');
+}
+
+const PROJECT_ROOT = findProjectRoot(fileURLToPath(import.meta.url));
 
 function daemonEntry(): string {
   const dist = resolve(PROJECT_ROOT, 'dist', 'daemon.js');
