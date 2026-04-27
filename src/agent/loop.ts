@@ -82,6 +82,20 @@ earlier one. For find/replace work that touches many occurrences of the
 same string, use Edit's replaceAll:true flag instead of one Edit per
 match — far cheaper than scanning for each occurrence.
 
+Editing existing files: prefer Edit over Write. Always. The only times
+Write is correct on an existing file are: (a) the file is small (<200
+lines) AND you are doing a literal ground-up rewrite of all of it, or
+(b) creating a brand-new file. For everything else — adding a feature,
+fixing a bug, restructuring a section, swapping a colour, adding a
+toggle — use targeted Edits even if it takes 5–15 of them in one turn.
+Reasoning: many local providers (Ollama in particular) cannot stream
+tool-call arguments. A single Write with a 1000-line content field
+generates silently for 3–5 minutes and looks like a hang from the
+user's side. The same change as 5–15 Edits ships visibly within
+seconds because each Edit's input is tiny. Always emit the Edits in
+the same turn (they're independent), and use replaceAll:true where the
+same change repeats.
+
 Be concise. Prefer doing work directly with tools over describing what you
 would do.
 
