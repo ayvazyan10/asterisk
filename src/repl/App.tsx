@@ -250,8 +250,14 @@ export function App({ initialProvider, state, mcp }: Props) {
         setInput(`${target.name} `);
         return;
       }
+      // Echo the *resolved* command in the transcript, not the partial
+      // input the user typed (so `/` Enter on highlighted /status echoes
+      // "› /status", not "› /").
+      const space = trimmed.indexOf(' ');
+      const argsPart = space === -1 ? '' : trimmed.slice(space);
+      const fullCommand = `${target.name}${argsPart}`;
       setInput('');
-      await runSlashCommand(target.name, trimmed);
+      await runSlashCommand(fullCommand, fullCommand);
     },
     [append, busy, menuIndex, runChat, runSlashCommand],
   );
@@ -322,9 +328,11 @@ function renderEntry(entry: Entry) {
   switch (entry.kind) {
     case 'user':
       return (
-        <Box key={entry.id}>
-          <Text color="cyan">{'› '}</Text>
-          <Text>{entry.text}</Text>
+        <Box key={entry.id} marginTop={1}>
+          <Text color="cyan" bold>
+            {'› '}
+          </Text>
+          <Text bold>{entry.text}</Text>
         </Box>
       );
     case 'assistant':
@@ -350,22 +358,82 @@ function renderEntry(entry: Entry) {
         </Box>
       );
     case 'system':
-      return (
-        <Box key={entry.id} flexDirection="column" marginTop={1}>
-          <Text color="magenta" dimColor>
-            {entry.text}
-          </Text>
-        </Box>
-      );
+      return renderSystemPanel(entry);
     case 'error':
       return (
         <Box key={entry.id} flexDirection="column" marginTop={1}>
-          <Text color="red">{entry.text}</Text>
+          <Box borderStyle="round" borderColor="red" paddingX={2} flexDirection="column">
+            {entry.text.split('\n').map((line, i) => (
+              <Text key={`${entry.id}_e_${i}`} color="red">
+                {line}
+              </Text>
+            ))}
+          </Box>
         </Box>
       );
     default:
       return <Text key={entry.id}>{entry.text}</Text>;
   }
+}
+
+// System output (slash-command results) — render in a soft bordered panel
+// with bright text and key/value coloring on lines that look like
+// "Label   value" (two-or-more-space separator).
+function renderSystemPanel(entry: Entry) {
+  const lines = entry.text.split('\n');
+  return (
+    <Box key={entry.id} flexDirection="column" marginTop={1}>
+      <Box
+        borderStyle="round"
+        borderColor="gray"
+        paddingX={2}
+        paddingY={0}
+        flexDirection="column"
+      >
+        {lines.map((line, i) => {
+          const id = `${entry.id}_l_${i}`;
+          if (line.length === 0) {
+            return <Text key={id}> </Text>;
+          }
+          const kv = parseKeyValue(line);
+          if (kv) {
+            return (
+              <Box key={id}>
+                <Text color="cyan">{kv.label}</Text>
+                <Text>{kv.gap}</Text>
+                <Text>{kv.value}</Text>
+              </Box>
+            );
+          }
+          if (line.startsWith('  ✓ ') || line.startsWith('✓ ')) {
+            return (
+              <Text key={id} color="green">
+                {line}
+              </Text>
+            );
+          }
+          if (line.startsWith('  ✗ ') || line.startsWith('✗ ')) {
+            return (
+              <Text key={id} color="red">
+                {line}
+              </Text>
+            );
+          }
+          return <Text key={id}>{line}</Text>;
+        })}
+      </Box>
+    </Box>
+  );
+}
+
+// Match "Label   value" — at least two spaces separate the columns. Also
+// match "label: value" with one space if the colon is glued to the label.
+function parseKeyValue(line: string): { label: string; gap: string; value: string } | null {
+  const m = /^([A-Za-z][\w/.\- ]{0,18})(\s{2,})(\S.*)$/.exec(line);
+  if (m && m[1] && m[2] && m[3]) return { label: m[1], gap: m[2], value: m[3] };
+  const c = /^([A-Za-z][\w/.\- ]{0,18}:)(\s+)(\S.*)$/.exec(line);
+  if (c && c[1] && c[2] && c[3]) return { label: c[1], gap: c[2], value: c[3] };
+  return null;
 }
 
 function formatArgs(input: Record<string, unknown>): string {
