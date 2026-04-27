@@ -32,13 +32,6 @@ import { WorkingIndicator } from './WorkingIndicator.tsx';
 
 type Modal = FormSpec | ListSpec | null;
 
-// Drumbeat cadence for the in-transcript progress entry. claude-code-main
-// updates its inline indicator every 50ms; we don't need that resolution
-// for a transcript line, but 60s is way too sparse — long silent
-// generations look hung. 15s is a good middle ground: noticeable updates
-// without spamming the transcript.
-const PROGRESS_INTERVAL_MS = 15_000;
-
 const VERSION = '0.1.0';
 
 type EntryKind =
@@ -246,65 +239,6 @@ export function App({ initialProvider, state, mcp }: Props) {
       setWorkingSince(start);
       setWorkingStatus('thinking');
 
-      // Drumbeat: every PROGRESS_INTERVAL_MS while still busy, append a
-      // progress entry summarising what the agent has been up to since the
-      // turn started.
-      const progressTimer = setInterval(() => {
-        const elapsedSec = Math.floor((Date.now() - start) / 1000);
-        const minutes = Math.floor(elapsedSec / 60);
-        const silenceSec = Math.floor((Date.now() - lastSignalAt) / 1000);
-        // Always lead with the most active signal:
-        //   streaming text > chain-of-thought > tool tally > nothing.
-        let activity: string;
-        if (streamingChars > 0) {
-          activity = `streaming · ${streamingChars} chars`;
-          if (Object.keys(tally).length > 0) {
-            const summary = Object.entries(tally)
-              .sort((a, b) => b[1] - a[1])
-              .map(([name, count]) => `${count}× ${name}`)
-              .join(', ');
-            activity += ` · prior: ${summary}`;
-          }
-        } else if (thinkingChars > 0) {
-          // qwen3-thinking / deepseek-r1: model reasoning inside <think>.
-          // Surface the count so a 2-minute reasoning phase doesn't look
-          // like a hang.
-          activity = `thinking · ${thinkingChars} chars`;
-          if (Object.keys(tally).length > 0) {
-            const summary = Object.entries(tally)
-              .sort((a, b) => b[1] - a[1])
-              .map(([name, count]) => `${count}× ${name}`)
-              .join(', ');
-            activity += ` · prior: ${summary}`;
-          }
-        } else if (Object.keys(tally).length > 0) {
-          // Tools have fired but nothing new since. The most likely cause
-          // is Ollama building a big tool_call (Write with N-thousand-line
-          // content) — Ollama doesn't stream tool_call arguments, so we're
-          // genuinely silent until the response completes. Show the silence
-          // duration explicitly so the user knows it's not a hang.
-          const summary = Object.entries(tally)
-            .sort((a, b) => b[1] - a[1])
-            .map(([name, count]) => `${count}× ${name}`)
-            .join(', ');
-          if (silenceSec >= 20) {
-            activity = `${summary} · model is generating reply (no stream — likely a large tool input · ${silenceSec}s of silence)`;
-          } else {
-            activity = summary;
-          }
-        } else if (silenceSec >= 20) {
-          // No tools, no deltas, no thinking, just silence. Tell the user.
-          activity = `model is generating · ${silenceSec}s of silence (no content stream — common during long initial thinking)`;
-        } else {
-          activity = 'still thinking, no tools called yet';
-        }
-        const last = lastTool ? ` · last: ${lastTool}` : '';
-        append(
-          'progress',
-          `still working · ${minutes}m elapsed · ${activity}${last}`,
-        );
-      }, PROGRESS_INTERVAL_MS);
-
       // Streaming bookkeeping: deltas from the provider go into a single
       // assistant entry that we update in place rather than appending a new
       // line per token. Reset between model turns within the same agent loop.
@@ -315,15 +249,6 @@ export function App({ initialProvider, state, mcp }: Props) {
       // scenes — counted for the progress indicator but not added to the
       // transcript. Reset on each visible-text turn.
       let thinkingChars = 0;
-      // Last signal timestamp — used by the progress drumbeat to detect
-      // long silences. Ollama does NOT stream tool_call arguments: when the
-      // model is generating a multi-thousand-line Write payload, no content
-      // / thinking frames arrive at all. Without this the indicator looks
-      // identical to a hang.
-      let lastSignalAt = Date.now();
-      const bump = (): void => {
-        lastSignalAt = Date.now();
-      };
       // Did any assistant text actually reach the transcript? Used to
       // decide whether to fall back to turn.finalText below — when the
       // model emits only tool calls (no closing summary), the agent loop
@@ -344,13 +269,11 @@ export function App({ initialProvider, state, mcp }: Props) {
           hooks,
           ...(outputStyle ? { outputStyle } : {}),
           onAssistantThinking: (delta: string) => {
-            bump();
             thinkingChars += delta.length;
             // Don't push this into the transcript — just surface progress.
             setWorkingStatus(`thinking · ${thinkingChars} chars`);
           },
           onAssistantDelta: (delta: string) => {
-            bump();
             renderedAnyText = true;
             streamingText += delta;
             streamingChars += delta.length;
@@ -388,7 +311,6 @@ export function App({ initialProvider, state, mcp }: Props) {
             renderedAnyText = true;
           },
           onToolUse: (name, toolInput) => {
-            bump();
             tally[name] = (tally[name] ?? 0) + 1;
             lastTool = name;
             const argsString = formatArgs(toolInput);
@@ -402,7 +324,6 @@ export function App({ initialProvider, state, mcp }: Props) {
             }
           },
           onToolResult: (name, output, isError) => {
-            bump();
             setWorkingStatus('thinking');
             const firstLine = output.split('\n')[0] ?? '';
             const oneLine = `${name} → ${truncate(firstLine, 200)}`;
@@ -466,7 +387,6 @@ export function App({ initialProvider, state, mcp }: Props) {
       } catch (e) {
         append('error', `agent error: ${(e as Error).message}`);
       } finally {
-        clearInterval(progressTimer);
         setBusy(false);
         setWorkingSince(null);
         setWorkingStatus('thinking');
