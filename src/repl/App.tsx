@@ -1,15 +1,17 @@
-// Asterisk REPL — bordered input + scrolling transcript + status footer.
+// Asterisk REPL — bordered input + scrolling transcript + status footer +
+// visual command picker triggered by `/`.
 // Reference: https://github.com/vadimdemedes/ink + ink-text-input examples.
 
-import { Box, Static, Text, useApp } from 'ink';
+import { Box, Static, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { type AgentState, runAgentTurn } from '../agent/loop.ts';
 import { lookupCommand } from '../commands/registry.ts';
 import type { McpManager } from '../mcp/manager.ts';
 import type { Provider } from '../types/messages.ts';
 import { Banner } from './Banner.tsx';
+import { CommandMenu, clampSelection, filterCommands } from './CommandMenu.tsx';
 import { StatusBar } from './StatusBar.tsx';
 
 const VERSION = '0.1.0';
@@ -34,46 +36,59 @@ export function App({ initialProvider, state, mcp }: Props) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [menuIndex, setMenuIndex] = useState(0);
   const cwd = useMemo(() => process.cwd(), []);
+
+  const menuOpen = input.startsWith('/');
+
+  // Keep selection inside the filtered list as the user types.
+  useEffect(() => {
+    setMenuIndex((prev) => clampSelection(input, prev));
+  }, [input]);
 
   const append = useCallback((kind: EntryKind, text: string) => {
     setEntries((prev) => [...prev, { id: `${prev.length}_${Date.now()}`, kind, text }]);
   }, []);
 
-  const onSubmit = useCallback(
-    async (raw: string) => {
-      const trimmed = raw.trim();
-      if (!trimmed || busy) return;
-      setInput('');
-
-      const slash = lookupCommand(trimmed);
-      if (slash) {
-        append('user', trimmed);
-        try {
-          const out = await slash.command.execute(
-            {
-              state,
-              provider,
-              setProvider,
-              clearHistory: () => {
-                state.history.length = 0;
-              },
-              exit,
-              mcp,
-            },
-            slash.args,
-          );
-          if (out !== null && out !== undefined) append('system', out);
-        } catch (e) {
-          append('error', `command error: ${(e as Error).message}`);
-        }
+  // Picker key handling. ink-text-input ignores up/down arrows and tab, so we
+  // can safely intercept those without conflicting with the text editor.
+  useInput(
+    (_char, key) => {
+      if (!menuOpen || busy) return;
+      const matches = filterCommands(input);
+      if (matches.length === 0) {
+        if (key.escape) setInput('');
         return;
       }
 
-      append('user', trimmed);
+      if (key.upArrow) {
+        setMenuIndex((i) => (i - 1 + matches.length) % matches.length);
+        return;
+      }
+      if (key.downArrow) {
+        setMenuIndex((i) => (i + 1) % matches.length);
+        return;
+      }
+      if (key.tab) {
+        const target = matches[clampSelection(input, menuIndex)];
+        if (!target) return;
+        const wantsArgs = !!target.usage && /\s/.test(target.usage.trim());
+        setInput(wantsArgs ? `${target.name} ` : target.name);
+        return;
+      }
+      if (key.escape) {
+        setInput('');
+      }
+    },
+    { isActive: menuOpen },
+  );
+
+  const runChat = useCallback(
+    async (text: string) => {
+      append('user', text);
       setBusy(true);
       try {
-        await runAgentTurn(provider, state, trimmed, {
+        await runAgentTurn(provider, state, text, {
           onAssistantText: (t) => append('assistant', t),
           onToolUse: (name, toolInput) =>
             append('tool', `${name}(${formatArgs(toolInput)})`),
@@ -86,7 +101,83 @@ export function App({ initialProvider, state, mcp }: Props) {
         setBusy(false);
       }
     },
-    [append, busy, exit, mcp, provider, state],
+    [append, provider, state],
+  );
+
+  const runSlashCommand = useCallback(
+    async (commandLine: string, displayInput: string) => {
+      const cmd = lookupCommand(commandLine);
+      if (!cmd) {
+        append('user', displayInput);
+        append('error', `unknown command: ${commandLine.split(' ')[0]}`);
+        return;
+      }
+      append('user', displayInput);
+      try {
+        const out = await cmd.command.execute(
+          {
+            state,
+            provider,
+            setProvider,
+            clearHistory: () => {
+              state.history.length = 0;
+            },
+            exit,
+            mcp,
+          },
+          cmd.args,
+        );
+        if (out !== null && out !== undefined) append('system', out);
+      } catch (e) {
+        append('error', `command error: ${(e as Error).message}`);
+      }
+    },
+    [append, exit, mcp, provider, state],
+  );
+
+  const onSubmit = useCallback(
+    async (raw: string) => {
+      const trimmed = raw.trim();
+      if (!trimmed || busy) return;
+
+      if (!trimmed.startsWith('/')) {
+        setInput('');
+        await runChat(trimmed);
+        return;
+      }
+
+      // Slash path. If the user typed an exact name we run it. If it's a
+      // partial name with a unique highlighted match we either complete-and-
+      // wait (when the command takes args) or run the highlighted one.
+      const directMatch = lookupCommand(trimmed);
+      if (directMatch) {
+        setInput('');
+        await runSlashCommand(trimmed, trimmed);
+        return;
+      }
+
+      const matches = filterCommands(trimmed);
+      if (matches.length === 0) {
+        setInput('');
+        append('user', trimmed);
+        append('error', `unknown command: ${trimmed.split(' ')[0]}`);
+        return;
+      }
+      const target = matches[clampSelection(trimmed, menuIndex)];
+      if (!target) {
+        setInput('');
+        return;
+      }
+      const wantsArgs = !!target.usage && /\s/.test(target.usage.trim());
+      const namePartOnly = trimmed.indexOf(' ') === -1;
+      if (wantsArgs && namePartOnly) {
+        setInput(`${target.name} `);
+        return;
+      }
+      setInput('');
+      await runSlashCommand(target.name, trimmed);
+    },
+    [append, busy, menuIndex, runChat, runSlashCommand],
   );
 
   return (
@@ -104,7 +195,7 @@ export function App({ initialProvider, state, mcp }: Props) {
       <Box flexDirection="column" marginTop={1}>
         <Box
           borderStyle="round"
-          borderColor={busy ? 'yellow' : 'gray'}
+          borderColor={busy ? 'yellow' : menuOpen ? 'cyan' : 'gray'}
           paddingX={1}
         >
           <Text color="cyan">{busy ? '◐ ' : '› '}</Text>
@@ -115,10 +206,11 @@ export function App({ initialProvider, state, mcp }: Props) {
               value={input}
               onChange={setInput}
               onSubmit={onSubmit}
-              placeholder="ask anything, or /help"
+              placeholder="ask anything, or / for commands"
             />
           )}
         </Box>
+        <CommandMenu input={input} selectedIndex={menuIndex} />
         <StatusBar
           providerName={provider.name}
           historyCount={state.history.length}
