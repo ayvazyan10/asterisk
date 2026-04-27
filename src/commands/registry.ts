@@ -13,7 +13,7 @@ import { createAnthropicProvider } from '../providers/anthropic.ts';
 import { createOllamaProvider } from '../providers/ollama.ts';
 import { loadRules } from '../rules/loader.ts';
 import { loadSkills, type Skill } from '../skills/loader.ts';
-import { DEFAULT_SOUL_TEMPLATE, loadSouls } from '../soul/loader.ts';
+import { DEFAULT_SOUL_TEMPLATE, type Soul, loadSouls } from '../soul/loader.ts';
 import { listTools, setExtraTools } from '../tools/registry.ts';
 import type { Provider } from '../types/messages.ts';
 import { asteriskPaths } from '../daemon/paths.ts';
@@ -391,8 +391,10 @@ export const COMMANDS: SlashCommand[] = [
       const verb = args.trim().toLowerCase();
       if (verb === 'where' || verb === 'paths') return formatSoulPaths();
       if (verb === 'init') return await soulInit();
-      // default + 'show': render what's loaded.
-      const souls = loadSouls();
+      // default + 'show': render what's loaded — including any per-session
+      // soul that the REPL turn would pick up.
+      const session = { id: 'repl', scope: 'repl' as const };
+      const souls = loadSouls(process.cwd(), session);
       if (souls.length === 0) {
         return [
           'No SOUL.md loaded.',
@@ -405,9 +407,11 @@ export const COMMANDS: SlashCommand[] = [
           'Run /soul init to drop a starter template at ~/.asterisk/SOUL.md.',
         ].join('\n');
       }
+      const tag = (s: Soul): string =>
+        s.scope === 'user' ? 'user   ' : s.scope === 'session' ? 'session' : 'project';
       const lines: string[] = [`Soul · ${souls.length} loaded`];
       for (const s of souls) {
-        lines.push(`  ${s.scope === 'user' ? 'user   ' : 'project'}  ${s.path}  (${s.content.length} chars)`);
+        lines.push(`  ${tag(s)}  ${s.path}  (${s.content.length} chars)`);
       }
       lines.push('');
       lines.push('--- content ---');

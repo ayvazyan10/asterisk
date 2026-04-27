@@ -262,10 +262,11 @@ export function App({ initialProvider, state, mcp }: Props) {
 
       try {
         const rules = loadRules();
-        const souls = loadSouls();
+        const session = { id: 'repl', scope: 'repl' as const };
+        const souls = loadSouls(process.cwd(), session);
         const hooks = loadConfig().config.hooks;
         const turn = await runAgentTurn(provider, state, text, {
-          session: { id: 'repl', scope: 'repl' },
+          session,
           rules,
           souls,
           hooks,

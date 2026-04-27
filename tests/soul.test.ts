@@ -3,7 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { DEFAULT_SOUL_TEMPLATE, loadSouls, soulsToPromptSection } from '../src/soul/loader.ts';
+import {
+  DEFAULT_SOUL_TEMPLATE,
+  clearSessionSoul,
+  loadSouls,
+  readSessionSoul,
+  sessionSoulPath,
+  soulsToPromptSection,
+  writeSessionSoul,
+} from '../src/soul/loader.ts';
 
 describe('soul loader', () => {
   let userHome: string;
@@ -89,5 +97,61 @@ describe('soul loader', () => {
   it('default template mentions persona + user sections', () => {
     expect(DEFAULT_SOUL_TEMPLATE).toMatch(/You \(the assistant\)/);
     expect(DEFAULT_SOUL_TEMPLATE).toMatch(/Me \(the user\)/);
+  });
+
+  it('writeSessionSoul + loadSouls produce a session block in the right order', () => {
+    const session = { id: 'bot:12345', scope: 'telegram' as const };
+    writeSessionSoul(session, 'PERSONAL SOUL: call me Levon, reply in Russian.');
+    const souls = loadSouls(projectRoot, session);
+    expect(souls.map((s) => s.scope)).toEqual(['session']);
+    expect(souls[0]?.content).toContain('Levon');
+  });
+
+  it('layers user → session → project, in that order', async () => {
+    await mkdir(join(userHome, '.asterisk'), { recursive: true });
+    await writeFile(join(userHome, '.asterisk', 'SOUL.md'), 'OPERATOR PERSONA');
+    await mkdir(join(projectRoot, '.asterisk'), { recursive: true });
+    await writeFile(join(projectRoot, '.asterisk', 'SOUL.md'), 'PROJECT PERSONA');
+    const session = { id: 'wa:+374', scope: 'whatsapp' as const };
+    writeSessionSoul(session, 'PERSONAL PERSONA');
+
+    const souls = loadSouls(projectRoot, session);
+    expect(souls.map((s) => s.scope)).toEqual(['user', 'session', 'project']);
+    expect(souls[0]?.content).toBe('OPERATOR PERSONA');
+    expect(souls[1]?.content).toBe('PERSONAL PERSONA');
+    expect(souls[2]?.content).toBe('PROJECT PERSONA');
+  });
+
+  it('clearSessionSoul removes the per-session file', () => {
+    const session = { id: 'bot:55', scope: 'telegram' as const };
+    writeSessionSoul(session, 'temporary');
+    expect(readSessionSoul(session)).toMatch(/temporary/);
+    expect(clearSessionSoul(session)).toBe(true);
+    expect(readSessionSoul(session)).toBeNull();
+    // Idempotent — second call returns false but doesn't throw.
+    expect(clearSessionSoul(session)).toBe(false);
+  });
+
+  it('sessionSoulPath sanitises chatId punctuation', () => {
+    const path = sessionSoulPath({ id: 'bot:+374:99/abc', scope: 'whatsapp' });
+    // `:`, `+`, and `/` all become `_` so the filename is portable.
+    expect(path).toMatch(/whatsapp-bot__374_99_abc\.md$/);
+    expect(path).not.toContain(':');
+    expect(path).not.toMatch(/\/bot_/); // session id must not be its own dir
+  });
+
+  it('soulsToPromptSection labels the session block as "your soul"', () => {
+    const session = { id: 'bot:1', scope: 'telegram' as const };
+    writeSessionSoul(session, 'BE TERSE');
+    const text = soulsToPromptSection(loadSouls(projectRoot, session));
+    expect(text).toMatch(/your soul/);
+    expect(text).toContain('BE TERSE');
+  });
+
+  it('loadSouls without a session falls back to the old user+project behaviour', async () => {
+    await mkdir(join(userHome, '.asterisk'), { recursive: true });
+    await writeFile(join(userHome, '.asterisk', 'SOUL.md'), 'OP');
+    const souls = loadSouls(projectRoot);
+    expect(souls.map((s) => s.scope)).toEqual(['user']);
   });
 });

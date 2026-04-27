@@ -90,7 +90,8 @@ manager
     }
 
     const rules = loadRules();
-    const souls = loadSouls();
+    const session = { id: sessionId, scope: 'unknown' as const };
+    const souls = loadSouls(process.cwd(), session);
     const hooks = loadConfig().config.hooks;
     const attachments: Array<{ kind: string; path: string; caption?: string }> = [];
     const turn = await runAgentTurn(provider, state, msg.text, {
@@ -98,7 +99,7 @@ manager
       // flag, browser context, monitored processes, etc. Telegram + WhatsApp
       // share this code path; the chatId itself is unique enough across
       // transports that we don't need to disambiguate here.
-      session: { id: sessionId, scope: 'unknown' },
+      session,
       rules,
       souls,
       hooks,
@@ -150,10 +151,11 @@ const scheduler = createScheduler({
   dispatch: async (prompt, source) => {
     const sched = createAgentState();
     const rules = loadRules();
-    const souls = loadSouls();
+    const session = { id: `scheduled:${source}`, scope: 'scheduled' as const };
+    const souls = loadSouls(process.cwd(), session);
     const hooks = loadConfig().config.hooks;
     const result = await runAgentTurn(provider, sched, prompt, {
-      session: { id: `scheduled:${source}`, scope: 'scheduled' },
+      session,
       rules,
       souls,
       hooks,

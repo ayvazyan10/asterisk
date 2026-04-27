@@ -1,8 +1,12 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { runWithSession } from '../src/agent/context.ts';
 import { type AgentState, createAgentState } from '../src/agent/loop.ts';
 import { BOT_COMMAND_LIST, tryHandleBotCommand } from '../src/bots/commands.ts';
+import { readSessionSoul } from '../src/soul/loader.ts';
 import { _resetTasksForTesting, taskCreateTool } from '../src/tools/tasks.ts';
 import { isPlanMode, setPlanMode } from '../src/tools/planmode.ts';
 
@@ -14,14 +18,24 @@ const SESSION = { id: 'bot:test', scope: 'unknown' as const };
 
 describe('bot commands', () => {
   let state: AgentState;
+  let home: string;
+  let prevHome: string | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     state = createAgentState();
     _resetTasksForTesting();
+    // Per-session soul writes land under ASTERISK_HOME/souls — sandbox so
+    // the test never touches the real ~/.asterisk.
+    home = await mkdtemp(join(tmpdir(), 'asterisk-bot-cmd-'));
+    prevHome = process.env['ASTERISK_HOME'];
+    process.env['ASTERISK_HOME'] = home;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     _resetTasksForTesting();
+    if (prevHome === undefined) delete process.env['ASTERISK_HOME'];
+    else process.env['ASTERISK_HOME'] = prevHome;
+    await rm(home, { recursive: true, force: true });
   });
 
   it('falls through (returns null) for non-slash messages', async () => {
@@ -110,6 +124,83 @@ describe('bot commands', () => {
       tryHandleBotCommand('/help@asterisk_bot', ctx(state)),
     );
     expect(r?.text).toMatch(/I'm Asterisk/);
+  });
+
+  it('/soul (no args) reports nothing loaded for a fresh session', async () => {
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/soul', ctx(state)),
+    );
+    expect(r?.text).toMatch(/no soul/i);
+    expect(r?.text).toMatch(/\/soul set/);
+  });
+
+  it('/soul set <text> persists the persona for this session', async () => {
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/soul set Call me Levon. Reply in Russian.', ctx(state)),
+    );
+    expect(r?.text).toMatch(/saved your soul/);
+    expect(readSessionSoul(SESSION)).toMatch(/Call me Levon/);
+
+    // A subsequent /soul (no args) now shows it back.
+    const show = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/soul', ctx(state)),
+    );
+    expect(show?.text).toMatch(/Call me Levon/);
+    expect(show?.text).toMatch(/your soul/);
+  });
+
+  it('/soul set is private to a session — another chat does not see it', async () => {
+    await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/soul set ALICE PERSONA', ctx(state)),
+    );
+    const other = { id: 'bot:other', scope: 'unknown' as const };
+    const r = await runWithSession(other, async () =>
+      tryHandleBotCommand('/soul', ctx(createAgentState())),
+    );
+    expect(r?.text).not.toMatch(/ALICE PERSONA/);
+    expect(r?.text).toMatch(/no soul/i);
+  });
+
+  it('/soul clear removes the personal soul', async () => {
+    await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/soul set temp persona', ctx(state)),
+    );
+    expect(readSessionSoul(SESSION)).toMatch(/temp persona/);
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/soul clear', ctx(state)),
+    );
+    expect(r?.text).toMatch(/removed/);
+    expect(readSessionSoul(SESSION)).toBeNull();
+  });
+
+  it('/soul edit prints the current soul for copy-tweak', async () => {
+    await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/soul set EDIT_TARGET', ctx(state)),
+    );
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/soul edit', ctx(state)),
+    );
+    expect(r?.text).toMatch(/EDIT_TARGET/);
+  });
+
+  it('/soul help describes the verbs', async () => {
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/soul help', ctx(state)),
+    );
+    expect(r?.text).toMatch(/\/soul set/);
+    expect(r?.text).toMatch(/\/soul clear/);
+    expect(r?.text).toMatch(/\/soul edit/);
+  });
+
+  it('/soul set with multi-line markdown survives intact', async () => {
+    const body = '# Persona\n\n- terse\n- direct\n- no apologies';
+    await runWithSession(SESSION, async () =>
+      tryHandleBotCommand(`/soul set ${body}`, ctx(state)),
+    );
+    const stored = readSessionSoul(SESSION) ?? '';
+    expect(stored).toContain('# Persona');
+    expect(stored).toContain('- terse');
+    expect(stored).toContain('no apologies');
   });
 
   it('command list is non-empty and well-formed', () => {

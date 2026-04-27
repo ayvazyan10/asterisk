@@ -7,9 +7,14 @@
 // WhatsApp has no equivalent autocomplete UI but parses the same prefixes.
 
 import type { AgentState } from '../agent/loop.ts';
-import { currentSessionId } from '../agent/context.ts';
+import { currentSession, currentSessionId } from '../agent/context.ts';
 import { loadConfig } from '../config/load.ts';
-import { loadSouls } from '../soul/loader.ts';
+import {
+  clearSessionSoul,
+  loadSouls,
+  readSessionSoul,
+  writeSessionSoul,
+} from '../soul/loader.ts';
 import { _allTasks, clearTasksForCurrentSession } from '../tools/tasks.ts';
 import { activeWorktree } from '../tools/worktree.ts';
 import { isPlanMode, setPlanMode } from '../tools/planmode.ts';
@@ -29,7 +34,7 @@ export const BOT_COMMAND_LIST: BotCommandSpec[] = [
   { command: 'reset', description: 'Clear history + tasks + plan mode + worktree' },
   { command: 'tasks', description: 'List your tasks' },
   { command: 'plan', description: 'Toggle plan mode (read-only research mode)' },
-  { command: 'soul', description: 'Show the SOUL.md persona currently in effect' },
+  { command: 'soul', description: 'Show / set / clear your personal persona' },
 ];
 
 const HELP_TEXT = `👋 I'm Asterisk, a personal AI assistant. Just message me anything — I can read files, run shell commands, browse the web, take screenshots, schedule tasks, and more.
@@ -41,6 +46,7 @@ Commands:
 /reset   — clear everything (history, tasks, plan mode)
 /tasks   — list your tasks
 /plan    — toggle Plan Mode (read-only research mode)
+/soul    — show / set / clear your personal persona (try /soul help)
 
 Otherwise just type what you want me to do.`;
 
@@ -59,9 +65,14 @@ export function tryHandleBotCommand(
 ): OutgoingMessage | null {
   const trimmed = text.trim();
   if (!trimmed.startsWith('/')) return null;
-  const space = trimmed.indexOf(' ');
+  // Slice off the leading `/`, then split into "command word" and "rest".
+  // Rest preserves newlines and internal whitespace so /soul set <multi-line
+  // markdown> reaches us intact.
+  const body = trimmed.slice(1);
+  const firstWs = body.search(/\s/);
+  let head = firstWs === -1 ? body : body.slice(0, firstWs);
+  const rest = firstWs === -1 ? '' : body.slice(firstWs + 1);
   // Telegram appends "@botname" to commands in group chats — strip it.
-  let head = space === -1 ? trimmed.slice(1) : trimmed.slice(1, space);
   const at = head.indexOf('@');
   if (at !== -1) head = head.slice(0, at);
   const cmd = head.toLowerCase();
@@ -98,7 +109,7 @@ export function tryHandleBotCommand(
       };
 
     case 'soul':
-      return { text: renderSoul() };
+      return { text: handleSoulCommand(rest) };
 
     default:
       // Unknown slash command — fall through. The agent might still want to
@@ -142,17 +153,84 @@ function renderTasks(): string {
   return lines.join('\n');
 }
 
-function renderSoul(): string {
-  const souls = loadSouls();
+const SOUL_HELP = [
+  'Soul commands:',
+  '/soul                — show what I currently load for you',
+  '/soul set <text>     — replace your personal soul with <text>',
+  '                       (multi-line markdown is fine — send it all in one message)',
+  '/soul edit           — print your current soul so you can copy + tweak it',
+  '/soul clear          — drop your personal soul (operator/project soul still apply)',
+  '/soul help           — this message',
+  '',
+  'Layers (later wins): operator → your soul → project soul.',
+].join('\n');
+
+function handleSoulCommand(rest: string): string {
+  const session = currentSession();
+  const trimmed = rest.trim();
+  const verbMatch = trimmed.match(/^(\S+)(?:\s+([\s\S]*))?$/);
+  const verb = verbMatch?.[1]?.toLowerCase() ?? '';
+  const body = verbMatch?.[2]?.trim() ?? '';
+
+  if (verb === 'help' || verb === '?') return SOUL_HELP;
+
+  if (verb === 'set') {
+    if (!body) {
+      return 'Usage: /soul set <text>\nSend the persona description after `set` in the same message. Try `/soul help`.';
+    }
+    const path = writeSessionSoul(session, body);
+    return [
+      `✓ saved your soul (${body.length} chars).`,
+      `Stored at ${path}.`,
+      'It applies on the next turn. /soul clear to remove it.',
+    ].join('\n');
+  }
+
+  if (verb === 'clear' || verb === 'reset' || verb === 'forget') {
+    const removed = clearSessionSoul(session);
+    return removed
+      ? '✓ your personal soul has been removed.'
+      : '(no personal soul set — nothing to clear.)';
+  }
+
+  if (verb === 'edit' || verb === 'export') {
+    const raw = readSessionSoul(session);
+    if (!raw) {
+      return [
+        'You have no personal soul yet. Send something like:',
+        '',
+        '/soul set Call me Levon. Reply in Russian. Skip apologies. Be terse.',
+      ].join('\n');
+    }
+    return ['Your current soul (copy, tweak, send back as `/soul set <new>`):', '', raw.trim()].join(
+      '\n',
+    );
+  }
+
+  // No verb (or anything we don't recognise as an action) → show what's loaded.
+  if (verb === '' || verb === 'show') return renderSoulDisplay(session);
+  return `Unknown subcommand "${verb}". /soul help for the list.`;
+}
+
+function renderSoulDisplay(session: ReturnType<typeof currentSession>): string {
+  const souls = loadSouls(process.cwd(), session);
   if (souls.length === 0) {
     return [
-      'No SOUL.md loaded — I have only my default behaviour.',
-      'The operator can drop one at ~/.asterisk/SOUL.md to give me a persona.',
+      'No soul loaded yet — I have only my default behaviour.',
+      '',
+      'Give me a persona with:',
+      '/soul set <how you want me to behave; who you are>',
     ].join('\n');
   }
   const lines: string[] = ['Soul currently in effect:', ''];
   for (const s of souls) {
-    lines.push(`# ${s.scope} · ${s.path}`);
+    const tag =
+      s.scope === 'session'
+        ? 'your soul'
+        : s.scope === 'user'
+          ? 'operator soul'
+          : 'project soul';
+    lines.push(`# ${tag} · ${s.path}`);
     const body =
       s.content.length > 1500 ? `${s.content.slice(0, 1500)}\n…(truncated)` : s.content;
     lines.push(body);

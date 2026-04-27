@@ -1,33 +1,54 @@
 // SOUL.md — the agent's persona + your relationship description, loaded
 // into every system prompt. Modelled on OpenClaw's per-agent identity
-// cards. Two locations, both optional, both used if present:
+// cards. Up to three locations, all optional, all used if present:
 //
-//   ~/.asterisk/SOUL.md            user-global persona ("how the assistant
-//                                  should be with me")
-//   <cwd>/.asterisk/SOUL.md        project-local persona (overrides /
-//   <cwd>/SOUL.md                  augments the user-level one for work
-//                                  in this repo)
+//   ~/.asterisk/SOUL.md                       user-global persona
+//                                             ("how the assistant should be")
+//   ~/.asterisk/souls/<scope>-<sid>.md        per-chat persona — the bot
+//                                             user's own soul, written via
+//                                             /soul set in chat
+//   <cwd>/.asterisk/SOUL.md                   project-local persona
+//   <cwd>/SOUL.md                             project root marker
 //
-// Resolution order: user first, then project — the project soul gets the
-// last word in the system prompt so it overrides on conflict.
+// Resolution order: user → session → project. Later blocks get the last
+// word in the prompt so a personal "call me Levon, reply in Russian"
+// overrides a generic operator persona, and a project soul can still
+// pin down repo-specific tone on top of that.
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import type { AgentSession } from '../agent/context.ts';
+
 export interface Soul {
-  scope: 'user' | 'project';
+  scope: 'user' | 'session' | 'project';
   path: string;
   content: string;
 }
 
-export function loadSouls(cwd: string = process.cwd()): Soul[] {
-  const userRoot = process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk');
+function asteriskHome(): string {
+  return process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk');
+}
+
+/** Filesystem-safe filename for a session's per-chat SOUL.md. We never use
+ *  the raw chatId (it can contain `:`, `+`, `/`) — just letters, digits, and
+ *  a few harmless punctuation characters. */
+export function sessionSoulPath(session: AgentSession): string {
+  const safe = `${session.scope}-${session.id}`.replace(/[^a-zA-Z0-9._@-]/g, '_');
+  return join(asteriskHome(), 'souls', `${safe}.md`);
+}
+
+export function loadSouls(cwd: string = process.cwd(), session?: AgentSession): Soul[] {
+  const userRoot = asteriskHome();
   const candidates: { scope: Soul['scope']; path: string }[] = [
     { scope: 'user', path: join(userRoot, 'SOUL.md') },
+  ];
+  if (session) candidates.push({ scope: 'session', path: sessionSoulPath(session) });
+  candidates.push(
     { scope: 'project', path: join(cwd, '.asterisk', 'SOUL.md') },
     { scope: 'project', path: join(cwd, 'SOUL.md') },
-  ];
+  );
 
   const seenScopes = new Set<Soul['scope']>();
   const out: Soul[] = [];
@@ -43,10 +64,36 @@ export function loadSouls(cwd: string = process.cwd()): Soul[] {
   return out;
 }
 
+/** Replace (or create) the per-session soul. Returns the absolute path written. */
+export function writeSessionSoul(session: AgentSession, content: string): string {
+  const path = sessionSoulPath(session);
+  const dir = path.slice(0, path.lastIndexOf('/'));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, content.trim() + '\n', { mode: 0o644 });
+  return path;
+}
+
+/** Drop a per-session soul. Idempotent — fine if the file doesn't exist. */
+export function clearSessionSoul(session: AgentSession): boolean {
+  const path = sessionSoulPath(session);
+  if (!existsSync(path)) return false;
+  unlinkSync(path);
+  return true;
+}
+
+/** Read the raw per-session soul content (untrimmed), or null if absent. */
+export function readSessionSoul(session: AgentSession): string | null {
+  const path = sessionSoulPath(session);
+  if (!existsSync(path)) return null;
+  if (!statSync(path).isFile()) return null;
+  return readFileSync(path, 'utf8');
+}
+
 export function soulsToPromptSection(souls: readonly Soul[]): string {
   if (souls.length === 0) return '';
   const blocks = souls.map((s) => {
-    const label = s.scope === 'user' ? 'user soul' : 'project soul';
+    const label =
+      s.scope === 'user' ? 'user soul' : s.scope === 'session' ? 'your soul' : 'project soul';
     return `## ${label} (${s.path.split('/').slice(-2).join('/')})\n${s.content}`;
   });
   return [
