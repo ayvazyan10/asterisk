@@ -466,7 +466,7 @@ export function App({ initialProvider, state, mcp }: Props) {
         ) : (
           <>
             {busy && workingSince !== null && (
-              <Box marginBottom={1}>
+              <Box marginBottom={1} marginLeft={2}>
                 <WorkingIndicator since={workingSince} status={workingStatus} />
                 {queueLen > 0 && (
                   <Text dimColor>{`  · ${queueLen} queued`}</Text>
