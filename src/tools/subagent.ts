@@ -47,21 +47,17 @@ function pickProviderForSub(): Provider {
 }
 
 function describeAgent(): string {
-  // Render the available subagent_type list dynamically so the parent
-  // sees the user's bundled+installed agents, not a hardcoded blurb.
-  const agents = loadAgents();
-  const lines = agents
-    .slice(0, 30) // keep the description compact
-    .map((a) => `  ${a.name} — ${a.description}`)
-    .join('\n');
-  return `Spawn a sub-agent in an isolated conversation to research, explore, or run a focused task. Useful for parallel investigations and for handing work to a domain specialist (code-reviewer, security-reviewer, planner, etc.).
+  // Keep the description tight — every byte here is parsed by the model on
+  // EVERY turn. Listing all 27+ sub-agent types inline (with descriptions)
+  // was costing ~3KB of prompt-eval per turn, ~100s on qwen3.5:9b. The
+  // model gets just the names; full descriptions live behind /agents.
+  const names = loadAgents()
+    .map((a) => a.name)
+    .filter((n) => n !== 'general-purpose') // implicit default
+    .join(', ');
+  return `Spawn a sub-agent in an isolated conversation. Use for parallel investigations or to hand work to a domain specialist (code-reviewer, security-reviewer, planner, explore, …). Omit subagent_type to spawn a general-purpose sub-agent with your full tool-set; set it to a specialised role for a tailored prompt + restricted tools. Sub-agent inherits your session (tasks/worktrees/browser visible to you) but runs with its own AgentState.
 
-Pick a subagent_type from the list below for a specialised role with a tailored system prompt and (sometimes) a restricted tool-set. Omit subagent_type to spawn a general-purpose agent with your full tool-set.
-
-Available subagent_type values:
-${lines}
-
-The sub-agent runs with its own AgentState (its conversation does not affect yours) but inherits your session — its tasks / worktrees / browser context show up in your view too.`;
+Available subagent_type: ${names}.`;
 }
 
 export const subAgentTool: Tool = {

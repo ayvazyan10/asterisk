@@ -24,7 +24,7 @@ interface SearchResult {
 export const webSearchTool: Tool = {
   name: 'WebSearch',
   description:
-    'Search the web. Tries Brave / Tavily / SearXNG / DDG instant-answer in priority order based on configured API keys / URLs. Returns title + URL + snippet for each result. Pair with WebFetch to read individual pages. If no backend is configured (or all return empty), the tool reports "(no results)" — do NOT treat that as a dead end: fall back to BrowserNavigate on the authoritative site or WebFetch a direct plain-text endpoint (e.g. https://wttr.in/<place>?format=4 for weather, en.wikipedia.org for facts).',
+    'Search the web (Brave / Tavily / SearXNG / DDG-instant, by configured key). Returns title+URL+snippet per result; pair with WebFetch. If "(no results)" — fall back to BrowserNavigate or WebFetch a direct endpoint, do NOT stop.',
   input_schema: {
     type: 'object',
     properties: {
