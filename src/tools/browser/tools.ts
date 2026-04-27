@@ -228,14 +228,14 @@ export const browserSnapshotTool: Tool = {
 export const browserScreenshotTool: Tool = {
   name: 'BrowserScreenshot',
   description:
-    'Save a PNG screenshot of the current page. Returns the absolute path. Supports `~/`. Set open=true to launch the OS image viewer (xdg-open / explorer.exe on WSL / open on macOS).',
+    'Save a PNG screenshot of the current page. **Prefer leaving `path` unset** — Asterisk will save to ~/.asterisk/screenshots/<timestamp>.png and the REPL will render it inline (or hyperlink) automatically. Only set `path` if the user explicitly requested a specific location. A bare filename like "out.png" is taken relative to ~/.asterisk/screenshots/. Use `~/` for home, `/abs/` for an absolute path, or `./rel/` for cwd-relative.',
   input_schema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
         description:
-          'Optional output path (supports ~/). Default ~/.asterisk/screenshots/<ts>.png.',
+          'Optional. Bare filename → ~/.asterisk/screenshots/<name>. ~/path → home. /abs/path → absolute. ./rel → cwd. Leave unset for default.',
       },
       fullPage: {
         type: 'boolean',
@@ -243,21 +243,34 @@ export const browserScreenshotTool: Tool = {
       },
       open: {
         type: 'boolean',
-        description: 'After saving, open in the OS image viewer (default false).',
+        description:
+          'After saving, open in the OS image viewer (default false). Useful on WSL/Windows.',
       },
     },
     additionalProperties: false,
   },
   async execute(input) {
     const fullPage = input['fullPage'] !== false;
-    const requestedPath =
-      typeof input['path'] === 'string' && input['path']
-        ? expandHome(input['path'])
-        : join(
-            process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'),
-            'screenshots',
-            `${new Date().toISOString().replace(/[:.]/g, '-')}.png`,
-          );
+    const screenshotsRoot = join(
+      process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'),
+      'screenshots',
+    );
+    const raw = typeof input['path'] === 'string' ? input['path'].trim() : '';
+    let requestedPath: string;
+    if (!raw) {
+      requestedPath = join(screenshotsRoot, `${new Date().toISOString().replace(/[:.]/g, '-')}.png`);
+    } else if (raw.startsWith('~')) {
+      requestedPath = expandHome(raw);
+    } else if (raw.startsWith('/')) {
+      requestedPath = raw;
+    } else if (raw.startsWith('./') || raw.startsWith('../')) {
+      requestedPath = raw;
+    } else if (!raw.includes('/')) {
+      // Bare filename → keep it under the default screenshots directory.
+      requestedPath = join(screenshotsRoot, raw);
+    } else {
+      requestedPath = raw;
+    }
     const { resolve, dirname } = await import('node:path');
     const target = resolve(requestedPath);
     try {

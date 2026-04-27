@@ -2,7 +2,7 @@
 // visual command picker triggered by `/`.
 // Reference: https://github.com/vadimdemedes/ink + ink-text-input examples.
 
-import { Box, Static, Text, useApp, useInput } from 'ink';
+import { Box, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -40,7 +40,10 @@ type EntryKind =
 interface Entry {
   id: string;
   kind: EntryKind;
+  /** Short, always-shown form (1–2 lines). */
   text: string;
+  /** Full payload, revealed when expanded. Absent → text is the whole thing. */
+  fullText?: string;
 }
 
 interface Props {
@@ -59,6 +62,7 @@ export function App({ initialProvider, state, mcp }: Props) {
   const [modal, setModal] = useState<Modal>(null);
   const [workingSince, setWorkingSince] = useState<number | null>(null);
   const [workingStatus, setWorkingStatus] = useState<string>('thinking');
+  const [allExpanded, setAllExpanded] = useState(false);
   const cwd = useMemo(() => process.cwd(), []);
 
   const menuOpen = !modal && input.startsWith('/');
@@ -68,9 +72,29 @@ export function App({ initialProvider, state, mcp }: Props) {
     setMenuIndex((prev) => clampSelection(input, prev));
   }, [input]);
 
-  const append = useCallback((kind: EntryKind, text: string) => {
-    setEntries((prev) => [...prev, { id: `${prev.length}_${Date.now()}`, kind, text }]);
-  }, []);
+  const append = useCallback(
+    (kind: EntryKind, text: string, fullText?: string) => {
+      setEntries((prev) => {
+        const id = `${prev.length}_${Date.now()}`;
+        const entry: Entry = { id, kind, text };
+        if (fullText !== undefined) entry.fullText = fullText;
+        return [...prev, entry];
+      });
+    },
+    [],
+  );
+
+  // Ctrl+O toggles expand/collapse for every entry that has hidden content.
+  // Disabled while a modal is open so it doesn't fight the form/list keys.
+  useInput(
+    (inputChar, key) => {
+      if (modal) return;
+      if (key.ctrl && (inputChar === 'o' || inputChar === 'O')) {
+        setAllExpanded((prev) => !prev);
+      }
+    },
+    { isActive: !modal },
+  );
 
   // Recursively apply a CommandResult: text → transcript, null → no-op,
   // FormSpec/ListSpec → open the modal.
@@ -218,12 +242,27 @@ export function App({ initialProvider, state, mcp }: Props) {
           onToolUse: (name, toolInput) => {
             tally[name] = (tally[name] ?? 0) + 1;
             lastTool = name;
-            setWorkingStatus(`${name}(${truncate(formatArgs(toolInput), 60)})`);
-            append('tool', `${name}(${formatArgs(toolInput)})`);
+            const argsString = formatArgs(toolInput);
+            setWorkingStatus(`${name}(${truncate(argsString, 60)})`);
+            const oneLine = `${name}(${truncate(argsString, 80)})`;
+            const full = `${name}(${argsString})`;
+            if (oneLine === full) {
+              append('tool', oneLine);
+            } else {
+              append('tool', oneLine, full);
+            }
           },
           onToolResult: (name, output, isError) => {
             setWorkingStatus('thinking');
-            append(isError ? 'error' : 'tool-result', `${name} → ${truncate(output, 800)}`);
+            const firstLine = output.split('\n')[0] ?? '';
+            const oneLine = `${name} → ${truncate(firstLine, 200)}`;
+            const full = `${name} →\n${output}`;
+            const kind = isError ? 'error' : 'tool-result';
+            if (output.length <= 200 && !output.includes('\n')) {
+              append(kind, `${name} → ${output}`);
+            } else {
+              append(kind, oneLine, full);
+            }
             // Try to render screenshots inline when the terminal supports it.
             if (name === 'BrowserScreenshot' && !isError) {
               const m = /screenshot saved · (\S.+?)(?:\n|$)/.exec(output);
@@ -352,16 +391,8 @@ export function App({ initialProvider, state, mcp }: Props) {
 
   return (
     <Box flexDirection="column">
-      <Static items={[{ id: '__banner__' } as Entry, ...entries]}>
-        {(entry) => {
-          if (entry.id === '__banner__') {
-            return (
-              <Banner key="__banner__" providerName={provider.name} cwd={cwd} version={VERSION} />
-            );
-          }
-          return renderEntry(entry);
-        }}
-      </Static>
+      <Banner providerName={provider.name} cwd={cwd} version={VERSION} />
+      {entries.map((entry) => renderEntry(entry, allExpanded))}
       <Box flexDirection="column" marginTop={1}>
         {modal ? (
           modal.kind === 'form' ? (
@@ -416,7 +447,7 @@ export function App({ initialProvider, state, mcp }: Props) {
   );
 }
 
-function renderEntry(entry: Entry) {
+function renderEntry(entry: Entry, expanded: boolean) {
   switch (entry.kind) {
     case 'user':
       return (
@@ -440,20 +471,45 @@ function renderEntry(entry: Entry) {
       );
     case 'tool':
       return (
-        <Box key={entry.id}>
-          <Text color="cyan" dimColor>
-            {'  → '}
-          </Text>
-          <Text dimColor>{entry.text}</Text>
+        <Box key={entry.id} flexDirection="column">
+          <Box>
+            <Text color="cyan" dimColor>
+              {'  → '}
+            </Text>
+            <Text dimColor>{expanded && entry.fullText ? entry.fullText : entry.text}</Text>
+          </Box>
+          {!expanded && entry.fullText && (
+            <Box marginLeft={4}>
+              <Text dimColor>
+                {`[+${entry.fullText.length - entry.text.length} chars · Ctrl+O]`}
+              </Text>
+            </Box>
+          )}
         </Box>
       );
-    case 'tool-result':
+    case 'tool-result': {
+      const showFull = expanded && entry.fullText;
+      const body = showFull ? entry.fullText! : entry.text;
+      const bodyLines = body.split('\n');
+      const hint = !expanded && entry.fullText
+        ? renderCollapseHint(entry.text, entry.fullText)
+        : null;
       return (
-        <Box key={entry.id}>
-          <Text dimColor>{'  ← '}</Text>
-          <Text dimColor>{entry.text}</Text>
+        <Box key={entry.id} flexDirection="column">
+          {bodyLines.map((line, i) => (
+            <Box key={`${entry.id}_l_${i}`}>
+              <Text dimColor>{i === 0 ? '  ← ' : '    '}</Text>
+              <Text dimColor>{line}</Text>
+            </Box>
+          ))}
+          {hint && (
+            <Box marginLeft={4}>
+              <Text dimColor>{hint}</Text>
+            </Box>
+          )}
         </Box>
       );
+    }
     case 'system':
       return renderSystemPanel(entry);
     case 'progress':
@@ -479,6 +535,14 @@ function renderEntry(entry: Entry) {
     default:
       return <Text key={entry.id}>{entry.text}</Text>;
   }
+}
+
+function renderCollapseHint(short: string, full: string): string {
+  const fullLines = full.split('\n').length;
+  const shortLines = short.split('\n').length;
+  const hiddenLines = Math.max(0, fullLines - shortLines);
+  if (hiddenLines > 0) return `[+${hiddenLines} more lines · Ctrl+O to expand]`;
+  return `[+${full.length - short.length} more chars · Ctrl+O to expand]`;
 }
 
 // System output (slash-command results) — render in a soft bordered panel
