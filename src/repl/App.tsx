@@ -12,7 +12,12 @@ import type { McpManager } from '../mcp/manager.ts';
 import type { Provider } from '../types/messages.ts';
 import { Banner } from './Banner.tsx';
 import { CommandMenu, clampSelection, filterCommands } from './CommandMenu.tsx';
+import { Form } from './forms/Form.tsx';
+import { ListPicker } from './forms/ListPicker.tsx';
+import type { CommandResult, FormSpec, ListSpec } from './forms/types.ts';
 import { StatusBar } from './StatusBar.tsx';
+
+type Modal = FormSpec | ListSpec | null;
 
 const VERSION = '0.1.0';
 
@@ -37,9 +42,10 @@ export function App({ initialProvider, state, mcp }: Props) {
   const [busy, setBusy] = useState(false);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [menuIndex, setMenuIndex] = useState(0);
+  const [modal, setModal] = useState<Modal>(null);
   const cwd = useMemo(() => process.cwd(), []);
 
-  const menuOpen = input.startsWith('/');
+  const menuOpen = !modal && input.startsWith('/');
 
   // Keep selection inside the filtered list as the user types.
   useEffect(() => {
@@ -49,6 +55,76 @@ export function App({ initialProvider, state, mcp }: Props) {
   const append = useCallback((kind: EntryKind, text: string) => {
     setEntries((prev) => [...prev, { id: `${prev.length}_${Date.now()}`, kind, text }]);
   }, []);
+
+  // Recursively apply a CommandResult: text → transcript, null → no-op,
+  // FormSpec/ListSpec → open the modal.
+  const applyResult = useCallback(
+    (result: CommandResult) => {
+      if (result === null || result === undefined) {
+        setModal(null);
+        return;
+      }
+      if (typeof result === 'string') {
+        if (result.length > 0) append('system', result);
+        setModal(null);
+        return;
+      }
+      setModal(result);
+    },
+    [append],
+  );
+
+  const handleFormSubmit = useCallback(
+    async (spec: FormSpec, values: Record<string, string>) => {
+      try {
+        const next = await spec.onSubmit(values);
+        applyResult(next);
+      } catch (e) {
+        append('error', `form error: ${(e as Error).message}`);
+        setModal(null);
+      }
+    },
+    [append, applyResult],
+  );
+
+  const handleFormCancel = useCallback(
+    async (spec: FormSpec) => {
+      try {
+        const next = (await spec.onCancel?.()) ?? null;
+        applyResult(next);
+      } catch (e) {
+        append('error', `form error: ${(e as Error).message}`);
+        setModal(null);
+      }
+    },
+    [append, applyResult],
+  );
+
+  const handleListPick = useCallback(
+    async (spec: ListSpec, value: string) => {
+      try {
+        const next = await spec.onPick(value);
+        applyResult(next);
+      } catch (e) {
+        append('error', `list error: ${(e as Error).message}`);
+        setModal(null);
+      }
+    },
+    [append, applyResult],
+  );
+
+  const handleListCancel = useCallback(
+    async (spec: ListSpec) => {
+      try {
+        const next = (await spec.onCancel?.()) ?? null;
+        applyResult(next);
+      } catch (e) {
+        append('error', `list error: ${(e as Error).message}`);
+        setModal(null);
+      }
+    },
+    [append, applyResult],
+  );
 
   // Picker key handling. ink-text-input ignores up/down arrows and tab, so we
   // can safely intercept those without conflicting with the text editor.
@@ -127,12 +203,12 @@ export function App({ initialProvider, state, mcp }: Props) {
           },
           cmd.args,
         );
-        if (out !== null && out !== undefined) append('system', out);
+        applyResult(out);
       } catch (e) {
         append('error', `command error: ${(e as Error).message}`);
       }
     },
-    [append, exit, mcp, provider, state],
+    [append, applyResult, exit, mcp, provider, state],
   );
 
   const onSubmit = useCallback(
@@ -193,24 +269,46 @@ export function App({ initialProvider, state, mcp }: Props) {
         }}
       </Static>
       <Box flexDirection="column" marginTop={1}>
-        <Box
-          borderStyle="round"
-          borderColor={busy ? 'yellow' : menuOpen ? 'cyan' : 'gray'}
-          paddingX={1}
-        >
-          <Text color="cyan">{busy ? '◐ ' : '› '}</Text>
-          {busy ? (
-            <Text color="yellow">working…</Text>
-          ) : (
-            <TextInput
-              value={input}
-              onChange={setInput}
-              onSubmit={onSubmit}
-              placeholder="ask anything, or / for commands"
+        {modal ? (
+          modal.kind === 'form' ? (
+            <Form
+              key={modal.title}
+              spec={modal}
+              onComplete={() => setModal(null)}
+              onSubmit={(values) => handleFormSubmit(modal, values)}
+              onCancel={() => handleFormCancel(modal)}
             />
-          )}
-        </Box>
-        <CommandMenu input={input} selectedIndex={menuIndex} />
+          ) : (
+            <ListPicker
+              key={modal.title}
+              spec={modal}
+              onComplete={() => setModal(null)}
+              onPick={(v) => handleListPick(modal, v)}
+              onCancel={() => handleListCancel(modal)}
+            />
+          )
+        ) : (
+          <>
+            <Box
+              borderStyle="round"
+              borderColor={busy ? 'yellow' : menuOpen ? 'cyan' : 'gray'}
+              paddingX={1}
+            >
+              <Text color="cyan">{busy ? '◐ ' : '› '}</Text>
+              {busy ? (
+                <Text color="yellow">working…</Text>
+              ) : (
+                <TextInput
+                  value={input}
+                  onChange={setInput}
+                  onSubmit={onSubmit}
+                  placeholder="ask anything, or / for commands"
+                />
+              )}
+            </Box>
+            <CommandMenu input={input} selectedIndex={menuIndex} />
+          </>
+        )}
         <StatusBar
           providerName={provider.name}
           historyCount={state.history.length}

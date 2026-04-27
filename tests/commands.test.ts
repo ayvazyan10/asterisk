@@ -120,19 +120,41 @@ describe('command registry', () => {
     expect(out).toContain('Glob');
   });
 
-  it('/mcp list reports empty when no servers configured', async () => {
+  it('/mcp list reports empty text when no servers configured', async () => {
     const c = ctx(createOllamaProvider());
-    const out = (await COMMANDS.find((c2) => c2.name === '/mcp')!.execute(c, '')) as string;
-    expect(out).toMatch(/No MCP servers/);
+    const out = await COMMANDS.find((c2) => c2.name === '/mcp')!.execute(c, 'list');
+    expect(typeof out).toBe('string');
+    expect(out as string).toMatch(/No MCP servers/);
   });
 
-  it('/mcp add stdio without args reports usage', async () => {
+  it('/mcp (no args) returns an action picker list', async () => {
     const c = ctx(createOllamaProvider());
-    const out = (await COMMANDS.find((c2) => c2.name === '/mcp')!.execute(
-      c,
-      'add stdio',
-    )) as string;
-    expect(out).toMatch(/usage/);
+    const out = await COMMANDS.find((c2) => c2.name === '/mcp')!.execute(c, '');
+    expect(out && typeof out === 'object' && (out as { kind?: string }).kind).toBe('list');
+    if (out && typeof out === 'object' && 'items' in out) {
+      const items = (out as { items: { value: string }[] }).items.map((i) => i.value);
+      expect(items).toEqual(['list', 'add', 'edit', 'remove', 'reload']);
+    }
+  });
+
+  it('/mcp add stdio returns a stdio form', async () => {
+    const c = ctx(createOllamaProvider());
+    const out = await COMMANDS.find((c2) => c2.name === '/mcp')!.execute(c, 'add stdio');
+    expect(out && typeof out === 'object' && (out as { kind?: string }).kind).toBe('form');
+    if (out && typeof out === 'object' && 'fields' in out) {
+      const keys = (out as { fields: { key: string }[] }).fields.map((f) => f.key);
+      expect(keys).toEqual(['name', 'command', 'args', 'enabled']);
+    }
+  });
+
+  it('/mcp add (no transport) returns a transport picker', async () => {
+    const c = ctx(createOllamaProvider());
+    const out = await COMMANDS.find((c2) => c2.name === '/mcp')!.execute(c, 'add');
+    expect(out && typeof out === 'object' && (out as { kind?: string }).kind).toBe('list');
+    if (out && typeof out === 'object' && 'items' in out) {
+      const items = (out as { items: { value: string }[] }).items.map((i) => i.value);
+      expect(items).toEqual(['stdio', 'http']);
+    }
   });
 
   it('/status reports provider, history, and daemon state', async () => {
@@ -141,6 +163,16 @@ describe('command registry', () => {
     expect(out).toContain('provider:');
     expect(out).toContain('history:');
     expect(out).toContain('daemon:');
+  });
+
+  it('/provider (no args) returns a list of providers', async () => {
+    const c = ctx(createOllamaProvider());
+    const out = await COMMANDS.find((c2) => c2.name === '/provider')!.execute(c, '');
+    expect(out && typeof out === 'object' && (out as { kind?: string }).kind).toBe('list');
+    if (out && typeof out === 'object' && 'items' in out) {
+      const items = (out as { items: { value: string }[] }).items.map((i) => i.value);
+      expect(items).toEqual(['ollama', 'anthropic']);
+    }
   });
 
   it('/provider with bad name reports unknown', async () => {
