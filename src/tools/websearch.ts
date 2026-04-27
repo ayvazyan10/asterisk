@@ -24,7 +24,7 @@ interface SearchResult {
 export const webSearchTool: Tool = {
   name: 'WebSearch',
   description:
-    'Search the web. Tries Brave / Tavily / SearXNG / DDG instant-answer in priority order based on configured API keys / URLs. Returns title + URL + snippet for each result. Pair with WebFetch to read individual pages.',
+    'Search the web. Tries Brave / Tavily / SearXNG / DDG instant-answer in priority order based on configured API keys / URLs. Returns title + URL + snippet for each result. Pair with WebFetch to read individual pages. If no backend is configured (or all return empty), the tool reports "(no results)" — do NOT treat that as a dead end: fall back to BrowserNavigate on the authoritative site or WebFetch a direct plain-text endpoint (e.g. https://wttr.in/<place>?format=4 for weather, en.wikipedia.org for facts).',
   input_schema: {
     type: 'object',
     properties: {
@@ -65,12 +65,24 @@ export const webSearchTool: Tool = {
       }
     }
 
-    const hint =
-      'No backend returned results. Configure one of:\n' +
-      '  ASTERISK_BRAVE_API_KEY   — https://api.search.brave.com (free 2k/month)\n' +
-      '  ASTERISK_TAVILY_API_KEY  — https://tavily.com (free tier)\n' +
-      '  ASTERISK_SEARXNG_URL     — your own SearXNG instance';
-    return ok(`(no results)\n\nTried: ${tried.join(', ') || '(none)'}\n\n${hint}`);
+    const agentHint = [
+      'Next steps (do not stop here):',
+      '  • For weather:    WebFetch  https://wttr.in/<place>?format=4&lang=<bcp47>',
+      '  • For facts:      WebFetch  https://<lang>.wikipedia.org/wiki/<Topic>',
+      '  • For everything: BrowserNavigate to the authoritative site, then',
+      '                    BrowserSnapshot to read it. Browser handles JS pages.',
+      '  • Search results UI fallback: BrowserNavigate to',
+      '                    https://duckduckgo.com/?q=<urlencoded query>  →  BrowserSnapshot.',
+    ].join('\n');
+    const operatorHint = [
+      'Operator: configure a real search backend to enable WebSearch:',
+      '  ASTERISK_BRAVE_API_KEY   — https://api.search.brave.com (free 2k/month)',
+      '  ASTERISK_TAVILY_API_KEY  — https://tavily.com (free tier)',
+      '  ASTERISK_SEARXNG_URL     — your own SearXNG instance',
+    ].join('\n');
+    return ok(
+      `(no results)  ·  tried: ${tried.join(', ') || '(none)'}\n\n${agentHint}\n\n${operatorHint}`,
+    );
   },
 };
 
