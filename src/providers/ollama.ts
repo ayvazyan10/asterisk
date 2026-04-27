@@ -188,7 +188,7 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
       }
 
       const finalMessage = streaming
-        ? await readStreamingChat(res, req.onText!)
+        ? await readStreamingChat(res, req.onText!, req.onThinking)
         : (await res.json() as OllamaChatResponse).message;
 
       const content = blocksFromOllama(finalMessage);
@@ -211,6 +211,7 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
 async function readStreamingChat(
   res: Response,
   onText: (delta: string) => void,
+  onThinking?: (delta: string) => void,
 ): Promise<OllamaMessage> {
   if (!res.body) {
     // No streaming body — fall back to a single read.
@@ -244,10 +245,17 @@ async function readStreamingChat(
         const delta = ev.message?.content ?? '';
         if (delta) {
           aggregatedContent += delta;
-          const visible = filter.feed(delta);
-          if (visible) {
+          const out = filter.feed(delta);
+          if (out.visible) {
             try {
-              onText(visible);
+              onText(out.visible);
+            } catch {
+              // sink errors must not abort the model call
+            }
+          }
+          if (out.thinking && onThinking) {
+            try {
+              onThinking(out.thinking);
             } catch {
               // sink errors must not abort the model call
             }
@@ -281,30 +289,34 @@ async function readStreamingChat(
   return out;
 }
 
-/** Hide the chain-of-thought block (<think>…</think>) from streaming output.
- *  Some Ollama models (qwen3-thinking, deepseek-r1) interleave reasoning into
- *  the same content stream; the agent only wants the final answer surfaced.
+/** Split the chain-of-thought block (<think>…</think>) out from the visible
+ *  answer. Some Ollama models (qwen3-thinking, deepseek-r1) interleave
+ *  reasoning into the content stream — we want the final assistant text to
+ *  contain only the answer, but during streaming we surface the thinking
+ *  separately so the UI can render "thinking · N chars" progress instead of
+ *  appearing hung during a long reasoning phase.
  *
- *  The trick during streaming: chars after the last `<` in the buffer might
- *  be the start of an unfinished tag. We hold those back; everything before
- *  the last `<` is safe to emit. flush() drains whatever remained at EOS. */
+ *  Chars after the last `<` in the buffer might be the start of an
+ *  unfinished tag — we hold those back; everything before the last `<` is
+ *  safe to emit. flush() drains whatever remained at EOS. */
 function createThinkFilter(): {
-  feed(chunk: string): string;
+  feed(chunk: string): { visible: string; thinking: string };
   flush(): string;
 } {
   let buf = '';
   let inside = false;
   return {
-    feed(chunk: string): string {
+    feed(chunk: string): { visible: string; thinking: string } {
       buf += chunk;
-      let out = '';
+      let visible = '';
+      let thinking = '';
       // Loop until no more *complete* tag can be resolved this turn.
       // eslint-disable-next-line no-constant-condition
       while (true) {
         if (!inside) {
           const open = buf.toLowerCase().indexOf('<think>');
           if (open !== -1) {
-            out += buf.slice(0, open);
+            visible += buf.slice(0, open);
             buf = buf.slice(open + '<think>'.length);
             inside = true;
             continue;
@@ -313,27 +325,34 @@ function createThinkFilter(): {
           // those bytes might still complete into '<think>'.
           const lt = buf.lastIndexOf('<');
           if (lt === -1) {
-            out += buf;
+            visible += buf;
             buf = '';
           } else {
-            out += buf.slice(0, lt);
+            visible += buf.slice(0, lt);
             buf = buf.slice(lt);
           }
           break;
         }
         const close = buf.toLowerCase().indexOf('</think>');
         if (close !== -1) {
+          thinking += buf.slice(0, close);
           buf = buf.slice(close + '</think>'.length);
           inside = false;
           continue;
         }
-        // Inside but no close yet — keep at most the last '<' onward in case
-        // it grows into '</think>'; drop the rest (it's chain-of-thought).
+        // Inside but no close yet — emit everything up to the last '<' as
+        // thinking; hold the tail in case it grows into '</think>'.
         const lt = buf.lastIndexOf('<');
-        buf = lt === -1 ? '' : buf.slice(lt);
+        if (lt === -1) {
+          thinking += buf;
+          buf = '';
+        } else {
+          thinking += buf.slice(0, lt);
+          buf = buf.slice(lt);
+        }
         break;
       }
-      return out;
+      return { visible, thinking };
     },
     flush(): string {
       // End of stream. If still inside an unclosed block, drop it. Otherwise

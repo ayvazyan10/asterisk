@@ -146,6 +146,11 @@ export interface RunOptions {
    *  the underlying provider supports streaming (Anthropic, Ollama). If unset,
    *  no streaming is requested from the provider. */
   onAssistantDelta?(delta: string): void;
+  /** Fired with chain-of-thought tokens emitted inside <think>…</think>
+   *  blocks (qwen3-thinking, deepseek-r1, …). Hidden from the assistant
+   *  text and from history; surfaced here so the UI can show "thinking ·
+   *  N chars" progress while the model reasons. */
+  onAssistantThinking?(delta: string): void;
   onToolUse?(name: string, input: Record<string, unknown>): void;
   onToolResult?(name: string, output: string, isError: boolean): void;
   onRetry?(attempt: number, delayMs: number, reason: string): void;
@@ -230,9 +235,14 @@ async function runAgentTurnInner(
       try {
         response = await retry(
           () => {
-            const sendOpts: { signal?: AbortSignal; onText?: (delta: string) => void } = {};
+            const sendOpts: {
+              signal?: AbortSignal;
+              onText?: (delta: string) => void;
+              onThinking?: (delta: string) => void;
+            } = {};
             if (signal) sendOpts.signal = signal;
             if (opts.onAssistantDelta) sendOpts.onText = opts.onAssistantDelta;
+            if (opts.onAssistantThinking) sendOpts.onThinking = opts.onAssistantThinking;
             const allTools = toolDefinitions();
             const tools = opts.allowedTools && opts.allowedTools.length > 0
               ? allTools.filter((t) => opts.allowedTools!.includes(t.name))

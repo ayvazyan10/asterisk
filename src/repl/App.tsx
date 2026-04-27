@@ -247,16 +247,35 @@ export function App({ initialProvider, state, mcp }: Props) {
       const progressTimer = setInterval(() => {
         const elapsedSec = Math.floor((Date.now() - start) / 1000);
         const minutes = Math.floor(elapsedSec / 60);
+        // Always lead with the most active signal:
+        //   streaming text > chain-of-thought > tool tally > nothing.
         let activity: string;
-        if (Object.keys(tally).length > 0) {
+        if (streamingChars > 0) {
+          activity = `streaming · ${streamingChars} chars`;
+          if (Object.keys(tally).length > 0) {
+            const summary = Object.entries(tally)
+              .sort((a, b) => b[1] - a[1])
+              .map(([name, count]) => `${count}× ${name}`)
+              .join(', ');
+            activity += ` · prior: ${summary}`;
+          }
+        } else if (thinkingChars > 0) {
+          // qwen3-thinking / deepseek-r1: model reasoning inside <think>.
+          // Surface the count so a 2-minute reasoning phase doesn't look
+          // like a hang.
+          activity = `thinking · ${thinkingChars} chars`;
+          if (Object.keys(tally).length > 0) {
+            const summary = Object.entries(tally)
+              .sort((a, b) => b[1] - a[1])
+              .map(([name, count]) => `${count}× ${name}`)
+              .join(', ');
+            activity += ` · prior: ${summary}`;
+          }
+        } else if (Object.keys(tally).length > 0) {
           activity = Object.entries(tally)
             .sort((a, b) => b[1] - a[1])
             .map(([name, count]) => `${count}× ${name}`)
             .join(', ');
-        } else if (streamingChars > 0) {
-          // Model is generating text but no tools yet — surface the
-          // character count so the user sees progress, not silence.
-          activity = `streaming · ${streamingChars} chars so far`;
         } else {
           activity = 'still thinking, no tools called yet';
         }
@@ -273,6 +292,10 @@ export function App({ initialProvider, state, mcp }: Props) {
       let streamingEntryId: string | null = null;
       let streamingText = '';
       let streamingChars = 0;
+      // Thinking tokens (qwen3-thinking, deepseek-r1, …) live behind the
+      // scenes — counted for the progress indicator but not added to the
+      // transcript. Reset on each visible-text turn.
+      let thinkingChars = 0;
 
       try {
         const rules = loadRules();
@@ -287,6 +310,11 @@ export function App({ initialProvider, state, mcp }: Props) {
           souls,
           hooks,
           ...(outputStyle ? { outputStyle } : {}),
+          onAssistantThinking: (delta: string) => {
+            thinkingChars += delta.length;
+            // Don't push this into the transcript — just surface progress.
+            setWorkingStatus(`thinking · ${thinkingChars} chars`);
+          },
           onAssistantDelta: (delta: string) => {
             streamingText += delta;
             streamingChars += delta.length;
@@ -312,8 +340,10 @@ export function App({ initialProvider, state, mcp }: Props) {
               streamingEntryId = null;
               streamingText = '';
               streamingChars = 0;
+              thinkingChars = 0;
               return;
             }
+            thinkingChars = 0;
             // Non-streaming provider (or empty stream): fall back to the
             // append-once behaviour so the user still sees the reply.
             setWorkingStatus('writing response');

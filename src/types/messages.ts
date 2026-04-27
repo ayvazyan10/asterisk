@@ -47,6 +47,12 @@ export interface ProviderRequest {
    *  The returned ProviderResponse must still contain the full assembled
    *  content blocks (including any tool_use) — onText is purely for live UI. */
   onText?: (delta: string) => void;
+  /** Optional. Fired with chain-of-thought tokens emitted inside <think>…
+   *  </think> blocks (qwen3-thinking, deepseek-r1, …). Hidden from onText
+   *  and from the final assembled content, but surfaced here so the UI
+   *  can show "thinking · N chars" progress instead of looking hung
+   *  during a long reasoning phase. */
+  onThinking?: (delta: string) => void;
 }
 
 export interface ProviderResponse {

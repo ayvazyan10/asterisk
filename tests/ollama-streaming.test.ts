@@ -92,6 +92,45 @@ describe('Ollama streaming', () => {
     expect((r.content[0] as TextBlock).text).toBe('Done.');
   });
 
+  it('surfaces <think> content via onThinking when the caller provides it', async () => {
+    // The exact repro of the user's "Asterisk hangs while clocal shows
+    // progress" bug: qwen3.5-style models emit a long <think> block before
+    // any visible text. onThinking lets the UI show "thinking · N chars"
+    // instead of looking like the agent crashed.
+    globalThis.fetch = (async () => {
+      const stream = ndjsonStream([
+        JSON.stringify({ message: { role: 'assistant', content: '<think>let me' }, done: false }),
+        JSON.stringify({ message: { role: 'assistant', content: ' think about it' }, done: false }),
+        JSON.stringify({ message: { role: 'assistant', content: ' carefully</think>' }, done: false }),
+        JSON.stringify({ message: { role: 'assistant', content: 'final answer' }, done: true }),
+      ]);
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const provider = createOllamaProvider({ baseUrl: 'http://x', model: 'm' });
+    const visible: string[] = [];
+    const thinking: string[] = [];
+    await provider.send({
+      system: 's',
+      messages: [],
+      tools: [],
+      onText: (d) => visible.push(d),
+      onThinking: (d) => thinking.push(d),
+    });
+
+    const thoughtSeen = thinking.join('');
+    expect(thoughtSeen).toContain('let me');
+    expect(thoughtSeen).toContain('think about it');
+    expect(thoughtSeen).toContain('carefully');
+    expect(thoughtSeen).not.toContain('<think>');
+    expect(thoughtSeen).not.toContain('</think>');
+    expect(thoughtSeen).not.toContain('final answer');
+
+    const visibleSeen = visible.join('');
+    expect(visibleSeen).not.toContain('let me');
+    expect(visibleSeen).toContain('final answer');
+  });
+
   it('captures tool_calls from the final stream frame', async () => {
     globalThis.fetch = (async () => {
       const stream = ndjsonStream([

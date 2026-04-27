@@ -132,6 +132,23 @@ manager
       // have already arrived for the current turn — see streamMode='stream'.
       onAssistantText: (t) => sink?.({ type: 'text-final', text: t }),
       onAssistantDelta: (d) => sink?.({ type: 'text', text: d }),
+      // Surface chain-of-thought activity as a status event so Telegram's
+      // status / stream modes can show "thinking · N chars" instead of
+      // a static placeholder during long reasoning phases.
+      onAssistantThinking: (() => {
+        let lastReported = 0;
+        let total = 0;
+        return (d: string) => {
+          total += d.length;
+          // Throttle: only emit every 200 chars to avoid edit-spam in the
+          // bot adapter (already rate-limited to 1 edit/sec, but no point
+          // queuing 100 redundant updates).
+          if (total - lastReported >= 200) {
+            lastReported = total;
+            sink?.({ type: 'status', text: `thinking · ${total} chars` });
+          }
+        };
+      })(),
       onToolUse: (name, input) => {
         log.debug({ tool: name, input }, 'tool_use');
         sink?.({ type: 'status', text: formatToolStatus(name, input) });
