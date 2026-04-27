@@ -25,6 +25,10 @@ const result = await Bun.build({
     // Native deps stay external so Bun resolves them at runtime.
     'whatsapp-web.js',
     'better-sqlite3',
+    // Ink optionally imports devtools when DEV is enabled — skip bundling.
+    'react-devtools-core',
+    // Pino's transports are loaded dynamically; let runtime resolve them.
+    'pino-pretty',
   ],
 });
 

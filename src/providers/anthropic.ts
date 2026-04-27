@@ -1,0 +1,74 @@
+// Anthropic provider — thin wrapper over the public @anthropic-ai/sdk.
+// Reference: https://github.com/anthropics/anthropic-sdk-typescript
+
+import Anthropic from '@anthropic-ai/sdk';
+import type {
+  ContentBlock,
+  Provider,
+  ProviderRequest,
+  ProviderResponse,
+} from '../types/messages.ts';
+
+interface AnthropicConfig {
+  apiKey: string;
+  model: string;
+}
+
+const DEFAULT_MODEL = process.env['ANTHROPIC_MODEL'] ?? 'claude-3-5-haiku-latest';
+
+export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}): Provider {
+  const apiKey = overrides.apiKey ?? process.env['ANTHROPIC_API_KEY'] ?? '';
+  if (!apiKey) {
+    throw new Error('ANTHROPIC_API_KEY is required to use the Anthropic provider');
+  }
+  const model = overrides.model ?? DEFAULT_MODEL;
+  const client = new Anthropic({ apiKey });
+
+  return {
+    name: `anthropic:${model}`,
+    async send(req: ProviderRequest): Promise<ProviderResponse> {
+      const response = await client.messages.create({
+        model,
+        max_tokens: req.maxTokens ?? 4096,
+        system: req.system,
+        // The SDK's input message shape matches our internal Message shape
+        // closely enough; cast through unknown to bridge the structural gap.
+        messages: req.messages.map((m) => ({
+          role: m.role === 'system' ? 'user' : m.role,
+          content: m.content as unknown as Anthropic.Messages.MessageParam['content'],
+        })),
+        tools: req.tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          input_schema: t.input_schema as Anthropic.Messages.Tool.InputSchema,
+        })),
+      });
+
+      const content: ContentBlock[] = [];
+      for (const block of response.content) {
+        if (block.type === 'text') content.push({ type: 'text', text: block.text });
+        else if (block.type === 'tool_use') {
+          content.push({
+            type: 'tool_use',
+            id: block.id,
+            name: block.name,
+            input: (block.input as Record<string, unknown>) ?? {},
+          });
+        }
+      }
+
+      const stopReason: ProviderResponse['stopReason'] =
+        response.stop_reason === 'end_turn'
+          ? 'end_turn'
+          : response.stop_reason === 'tool_use'
+            ? 'tool_use'
+            : response.stop_reason === 'max_tokens'
+              ? 'max_tokens'
+              : response.stop_reason === 'stop_sequence'
+                ? 'stop_sequence'
+                : 'unknown';
+
+      return { content, stopReason };
+    },
+  };
+}

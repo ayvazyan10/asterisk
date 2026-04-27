@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Asterisk dispatcher — REPL by default, daemon subcommands handled here.
+# Subcommands: start | stop | restart | status | logs | configure
+# No subcommand → interactive REPL.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DIST_CLI="$ROOT/dist/cli.js"
+DIST_DAEMON="$ROOT/dist/daemon.js"
+SRC_CLI="$ROOT/src/entrypoints/cli.tsx"
+SRC_DAEMON="$ROOT/src/entrypoints/daemon.ts"
+
+# Sensible defaults — local Ollama, telemetry off.
+export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
+export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3.5:9b-q8-max}"
+export OLLAMA_CONTEXT_WINDOW="${OLLAMA_CONTEXT_WINDOW:-131072}"
+
+cmd="${1:-repl}"
+[[ $# -gt 0 ]] && shift || true
+
+run_cli() {
+  if [[ -f "$DIST_CLI" ]]; then
+    exec bun "$DIST_CLI" "$@"
+  else
+    exec bun "$SRC_CLI" "$@"
+  fi
+}
+
+run_daemon_inline() {
+  if [[ -f "$DIST_DAEMON" ]]; then
+    exec bun "$DIST_DAEMON" "$@"
+  else
+    exec bun "$SRC_DAEMON" "$@"
+  fi
+}
+
+case "$cmd" in
+  repl|"")
+    run_cli "$@"
+    ;;
+  start|stop|restart|status|logs|configure)
+    # Phase 2/3 land these subcommands. For now stub politely.
+    if [[ "$cmd" == "configure" ]]; then
+      echo "asterisk configure — not yet implemented (Phase 3)"
+      exit 1
+    fi
+    echo "asterisk $cmd — not yet implemented (Phase 2)"
+    exit 1
+    ;;
+  --help|-h|help)
+    cat <<'USAGE'
+asterisk — local-first AI agent CLI
+
+Usage:
+  asterisk                Start the interactive REPL
+  asterisk start          Start the daemon (Phase 2)
+  asterisk stop           Stop the daemon (Phase 2)
+  asterisk restart        Restart the daemon (Phase 2)
+  asterisk status         Show daemon status (Phase 2)
+  asterisk logs           Tail daemon logs (Phase 2)
+  asterisk configure      Interactive config wizard (Phase 3)
+
+Environment:
+  OLLAMA_BASE_URL         Ollama HTTP base URL (default http://127.0.0.1:11434)
+  OLLAMA_MODEL            Ollama model name (default qwen3.5:9b-q8-max)
+  ASTERISK_PROVIDER       Force provider: ollama | anthropic
+  ANTHROPIC_API_KEY       Required for Anthropic provider
+USAGE
+    ;;
+  *)
+    echo "asterisk: unknown subcommand '$cmd' (try 'asterisk help')" >&2
+    exit 2
+    ;;
+esac
