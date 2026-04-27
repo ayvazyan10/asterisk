@@ -59,13 +59,11 @@ turns actually cost.
 for users running paid Anthropic alongside local Ollama — they want to
 know which calls hit the paid API.
 
-### Streaming for the REPL
-**Status:** infra exists, UI work remains · **Effort:** small-medium
-
-Provider streaming already works (we wired it for Telegram stream mode).
-The REPL still waits for `onAssistantText` per text block. Hook
-`onAssistantDelta` into the Ink transcript so the REPL also types out
-in real time. Same shape — just a different event sink.
+### ~~Streaming for the REPL~~ ✓ shipped
+Provider streaming wired into the REPL transcript via `onAssistantDelta`.
+Tokens land in a single self-updating assistant entry. Working
+indicator surfaces character counts when no tools have fired yet so
+long generations don't look like a hang.
 
 ## Tier 2 — Worth doing once Tier 1 settles
 

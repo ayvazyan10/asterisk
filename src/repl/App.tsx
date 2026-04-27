@@ -247,19 +247,32 @@ export function App({ initialProvider, state, mcp }: Props) {
       const progressTimer = setInterval(() => {
         const elapsedSec = Math.floor((Date.now() - start) / 1000);
         const minutes = Math.floor(elapsedSec / 60);
-        const tallyText =
-          Object.keys(tally).length === 0
-            ? 'still thinking, no tools called yet'
-            : Object.entries(tally)
-                .sort((a, b) => b[1] - a[1])
-                .map(([name, count]) => `${count}× ${name}`)
-                .join(', ');
+        let activity: string;
+        if (Object.keys(tally).length > 0) {
+          activity = Object.entries(tally)
+            .sort((a, b) => b[1] - a[1])
+            .map(([name, count]) => `${count}× ${name}`)
+            .join(', ');
+        } else if (streamingChars > 0) {
+          // Model is generating text but no tools yet — surface the
+          // character count so the user sees progress, not silence.
+          activity = `streaming · ${streamingChars} chars so far`;
+        } else {
+          activity = 'still thinking, no tools called yet';
+        }
         const last = lastTool ? ` · last: ${lastTool}` : '';
         append(
           'progress',
-          `still working · ${minutes}m elapsed · ${tallyText}${last}`,
+          `still working · ${minutes}m elapsed · ${activity}${last}`,
         );
       }, PROGRESS_INTERVAL_MS);
+
+      // Streaming bookkeeping: deltas from the provider go into a single
+      // assistant entry that we update in place rather than appending a new
+      // line per token. Reset between model turns within the same agent loop.
+      let streamingEntryId: string | null = null;
+      let streamingText = '';
+      let streamingChars = 0;
 
       try {
         const rules = loadRules();
@@ -274,7 +287,35 @@ export function App({ initialProvider, state, mcp }: Props) {
           souls,
           hooks,
           ...(outputStyle ? { outputStyle } : {}),
+          onAssistantDelta: (delta: string) => {
+            streamingText += delta;
+            streamingChars += delta.length;
+            if (streamingEntryId === null) {
+              const id = `stream_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+              streamingEntryId = id;
+              setEntries((prev) => [...prev, { id, kind: 'assistant', text: streamingText }]);
+            } else {
+              const idToUpdate = streamingEntryId;
+              setEntries((prev) =>
+                prev.map((e) => (e.id === idToUpdate ? { ...e, text: streamingText } : e)),
+              );
+            }
+            // Surface progress in the working indicator so the user sees
+            // characters land even before any newline ships.
+            setWorkingStatus(`writing · ${streamingChars} chars`);
+          },
           onAssistantText: (t) => {
+            // After streaming has populated an entry, the post-turn whole-
+            // text event is a duplicate — skip it and reset the bookkeeping
+            // for the next model turn in this agent loop.
+            if (streamingEntryId !== null) {
+              streamingEntryId = null;
+              streamingText = '';
+              streamingChars = 0;
+              return;
+            }
+            // Non-streaming provider (or empty stream): fall back to the
+            // append-once behaviour so the user still sees the reply.
             setWorkingStatus('writing response');
             append('assistant', t);
           },
