@@ -68,10 +68,26 @@ function stateFor(chatId: string): AgentState {
 
 const manager = createBotManager(loaded);
 
+const { tryHandleBotCommand } = await import('../bots/commands.ts');
+const { runWithSession } = await import('../agent/context.ts');
+
 manager
   .start(async (msg) => {
     log.debug({ chatId: msg.chatId }, 'incoming message');
     const state = stateFor(msg.chatId);
+    const sessionId = `bot:${msg.chatId}`;
+
+    // Bot-level slash commands run inside the chat's session ALS scope so
+    // they can read/mutate per-session state (tasks, plan mode). Handled
+    // directly without spending tokens on the agent.
+    const handled = await runWithSession({ id: sessionId, scope: 'unknown' }, async () =>
+      tryHandleBotCommand(msg.text, { state, providerName: provider.name }),
+    );
+    if (handled) {
+      log.debug({ chatId: msg.chatId, command: msg.text.split(' ')[0] }, 'bot command');
+      return handled;
+    }
+
     const rules = loadRules();
     const hooks = loadConfig().config.hooks;
     const attachments: Array<{ kind: string; path: string; caption?: string }> = [];
@@ -80,7 +96,7 @@ manager
       // flag, browser context, monitored processes, etc. Telegram + WhatsApp
       // share this code path; the chatId itself is unique enough across
       // transports that we don't need to disambiguate here.
-      session: { id: `bot:${msg.chatId}`, scope: 'unknown' },
+      session: { id: sessionId, scope: 'unknown' },
       rules,
       hooks,
       onToolUse: (name, input) => log.debug({ tool: name, input }, 'tool_use'),

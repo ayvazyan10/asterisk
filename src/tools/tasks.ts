@@ -38,6 +38,12 @@ export function _resetTasksForTesting(): void {
   tasksBySession.clear();
 }
 
+/** Drop every task in the current session — used by the bot-level /reset
+ *  command to give users a clean slate without affecting other chats. */
+export function clearTasksForCurrentSession(): void {
+  tasksBySession.delete(currentSessionId());
+}
+
 export function _allTasks(): AgentTask[] {
   const b = bucket();
   return [...b.byId.values()].sort((a, b2) => a.createdAt - b2.createdAt);

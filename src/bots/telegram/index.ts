@@ -10,6 +10,7 @@ import {
   type Handler,
   type IncomingMessage,
 } from '../adapter.ts';
+import { BOT_COMMAND_LIST } from '../commands.ts';
 
 const MAX_TELEGRAM_CHARS = 4096;
 
@@ -63,6 +64,22 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): BotAdapter 
           await ctx.reply(`asterisk error: ${(e as Error).message}`);
         }
       });
+
+      // Register slash commands with Telegram so users see autocomplete
+      // suggestions when they type "/". Best-effort — failure here doesn't
+      // prevent the bot from working.
+      try {
+        await bot.api.setMyCommands(
+          BOT_COMMAND_LIST.map((c) => ({
+            command: c.command,
+            description: c.description,
+          })),
+        );
+      } catch {
+        // ignore — Telegram occasionally rejects this when bot privacy
+        // mode hasn't synced yet; commands still work via the prefix
+        // handler.
+      }
 
       // start() resolves once long-polling is established. Use the runner
       // mode that does not block (await would never return).

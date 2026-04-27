@@ -1,0 +1,138 @@
+// Bot-level slash commands — handled before the agent loop so they're cheap,
+// predictable, and don't burn LLM tokens on housekeeping. Mirrors what the
+// REPL's slash menu offers, but trimmed to the things that actually make
+// sense over chat: meta + state inspection + reset.
+//
+// Telegram registers these via setMyCommands() so users see autocomplete.
+// WhatsApp has no equivalent autocomplete UI but parses the same prefixes.
+
+import type { AgentState } from '../agent/loop.ts';
+import { currentSessionId } from '../agent/context.ts';
+import { loadConfig } from '../config/load.ts';
+import { _allTasks, clearTasksForCurrentSession } from '../tools/tasks.ts';
+import { activeWorktree } from '../tools/worktree.ts';
+import { isPlanMode, setPlanMode } from '../tools/planmode.ts';
+import type { OutgoingMessage } from './adapter.ts';
+
+export interface BotCommandSpec {
+  command: string;
+  description: string;
+}
+
+/** What we register with Telegram so users see autocomplete. */
+export const BOT_COMMAND_LIST: BotCommandSpec[] = [
+  { command: 'start', description: 'How to use this bot' },
+  { command: 'help', description: 'Show the command list' },
+  { command: 'status', description: 'Provider, model, your tasks + plan mode + worktree' },
+  { command: 'clear', description: 'Forget our conversation history' },
+  { command: 'reset', description: 'Clear history + tasks + plan mode + worktree' },
+  { command: 'tasks', description: 'List your tasks' },
+  { command: 'plan', description: 'Toggle plan mode (read-only research mode)' },
+];
+
+const HELP_TEXT = `👋 I'm Asterisk, a personal AI assistant. Just message me anything — I can read files, run shell commands, browse the web, take screenshots, schedule tasks, and more.
+
+Commands:
+/help    — show this message
+/status  — provider + model + your session info
+/clear   — forget our conversation
+/reset   — clear everything (history, tasks, plan mode)
+/tasks   — list your tasks
+/plan    — toggle Plan Mode (read-only research mode)
+
+Otherwise just type what you want me to do.`;
+
+interface CommandContext {
+  state: AgentState;
+  providerName: string;
+}
+
+/** Try to handle a message as a bot command. Returns an OutgoingMessage if
+ *  the command was recognised; null if the message should fall through to
+ *  the agent. Must be called inside the chat's session ALS scope so it can
+ *  read per-session state. */
+export function tryHandleBotCommand(
+  text: string,
+  ctx: CommandContext,
+): OutgoingMessage | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('/')) return null;
+  const space = trimmed.indexOf(' ');
+  // Telegram appends "@botname" to commands in group chats — strip it.
+  let head = space === -1 ? trimmed.slice(1) : trimmed.slice(1, space);
+  const at = head.indexOf('@');
+  if (at !== -1) head = head.slice(0, at);
+  const cmd = head.toLowerCase();
+
+  switch (cmd) {
+    case 'start':
+    case 'help':
+      return { text: HELP_TEXT };
+
+    case 'status':
+      return { text: renderStatus(ctx) };
+
+    case 'clear':
+      ctx.state.history.length = 0;
+      return { text: '✓ conversation cleared.' };
+
+    case 'reset':
+      ctx.state.history.length = 0;
+      clearTasksForCurrentSession();
+      setPlanMode(false);
+      return {
+        text: '✓ reset · history cleared, tasks dropped, plan mode off, worktree (if any) untouched.',
+      };
+
+    case 'tasks':
+      return { text: renderTasks() };
+
+    case 'plan':
+      setPlanMode(!isPlanMode());
+      return {
+        text: isPlanMode()
+          ? '✓ Plan Mode ON · I can only research; no writes until /plan again.'
+          : '✓ Plan Mode OFF · all tools re-enabled.',
+      };
+
+    default:
+      // Unknown slash command — fall through. The agent might still want to
+      // do something with it (e.g. user types "/etc/hosts" thinking of a path).
+      return null;
+  }
+}
+
+function renderStatus(ctx: CommandContext): string {
+  const cfg = loadConfig().config;
+  const sid = currentSessionId();
+  const tasks = _allTasks();
+  const tasksByStatus = {
+    pending: tasks.filter((t) => t.status === 'pending').length,
+    in_progress: tasks.filter((t) => t.status === 'in_progress').length,
+    completed: tasks.filter((t) => t.status === 'completed').length,
+    cancelled: tasks.filter((t) => t.status === 'cancelled').length,
+  };
+  const wt = activeWorktree();
+  const lines = [
+    `Session   ${sid}`,
+    `Provider  ${ctx.providerName}`,
+    `Model     ${cfg.provider === 'anthropic' ? cfg.anthropic.model : cfg.ollama.model}`,
+    `History   ${ctx.state.history.length} message${ctx.state.history.length === 1 ? '' : 's'}`,
+    `Tasks     ${tasks.length} total · ${tasksByStatus.in_progress} in_progress · ${tasksByStatus.completed} done · ${tasksByStatus.pending} pending`,
+    `Plan Mode ${isPlanMode() ? 'ON (read-only)' : 'off'}`,
+    `Worktree  ${wt ? `${wt.path} (branch ${wt.branch})` : '(none)'}`,
+  ];
+  return lines.join('\n');
+}
+
+function renderTasks(): string {
+  const tasks = _allTasks();
+  if (tasks.length === 0) return '(no tasks yet — I create them as I work on multi-step things)';
+  const icon = (s: string): string =>
+    s === 'completed' ? '✓' : s === 'in_progress' ? '◐' : s === 'cancelled' ? '✗' : '○';
+  const lines = ['Your tasks:'];
+  for (const t of tasks) {
+    lines.push(`${icon(t.status)} #${t.id}  ${t.title}${t.description ? ` — ${t.description}` : ''}`);
+  }
+  return lines.join('\n');
+}
