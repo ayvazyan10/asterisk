@@ -10,6 +10,7 @@ import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
 import { createMcpManager } from '../mcp/manager.ts';
 import { createAnthropicProvider } from '../providers/anthropic.ts';
 import { createOllamaProvider } from '../providers/ollama.ts';
+import { loadRules } from '../rules/loader.ts';
 import { setExtraTools } from '../tools/registry.ts';
 import type { Provider } from '../types/messages.ts';
 import type { AgentState } from '../agent/loop.ts';
@@ -70,12 +71,21 @@ manager
   .start(async (msg) => {
     log.debug({ chatId: msg.chatId }, 'incoming message');
     const state = stateFor(msg.chatId);
+    const rules = loadRules();
+    const hooks = loadConfig().config.hooks;
     const turn = await runAgentTurn(provider, state, msg.text, {
+      rules,
+      hooks,
       onToolUse: (name, input) => log.debug({ tool: name, input }, 'tool_use'),
       onToolResult: (name, _output, isError) =>
         isError ? log.warn({ tool: name }, 'tool_error') : undefined,
       onRetry: (attempt, delayMs, why) =>
         log.warn({ attempt, delayMs, why }, 'provider retry'),
+      onHook: (result) =>
+        log.info(
+          { hook: result.hook, exit: result.exitCode, ms: result.durationMs },
+          'hook fired',
+        ),
     });
     if (turn.reason !== 'end-turn') log.warn({ chatId: msg.chatId, reason: turn.reason }, 'turn ended early');
     return turn.finalText;

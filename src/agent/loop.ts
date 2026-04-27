@@ -14,7 +14,10 @@ import type {
   ToolResultBlock,
   ToolUseBlock,
 } from '../types/messages.ts';
+import type { HookConfig } from '../config/schema.ts';
+import { fireHooks, type HookResult } from '../hooks/runner.ts';
 import { ProviderError, isAbort, isRetryable, retryAfterMs } from '../providers/errors.ts';
+import { rulesToPromptSection, type Rule } from '../rules/loader.ts';
 import { getTool, toolDefinitions } from '../tools/registry.ts';
 import { retry } from '../utils/retry.ts';
 
@@ -49,10 +52,13 @@ export interface RunOptions {
   maxRetries?: number;
   toolTimeoutMs?: number;
   signal?: AbortSignal;
+  rules?: readonly Rule[];
+  hooks?: readonly HookConfig[];
   onAssistantText?(text: string): void;
   onToolUse?(name: string, input: Record<string, unknown>): void;
   onToolResult?(name: string, output: string, isError: boolean): void;
   onRetry?(attempt: number, delayMs: number, reason: string): void;
+  onHook?(result: HookResult): void;
 }
 
 export interface AgentTurnResult {
@@ -70,11 +76,28 @@ export async function runAgentTurn(
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   const toolTimeoutMs = opts.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
   const signal = opts.signal;
+  const hooks = opts.hooks ?? [];
+  const rules = opts.rules ?? [];
+
+  const rulesPromptSection = rulesToPromptSection(rules);
+  const systemPrompt = rulesPromptSection
+    ? `${SYSTEM_PROMPT}\n\n${rulesPromptSection}`
+    : SYSTEM_PROMPT;
 
   state.history.push({
     role: 'user',
     content: [{ type: 'text', text: userInput }],
   });
+
+  // before_turn hooks fire-and-log; failures don't abort the turn.
+  if (hooks.length > 0) {
+    const before = await fireHooks(
+      hooks,
+      { event: 'before_turn', userText: userInput },
+      signal,
+    );
+    for (const r of before) opts.onHook?.(r);
+  }
 
   let finalText = '';
   let reason: TerminalReason = 'unknown-error';
@@ -93,7 +116,7 @@ export async function runAgentTurn(
             const sendOpts: { signal?: AbortSignal } = {};
             if (signal) sendOpts.signal = signal;
             return provider.send({
-              system: SYSTEM_PROMPT,
+              system: systemPrompt,
               messages: state.history,
               tools: toolDefinitions(),
               ...sendOpts,
@@ -159,6 +182,14 @@ export async function runAgentTurn(
           break;
         }
         opts.onToolUse?.(use.name, use.input);
+        if (hooks.length > 0) {
+          const before = await fireHooks(
+            hooks,
+            { event: 'before_tool', tool: use.name, toolInput: use.input },
+            signal,
+          );
+          for (const r of before) opts.onHook?.(r);
+        }
         const tool = getTool(use.name);
         let output: string;
         let isError: boolean;
@@ -176,6 +207,20 @@ export async function runAgentTurn(
           isError = exec.isError;
         }
         opts.onToolResult?.(use.name, output, isError);
+        if (hooks.length > 0) {
+          const after = await fireHooks(
+            hooks,
+            {
+              event: 'after_tool',
+              tool: use.name,
+              toolInput: use.input,
+              toolOutput: output,
+              toolError: isError,
+            },
+            signal,
+          );
+          for (const r of after) opts.onHook?.(r);
+        }
         const tr: ToolResultBlock = {
           type: 'tool_result',
           tool_use_id: use.id,
@@ -193,6 +238,20 @@ export async function runAgentTurn(
       }
     }
   } catch (error) {
+    if (hooks.length > 0) {
+      const errResults = await fireHooks(
+        hooks,
+        {
+          event: 'on_error',
+          error: {
+            kind: error instanceof ProviderError ? error.kind : 'exception',
+            message: (error as Error)?.message ?? String(error),
+          },
+        },
+        signal,
+      );
+      for (const r of errResults) opts.onHook?.(r);
+    }
     if (isAbort(error)) {
       reason = 'aborted';
     } else if (reason === 'unknown-error') {
@@ -201,6 +260,11 @@ export async function runAgentTurn(
     } else {
       throw error;
     }
+  }
+
+  if (hooks.length > 0 && reason === 'end-turn') {
+    const after = await fireHooks(hooks, { event: 'after_turn', finalText }, signal);
+    for (const r of after) opts.onHook?.(r);
   }
 
   return { finalText, reason };

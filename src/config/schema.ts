@@ -50,6 +50,28 @@ const DaemonSchema = z.object({
   heartbeatSeconds: z.number().int().min(5).default(60),
 });
 
+// Hooks fire at agent-loop lifecycle events. Each hook is a shell command
+// run with the event payload on stdin (JSON). Stdout is logged into the
+// transcript as a system note; non-zero exit logs the stderr too.
+export const HookEventSchema = z.enum([
+  'before_turn',
+  'after_turn',
+  'before_tool',
+  'after_tool',
+  'on_error',
+]);
+export type HookEvent = z.infer<typeof HookEventSchema>;
+
+export const HookConfigSchema = z.object({
+  name: z.string().min(1),
+  event: HookEventSchema,
+  matcher: z.string().optional(),
+  command: z.string().min(1),
+  timeoutSeconds: z.number().int().min(1).max(300).default(30),
+  enabled: z.boolean().default(true),
+});
+export type HookConfig = z.infer<typeof HookConfigSchema>;
+
 // MCP server entry — either stdio (spawned subprocess) or http (Streamable
 // HTTP endpoint). Reference: https://modelcontextprotocol.io/specification
 const McpStdioServerSchema = z.object({
@@ -83,6 +105,7 @@ export const ConfigSchema = z.object({
   bots: BotsSchema.default({}),
   daemon: DaemonSchema.default({}),
   mcpServers: z.array(McpServerSchema).default([]),
+  hooks: z.array(HookConfigSchema).default([]),
 });
 
 export type AsteriskConfig = z.infer<typeof ConfigSchema>;

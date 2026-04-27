@@ -8,7 +8,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { type AgentState, runAgentTurn } from '../agent/loop.ts';
 import { lookupCommand } from '../commands/registry.ts';
+import { loadConfig } from '../config/load.ts';
 import type { McpManager } from '../mcp/manager.ts';
+import { loadRules } from '../rules/loader.ts';
 import type { Provider } from '../types/messages.ts';
 import { Banner } from './Banner.tsx';
 import { CommandMenu, clampSelection, filterCommands } from './CommandMenu.tsx';
@@ -202,7 +204,11 @@ export function App({ initialProvider, state, mcp }: Props) {
       }, PROGRESS_INTERVAL_MS);
 
       try {
+        const rules = loadRules();
+        const hooks = loadConfig().config.hooks;
         const turn = await runAgentTurn(provider, state, text, {
+          rules,
+          hooks,
           onAssistantText: (t) => {
             setWorkingStatus('writing response');
             append('assistant', t);
@@ -220,6 +226,13 @@ export function App({ initialProvider, state, mcp }: Props) {
           onRetry: (attempt, delayMs, why) => {
             setWorkingStatus(`retrying (#${attempt} in ${Math.round(delayMs / 1000)}s)`);
             append('progress', `retrying after ${why} · attempt ${attempt} · waiting ${Math.round(delayMs / 1000)}s`);
+          },
+          onHook: (result) => {
+            const tag = result.exitCode === 0 ? 'hook' : 'hook-err';
+            const parts = [`${tag}: ${result.hook}`];
+            if (result.stdout.trim()) parts.push(result.stdout.trim());
+            if (result.exitCode !== 0 && result.stderr.trim()) parts.push(`stderr: ${result.stderr.trim()}`);
+            append(result.exitCode === 0 ? 'tool-result' : 'error', parts.join(' · '));
           },
         });
         if (turn.reason === 'max-turns') {
@@ -263,6 +276,7 @@ export function App({ initialProvider, state, mcp }: Props) {
             },
             exit,
             mcp,
+            injectInput: (text) => setInput(text),
           },
           cmd.args,
         );
