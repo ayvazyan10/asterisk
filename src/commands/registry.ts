@@ -182,24 +182,65 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/status',
-    description: 'Show provider, daemon, and config status',
+    description: 'Show active provider, bots, MCP, and daemon state',
     execute(ctx) {
       const paths = asteriskPaths();
       const cfgExists = existsSync(paths.configFile);
       const secretsExists = existsSync(paths.secretsFile);
       const pidStatus = statusFromPidFile(paths.pidFile);
+      const loaded = loadConfig();
+      const cfg = loaded.config;
+      const secrets = loaded.secrets;
+
       const daemonLine = pidStatus.running
-        ? `running (pid ${pidStatus.pid})`
+        ? `running · pid ${pidStatus.pid}`
         : pidStatus.stale
           ? 'not running (stale pid file)'
           : 'not running';
+
+      const tg = cfg.bots.telegram;
+      const wa = cfg.bots.whatsapp;
+      const tgState = tg.enabled
+        ? `enabled · ${tg.allowedUserIds.length} allowlisted ${secrets.ASTERISK_TELEGRAM_BOT_TOKEN ? '· token set' : '· ⚠ NO TOKEN'}`
+        : 'disabled';
+      const waState = wa.enabled
+        ? `enabled · ${wa.transport}`
+        : 'disabled';
+
+      const mcpConfigured = cfg.mcpServers.length;
+      const mcpConnected = ctx.mcp.servers.length;
+      const mcpTools = ctx.mcp.tools.length;
+      const mcpLine =
+        mcpConfigured === 0
+          ? 'none configured'
+          : `${mcpConnected}/${mcpConfigured} connected · ${mcpTools} tool${mcpTools === 1 ? '' : 's'}`;
+
+      const provider = parseProviderName(ctx.provider.name);
+      const providerLabel =
+        provider?.kind === 'ollama'
+          ? `ollama · ${provider.model} · ${cfg.ollama.baseUrl}`
+          : provider?.kind === 'anthropic'
+            ? `anthropic · ${provider.model}`
+            : ctx.provider.name;
+
+      const configLine = cfgExists
+        ? paths.configFile
+        : `${paths.configFile} · using defaults (file not yet created)`;
+      const secretsLine = secretsExists
+        ? `${paths.secretsFile} · chmod 600`
+        : `${paths.secretsFile} · not yet created`;
+
       return [
-        `provider: ${ctx.provider.name}`,
-        `history:  ${ctx.state.history.length} messages`,
-        `config:   ${cfgExists ? paths.configFile : '(none — run `asterisk configure`)'}`,
-        `secrets:  ${secretsExists ? paths.secretsFile + ' (chmod 600)' : '(none)'}`,
-        `daemon:   ${daemonLine}`,
-        `home:     ${paths.root}`,
+        `Provider   ${providerLabel}`,
+        `History    ${ctx.state.history.length} message${ctx.state.history.length === 1 ? '' : 's'}`,
+        `Telegram   ${tgState}`,
+        `WhatsApp   ${waState}`,
+        `MCP        ${mcpLine}`,
+        `Daemon     ${daemonLine}`,
+        '',
+        `Config     ${configLine}`,
+        `Secrets    ${secretsLine}`,
+        `Home       ${paths.root}`,
       ].join('\n');
     },
   },

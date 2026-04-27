@@ -160,9 +160,15 @@ describe('command registry', () => {
   it('/status reports provider, history, and daemon state', async () => {
     const c = ctx(createOllamaProvider());
     const out = (await COMMANDS.find((c2) => c2.name === '/status')!.execute(c, '')) as string;
-    expect(out).toContain('provider:');
-    expect(out).toContain('history:');
-    expect(out).toContain('daemon:');
+    expect(out).toMatch(/Provider/);
+    expect(out).toMatch(/History/);
+    expect(out).toMatch(/Daemon/);
+    expect(out).toMatch(/Telegram/);
+    expect(out).toMatch(/WhatsApp/);
+    expect(out).toMatch(/MCP/);
+    // The status line must NOT report the unhelpful "none — run asterisk
+    // configure" stub when the user is running on validated defaults.
+    expect(out).not.toMatch(/\(none — run/);
   });
 
   it('/provider (no args) returns a list of providers', async () => {
