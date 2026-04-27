@@ -10,11 +10,12 @@ import { BUILTIN_TOOLS, getTool, listTools, setExtraTools, toolDefinitions } fro
 import { writeTool } from '../src/tools/write.ts';
 
 describe('tool registry', () => {
-  it('exposes filesystem, shell, browser, web, task, and agent tools', () => {
+  it('exposes the full set of built-in tools', () => {
     const names = BUILTIN_TOOLS.map((t) => t.name).sort();
     expect(names).toEqual(
       [
         'Agent',
+        'AskUserQuestion',
         'Bash',
         'BrowserClick',
         'BrowserClose',
@@ -24,10 +25,21 @@ describe('tool registry', () => {
         'BrowserSnapshot',
         'BrowserType',
         'BrowserWait',
+        'CronCreate',
+        'CronDelete',
+        'CronList',
         'Edit',
+        'EnterPlanMode',
+        'EnterWorktree',
+        'ExitPlanMode',
+        'ExitWorktree',
         'Glob',
         'Grep',
+        'Monitor',
+        'PushNotification',
         'Read',
+        'RemoteTrigger',
+        'ScheduleWakeup',
         'TaskCreate',
         'TaskGet',
         'TaskList',

@@ -11,6 +11,12 @@ import { lookupCommand } from '../commands/registry.ts';
 import { loadConfig } from '../config/load.ts';
 import type { McpManager } from '../mcp/manager.ts';
 import { loadRules } from '../rules/loader.ts';
+import {
+  type AskQuestion,
+  answerAskQuestion,
+  cancelAskQuestion,
+  onAskQuestion,
+} from '../tools/ask.ts';
 import type { Provider } from '../types/messages.ts';
 import { Banner } from './Banner.tsx';
 import { CommandMenu, clampSelection, filterCommands } from './CommandMenu.tsx';
@@ -62,11 +68,19 @@ export function App({ initialProvider, state, mcp }: Props) {
   const [modal, setModal] = useState<Modal>(null);
   const [workingSince, setWorkingSince] = useState<number | null>(null);
   const [workingStatus, setWorkingStatus] = useState<string>('thinking');
+  const [askQuestion, setAskQuestion] = useState<AskQuestion | null>(null);
   // Side-question queue: messages the user typed while the agent was busy.
   // Drained automatically when the current turn ends.
   const queueRef = useRef<string[]>([]);
   const [queueLen, setQueueLen] = useState(0);
   const cwd = useMemo(() => process.cwd(), []);
+
+  // Subscribe to AskUserQuestion events from any in-flight tool. When one
+  // arrives we render an interactive prompt; the user's submission resolves
+  // the tool's promise via answerAskQuestion.
+  useEffect(() => {
+    return onAskQuestion((q) => setAskQuestion(q));
+  }, []);
 
   const menuOpen = !modal && input.startsWith('/');
 
@@ -447,7 +461,72 @@ export function App({ initialProvider, state, mcp }: Props) {
         }}
       </Static>
       <Box flexDirection="column" marginTop={1}>
-        {modal ? (
+        {askQuestion ? (
+          askQuestion.options && askQuestion.options.length > 0 ? (
+            <ListPicker
+              key={askQuestion.id}
+              spec={{
+                kind: 'list',
+                title: `❓ ${askQuestion.question}`,
+                items: askQuestion.options.map((o) => ({ value: o, label: o })),
+                onPick: (v) => {
+                  answerAskQuestion(askQuestion.id, v);
+                  setAskQuestion(null);
+                  return null;
+                },
+                onCancel: () => {
+                  cancelAskQuestion(askQuestion.id);
+                  setAskQuestion(null);
+                  return null;
+                },
+              }}
+              onPick={(v) => {
+                answerAskQuestion(askQuestion.id, v);
+                setAskQuestion(null);
+              }}
+              onCancel={() => {
+                cancelAskQuestion(askQuestion.id);
+                setAskQuestion(null);
+              }}
+            />
+          ) : (
+            <Form
+              key={askQuestion.id}
+              spec={{
+                kind: 'form',
+                title: `❓ ${askQuestion.question}`,
+                fields: [
+                  {
+                    kind: 'text',
+                    key: 'answer',
+                    label: 'Your answer',
+                    ...(askQuestion.defaultValue !== undefined
+                      ? { defaultValue: askQuestion.defaultValue }
+                      : {}),
+                  },
+                ],
+                onSubmit: (vals) => {
+                  answerAskQuestion(askQuestion.id, vals['answer'] ?? '');
+                  setAskQuestion(null);
+                  return null;
+                },
+                onCancel: () => {
+                  cancelAskQuestion(askQuestion.id);
+                  setAskQuestion(null);
+                  return null;
+                },
+              }}
+              onSubmit={(vals) => {
+                answerAskQuestion(askQuestion.id, vals['answer'] ?? '');
+                setAskQuestion(null);
+              }}
+              onCancel={() => {
+                cancelAskQuestion(askQuestion.id);
+                setAskQuestion(null);
+              }}
+            />
+          )
+        ) : modal ? (
           modal.kind === 'form' ? (
             <Form
               key={modal.title}

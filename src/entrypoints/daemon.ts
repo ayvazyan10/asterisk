@@ -99,10 +99,34 @@ const interval = setInterval(() => log.debug('heartbeat'), HEARTBEAT_MS);
 interval.unref();
 const keepAlive = setInterval(() => {}, 1 << 30);
 
+// Scheduler — fires one-shot wakeups and cron jobs on schedule. Each firing
+// runs the prompt through the same agent loop the bots use, with a fresh
+// state, so its output doesn't blend into anyone's chat history.
+const { createScheduler } = await import('../daemon/scheduler.ts');
+const scheduler = createScheduler({
+  log: (event) => log.info(event, 'scheduler'),
+  dispatch: async (prompt, source) => {
+    const sched = createAgentState();
+    const rules = loadRules();
+    const hooks = loadConfig().config.hooks;
+    const result = await runAgentTurn(provider, sched, prompt, {
+      rules,
+      hooks,
+      onToolUse: (name) => log.debug({ tool: name }, 'scheduled tool_use'),
+    });
+    log.info(
+      { source, reason: result.reason, finalText: result.finalText.slice(0, 200) },
+      'scheduled run finished',
+    );
+  },
+});
+scheduler.start();
+
 async function shutdown(signal: string): Promise<void> {
   log.info({ signal }, 'shutdown');
   clearInterval(interval);
   clearInterval(keepAlive);
+  scheduler.stop();
   await manager.stop().catch(() => {});
   await mcp.shutdown().catch(() => {});
   await closeBrowser().catch(() => {});
