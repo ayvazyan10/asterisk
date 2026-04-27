@@ -16,8 +16,9 @@ same assistant to Telegram and WhatsApp.
   API, [Model Context Protocol](https://modelcontextprotocol.io), Playwright.
 - **Apache 2.0** licensed.
 
-Status `0.1.0` — early but real. ~30 built-in tools, 14 slash commands,
-14 daemon-managed scheduling/lifecycle features, 5 bundled skills.
+Status `0.1.0` — early but real. ~30 built-in tools, 15 slash commands,
+14 daemon-managed scheduling/lifecycle features, 5 bundled skills, and a
+SOUL.md persona system that bot users can manage per-chat.
 
 ## Install
 
@@ -115,6 +116,7 @@ asterisk help
 | `/rules`           | List the rules currently loaded into the system prompt      |
 | `/skills`          | List installed skills (bundled + user + project)            |
 | `/skill [name]`    | Run a skill — picker if no name given                       |
+| `/soul [verb]`     | Show / `init` / `where` your SOUL.md persona                |
 | `/hooks`           | Manage agent-loop lifecycle hooks (visual)                  |
 | `/quit`            | Exit the REPL                                               |
 
@@ -130,7 +132,8 @@ The agent has these tools out of the box:
 `BrowserSnapshot` · `BrowserScreenshot` · `BrowserWait` · `BrowserClose`
 
 **Web research**
-`WebFetch` (URL → readable text) · `WebSearch` (DuckDuckGo, no key)
+`WebFetch` (URL → readable text) · `WebSearch` (Brave / Tavily / SearXNG /
+DDG instant-answer, picks the first backend you've configured a key for)
 
 **Planning**
 `TaskCreate` · `TaskUpdate` · `TaskList` · `TaskGet` · `TaskStop` — the
@@ -164,7 +167,7 @@ items as fresh agent turns.
 Plus any tools exposed by configured MCP servers, namespaced as
 `<servername>__<toolname>`.
 
-## Skills, rules, hooks
+## Skills, rules, hooks, souls
 
 **Skills** — reusable workflows. 5 bundled out of the box:
 
@@ -190,6 +193,24 @@ Configured via `/hooks` (visual). The hook command receives the event
 payload as JSON on stdin; stdout is surfaced as a system note in the
 transcript.
 
+**Souls** — `SOUL.md` describes who the assistant should be and who it's
+talking to. Spliced into the system prompt before rules. Three layers,
+all optional, later wins on conflict:
+
+- `~/.asterisk/SOUL.md` — operator persona (applies everywhere)
+- `~/.asterisk/souls/<scope>-<sid>.md` — **per-chat** persona; written by
+  Telegram / WhatsApp users via `/soul set <text>`, so each chat owns its
+  own description without affecting anyone else
+- `<repo>/.asterisk/SOUL.md` or `<repo>/SOUL.md` — project-local persona
+
+In the REPL: `/soul` shows what's loaded, `/soul init` drops a starter
+template at `~/.asterisk/SOUL.md`, `/soul where` lists the search paths.
+
+In Telegram / WhatsApp: `/soul`, `/soul set <multi-line markdown>`,
+`/soul edit`, `/soul clear`, `/soul help` — all scoped to the current
+chat. `/soul set Call me Levon, reply in Russian, skip apologies` is
+enough to teach the bot a new persona for that chat alone.
+
 ## Bot transports
 
 | Transport            | Status                | Notes                                              |
@@ -199,7 +220,27 @@ transcript.
 | WhatsApp web-js      | **Personal use only** | Drives WhatsApp Web via Puppeteer. Violates WhatsApp ToS. Risks number bans. |
 
 All bot writes are gated by config — no transport runs unless you explicitly
-enable it via `asterisk configure`.
+enable it via `asterisk configure`. Both bots can also send media: any
+attachment the agent emits via the `Attach` tool (image, video, audio,
+document) is delivered as a real Telegram / WhatsApp media message.
+
+**Per-user isolation.** Each chat — Telegram chatId, WhatsApp number, or
+the local REPL — gets its own task list, plan-mode flag, browser context,
+monitored processes, and SOUL.md persona. Two users sharing a daemon
+never see each other's state.
+
+**Bot-side slash commands** (auto-completed in Telegram via
+`setMyCommands`):
+
+| Command  | What it does                                              |
+| -------- | --------------------------------------------------------- |
+| `/help`  | How to use the bot                                        |
+| `/status`| Provider, model, your tasks, plan mode, worktree          |
+| `/clear` | Forget conversation history                               |
+| `/reset` | Clear history + tasks + plan mode                         |
+| `/tasks` | List your tasks                                           |
+| `/plan`  | Toggle Plan Mode (read-only research mode)                |
+| `/soul`  | Show / `set` / `edit` / `clear` your personal persona     |
 
 ## MCP servers
 
@@ -238,6 +279,8 @@ src/
 ├── hooks/runner.ts  # lifecycle hooks (before/after_tool, …)
 ├── rules/loader.ts  # markdown rules → system prompt
 ├── skills/          # bundled.ts (5) + loader (user/project SKILL.md)
+├── soul/loader.ts   # SOUL.md (user / per-chat / project) → system prompt
+├── agent/context.ts # per-session ALS — chatId scopes tasks/plan/soul/etc
 └── utils/           # retry · path
 ```
 
@@ -305,7 +348,9 @@ can't lock the loop.
 
 ## Limitations
 
-- Conversation history is in-memory; daemon restart wipes per-chat state.
+- Conversation history, tasks, plan-mode, and worktree state live in
+  memory; daemon restart wipes them. SOUL.md personas survive (they're
+  files under `~/.asterisk/`), but task lists do not.
 - No streaming responses yet — the loop awaits each turn fully.
 - No model-side compaction when context is near full (tracked).
 - No image content blocks back to the model, so it can't *see* the
