@@ -37,8 +37,8 @@ describe('Ollama streaming', () => {
   });
 
   it('forwards per-chunk deltas to onText and assembles full content', async () => {
-    globalThis.fetch = (async (_url, init) => {
-      lastBody = String((init as RequestInit | undefined)?.body ?? '');
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      lastBody = String(init?.body ?? '');
       const stream = ndjsonStream([
         JSON.stringify({ message: { role: 'assistant', content: 'Hello' }, done: false }),
         JSON.stringify({ message: { role: 'assistant', content: ', ' }, done: false }),
@@ -46,7 +46,7 @@ describe('Ollama streaming', () => {
         JSON.stringify({ message: { role: 'assistant', content: '' }, done: true }),
       ]);
       return new Response(stream, { status: 200, headers: { 'content-type': 'application/x-ndjson' } });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const provider = createOllamaProvider({ baseUrl: 'http://x', model: 'm' });
     const deltas: string[] = [];
@@ -72,7 +72,7 @@ describe('Ollama streaming', () => {
         JSON.stringify({ message: { role: 'assistant', content: 'Done.' }, done: true }),
       ]);
       return new Response(stream, { status: 200 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const provider = createOllamaProvider({ baseUrl: 'http://x', model: 'm' });
     const visible: string[] = [];
@@ -106,7 +106,7 @@ describe('Ollama streaming', () => {
         }),
       ]);
       return new Response(stream, { status: 200 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const provider = createOllamaProvider({ baseUrl: 'http://x', model: 'm' });
     const r = await provider.send({
@@ -123,13 +123,13 @@ describe('Ollama streaming', () => {
   });
 
   it('falls back to non-streaming when no onText is provided', async () => {
-    globalThis.fetch = (async (_url, init) => {
-      lastBody = String((init as RequestInit | undefined)?.body ?? '');
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      lastBody = String(init?.body ?? '');
       return new Response(
         JSON.stringify({ message: { role: 'assistant', content: 'plain' }, done: true }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       );
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const provider = createOllamaProvider({ baseUrl: 'http://x', model: 'm' });
     const r = await provider.send({ system: 's', messages: [], tools: [] });

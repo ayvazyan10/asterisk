@@ -20,8 +20,14 @@ import { BOT_COMMAND_LIST } from '../commands.ts';
 import { balanceOpenTags, escapeHtml, markdownToTelegramHtml } from './format.ts';
 
 const MAX_TELEGRAM_CHARS = 4096;
-const PLACEHOLDER = '◐ working…';
-const STREAM_TYPING_TAIL = ' ◐';
+// 10-frame braille spinner — same glyphs CLIs like cargo / yarn use. Looks
+// like a real "rotating" indicator across one cell, no emoji-rendering quirks.
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+// Token replaced with the current spinner frame at render time.
+const SPIN = '{{spin}}';
+// Bump frame slightly slower than the rate-limit so we never starve the
+// schedule of a real-content edit. Telegram allows ~1 edit/sec/chat.
+const TICK_INTERVAL_MS = 1200;
 
 export type TelegramStreamMode = 'final' | 'status' | 'stream';
 export type TelegramParseMode = 'plain' | 'html';
@@ -124,7 +130,8 @@ async function handleTurn(
     return;
   }
 
-  const placeholder = await ctx.reply(PLACEHOLDER);
+  // Initial placeholder — the writer's tick interval will animate from here.
+  const placeholder = await ctx.reply(`${SPINNER_FRAMES[0]} thinking…`);
   const writer = createPlaceholderWriter(
     ctx,
     chatId,
@@ -143,7 +150,7 @@ async function handleTurn(
         lastStatus = e.text;
         const txt = truncate(lastStatus, 200);
         writer.schedule(
-          parseMode === 'html' ? `◐ <i>${escapeHtml(txt)}</i>` : `◐ ${txt}`,
+          parseMode === 'html' ? `${SPIN} <i>${escapeHtml(txt)}</i>` : `${SPIN} ${txt}`,
         );
       }
       // ignore text events in status mode — final reply replaces placeholder
@@ -165,8 +172,8 @@ async function handleTurn(
             parseMode === 'html' ? `<i>${escapeHtml(tail)}</i>` : `_${tail}_`
           }`
         : parseMode === 'html'
-          ? `◐ <i>${escapeHtml(truncate(e.text, 200))}</i>`
-          : `◐ ${truncate(e.text, 200)}`;
+          ? `${SPIN} <i>${escapeHtml(truncate(e.text, 200))}</i>`
+          : `${SPIN} ${truncate(e.text, 200)}`;
       writer.schedule(view);
     }
   };
@@ -246,12 +253,16 @@ function stripTags(html: string): string {
 }
 
 interface PlaceholderWriter {
-  schedule(text: string): void;
+  /** Set the current message template. Use the `{{spin}}` token where the
+   *  rotating spinner glyph should render — the writer ticks it every
+   *  ~TICK_INTERVAL_MS so the user always sees motion. */
+  schedule(template: string): void;
   flush(): Promise<void>;
 }
 
-/** Throttled editor for a single Telegram message. Coalesces rapid updates so
- *  we never violate the API's "1 edit per second per chat" guidance. */
+/** Throttled editor for a single Telegram message with a self-ticking
+ *  spinner. Coalesces rapid updates so we never violate the API's
+ *  "1 edit per second per chat" guidance. */
 function createPlaceholderWriter(
   ctx: Context,
   chatId: number,
@@ -259,11 +270,33 @@ function createPlaceholderWriter(
   throttleMs: number,
   parseMode: TelegramParseMode,
 ): PlaceholderWriter {
-  let pending: string | null = null;
+  const startedAt = Date.now();
+  let template = `${SPIN} thinking…`;
+  let spinnerIdx = 0;
   let lastSent = '';
   let lastEditAt = 0;
-  let timer: ReturnType<typeof setTimeout> | null = null;
+  let drainTimer: ReturnType<typeof setTimeout> | null = null;
   let inFlight: Promise<void> | null = null;
+  let stopped = false;
+
+  const renderNow = (): string => {
+    const frame = SPINNER_FRAMES[spinnerIdx % SPINNER_FRAMES.length] ?? '·';
+    const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+    const elapsed = elapsedSec >= 1 ? ` · ${elapsedSec}s` : '';
+    let text = template.replaceAll(SPIN, frame);
+    // Append elapsed only on the spinner's "anchor" line — heuristic: if the
+    // template has no newline, suffix; if multi-line, append to the last line.
+    if (!text.includes('\n')) {
+      text = `${text}${elapsed}`;
+    } else {
+      const idx = text.lastIndexOf('\n');
+      text = `${text.slice(0, idx)}\n${text.slice(idx + 1)}${elapsed}`;
+    }
+    if (text.length > MAX_TELEGRAM_CHARS - 16) {
+      text = `${text.slice(0, MAX_TELEGRAM_CHARS - 16)}\n…(truncated)`;
+    }
+    return text;
+  };
 
   const doEdit = async (text: string): Promise<void> => {
     if (text === lastSent) return;
@@ -273,32 +306,46 @@ function createPlaceholderWriter(
   };
 
   const drain = (): void => {
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
+    if (drainTimer) {
+      clearTimeout(drainTimer);
+      drainTimer = null;
     }
-    if (pending === null) return;
-    const next = pending;
-    pending = null;
-    inFlight = doEdit(next).catch(() => undefined);
+    if (stopped) return;
+    inFlight = doEdit(renderNow()).catch(() => undefined);
   };
 
+  const requestEdit = (): void => {
+    const sinceLast = Date.now() - lastEditAt;
+    if (sinceLast >= throttleMs) {
+      drain();
+    } else if (!drainTimer) {
+      drainTimer = setTimeout(drain, throttleMs - sinceLast);
+    }
+  };
+
+  // Animate the spinner even when no other event arrives so the placeholder
+  // never goes stale-looking. unref'd so it doesn't keep the daemon alive.
+  const tick = setInterval(() => {
+    if (stopped) return;
+    spinnerIdx = (spinnerIdx + 1) % SPINNER_FRAMES.length;
+    requestEdit();
+  }, TICK_INTERVAL_MS);
+  if (typeof (tick as { unref?: () => void }).unref === 'function') {
+    (tick as { unref?: () => void }).unref?.();
+  }
+
   return {
-    schedule(text: string): void {
-      // Trim down to 4096 — Telegram rejects longer messages.
-      const safe = text.length > MAX_TELEGRAM_CHARS - 16
-        ? `${text.slice(0, MAX_TELEGRAM_CHARS - 16)}\n…(truncated)`
-        : text;
-      pending = safe;
-      const sinceLast = Date.now() - lastEditAt;
-      if (sinceLast >= throttleMs) {
-        drain();
-      } else if (!timer) {
-        timer = setTimeout(drain, throttleMs - sinceLast);
-      }
+    schedule(next: string): void {
+      template = next;
+      requestEdit();
     },
     async flush(): Promise<void> {
-      drain();
+      stopped = true;
+      clearInterval(tick);
+      if (drainTimer) {
+        clearTimeout(drainTimer);
+        drainTimer = null;
+      }
       if (inFlight) {
         try {
           await inFlight;
@@ -312,15 +359,17 @@ function createPlaceholderWriter(
 
 function streamView(text: string, parseMode: TelegramParseMode): string {
   // Show the streaming text with a small "still typing" tail so the user
-  // sees the message is live rather than thinking the bot stalled. In HTML
-  // mode we render the markdown then re-balance any tag we may have left
-  // half-open by truncating mid-formatter — Telegram rejects unbalanced
-  // edits otherwise.
+  // sees the message is live rather than thinking the bot stalled. The
+  // {{spin}} token is replaced with the current spinner frame on each tick
+  // so the cursor visibly rotates while the model produces tokens. In
+  // HTML mode we render the markdown then re-balance any tag we may have
+  // left half-open by truncating mid-formatter — Telegram rejects
+  // unbalanced edits otherwise.
   if (parseMode === 'html') {
     const rendered = markdownToTelegramHtml(text);
-    return balanceOpenTags(rendered) + STREAM_TYPING_TAIL;
+    return `${balanceOpenTags(rendered)} ${SPIN}`;
   }
-  return `${text}${STREAM_TYPING_TAIL}`;
+  return `${text} ${SPIN}`;
 }
 
 async function safeEdit(
