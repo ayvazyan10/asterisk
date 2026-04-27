@@ -11,3 +11,7 @@ bun.lockb
 *.tsbuildinfo
 .vscode/
 .idea/
+
+# Local-only Claude Code project memory (per-machine; not for the public repo)
+CLAUDE.md
+.claude/
