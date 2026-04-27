@@ -8,7 +8,7 @@ import { type Tool, ok, err } from './types.ts';
 export const editTool: Tool = {
   name: 'Edit',
   description:
-    'Replace an exact string in a file. Fails if oldString is not unique unless replaceAll is true.',
+    'Replace an exact string in a file. Fails if oldString is not unique unless replaceAll is true. Use replaceAll:true for bulk find/replace (e.g. swapping a colour value, renaming a variable everywhere) — one Edit call replaces every occurrence in the file in O(n), much cheaper than calling Edit once per match. For independent edits to different strings in the same file, emit several Edit calls in the same turn rather than one per turn.',
   input_schema: {
     type: 'object',
     properties: {

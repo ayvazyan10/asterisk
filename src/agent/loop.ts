@@ -70,10 +70,25 @@ tool reports it's unavailable (missing API key, offline backend), that
 tool is unavailable for this turn — pick a different one rather than
 telling the user the task is impossible.
 
+Working in parallel: when several tool calls don't depend on each other,
+emit them all in the same turn — they execute in order but cost just one
+model round-trip. Examples: editing several distinct strings in the same
+file (Edit … Edit … Edit), reading a few sibling files at once
+(Read … Read), researching by spawning multiple sub-agents in parallel,
+hitting WebFetch on more than one URL when you need them both. Sequential
+turns are only needed when a later call depends on the result of an
+earlier one. For find/replace work that touches many occurrences of the
+same string, use Edit's replaceAll:true flag instead of one Edit per
+match — far cheaper than scanning for each occurrence.
+
 Be concise. Prefer doing work directly with tools over describing what you
 would do. When a task is complete, respond with a short summary.`;
 
-const DEFAULT_MAX_TURNS = 12;
+// 30 fits most agentic tasks: 12 was empirically too tight for things like
+// "rewrite every color in a 700-line CSS file" once the model split work
+// across many sequential Edit calls. Override via opts.maxTurns when you
+// want a tighter or looser bound (sub-agents typically pass a smaller cap).
+const DEFAULT_MAX_TURNS = 30;
 const DEFAULT_MAX_RETRIES = 5;
 const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
 
