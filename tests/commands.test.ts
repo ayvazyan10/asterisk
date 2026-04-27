@@ -60,6 +60,7 @@ describe('command registry', () => {
     const names = COMMANDS.map((c) => c.name).sort();
     expect(names).toEqual(
       [
+        '/agents',
         '/clear',
         '/config',
         '/help',

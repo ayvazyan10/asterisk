@@ -6,6 +6,7 @@
 // fresh AgentState. maxTurns is capped lower (default 8) than the parent
 // loop so the sub-task can't run forever.
 
+import { findAgent, loadAgents } from '../agents/loader.ts';
 import { type AgentState, createAgentState, runAgentTurn } from '../agent/loop.ts';
 import { currentSession } from '../agent/context.ts';
 import { loadConfig } from '../config/load.ts';
@@ -45,10 +46,29 @@ function pickProviderForSub(): Provider {
   });
 }
 
+function describeAgent(): string {
+  // Render the available subagent_type list dynamically so the parent
+  // sees the user's bundled+installed agents, not a hardcoded blurb.
+  const agents = loadAgents();
+  const lines = agents
+    .slice(0, 30) // keep the description compact
+    .map((a) => `  ${a.name} — ${a.description}`)
+    .join('\n');
+  return `Spawn a sub-agent in an isolated conversation to research, explore, or run a focused task. Useful for parallel investigations and for handing work to a domain specialist (code-reviewer, security-reviewer, planner, etc.).
+
+Pick a subagent_type from the list below for a specialised role with a tailored system prompt and (sometimes) a restricted tool-set. Omit subagent_type to spawn a general-purpose agent with your full tool-set.
+
+Available subagent_type values:
+${lines}
+
+The sub-agent runs with its own AgentState (its conversation does not affect yours) but inherits your session — its tasks / worktrees / browser context show up in your view too.`;
+}
+
 export const subAgentTool: Tool = {
   name: 'Agent',
-  description:
-    'Spawn a sub-agent in an isolated conversation to research, explore, or perform a focused task. Useful for parallel investigations without polluting the main turn. Returns the sub-agent\'s final text. The sub-agent has the same tools you do, but its conversation does not affect yours.',
+  // The description is recomputed at registration time to include the
+  // current bundled+user agent list. A small wrapper below assigns it.
+  description: describeAgent(),
   input_schema: {
     type: 'object',
     properties: {
@@ -57,9 +77,15 @@ export const subAgentTool: Tool = {
         description:
           'Task description for the sub-agent. Include enough context — it starts with no shared history.',
       },
+      subagent_type: {
+        type: 'string',
+        description:
+          'Optional. Name of a specialised agent type (see description above). Defaults to general-purpose.',
+      },
       maxTurns: {
         type: 'number',
-        description: 'Cap on the sub-agent\'s tool-use turns (default 8, max 20).',
+        description:
+          'Cap on the sub-agent\'s tool-use turns (default 8 unless the agent type sets a higher cap, max 20).',
       },
     },
     required: ['prompt'],
@@ -68,9 +94,24 @@ export const subAgentTool: Tool = {
   async execute(input, opts) {
     const prompt = typeof input['prompt'] === 'string' ? input['prompt'].trim() : '';
     if (!prompt) return err('prompt is required');
+    const requestedType =
+      typeof input['subagent_type'] === 'string' ? input['subagent_type'].trim() : '';
+
+    const agentType = requestedType ? findAgent(requestedType) : findAgent('general-purpose');
+    if (requestedType && !agentType) {
+      const available = loadAgents()
+        .map((a) => a.name)
+        .slice(0, 20)
+        .join(', ');
+      return err(
+        `unknown subagent_type "${requestedType}". Available: ${available} (and more — check /agents).`,
+      );
+    }
+
+    const turnsCap = agentType?.maxTurns ?? DEFAULT_SUB_MAX_TURNS;
     const maxTurns = Math.min(
       Math.max(
-        typeof input['maxTurns'] === 'number' ? input['maxTurns'] : DEFAULT_SUB_MAX_TURNS,
+        typeof input['maxTurns'] === 'number' ? input['maxTurns'] : turnsCap,
         1,
       ),
       20,
@@ -87,18 +128,36 @@ export const subAgentTool: Tool = {
     // history isn't polluted, but tool state stays shared.
     const parent = currentSession();
     try {
-      const result = await runAgentTurn(provider, state, prompt, {
+      const allowedTools = agentType?.allowedTools;
+      const runOpts: Parameters<typeof runAgentTurn>[3] = {
         session: { id: parent.id, scope: 'sub-agent' },
         maxTurns,
         maxRetries: DEFAULT_SUB_MAX_RETRIES,
         rules,
         hooks,
         ...(opts?.signal !== undefined ? { signal: opts.signal } : {}),
-      });
+      };
+      // Inject the agent type's specialised prompt as a soul block so it
+      // composes with the standard system prompt + rules instead of
+      // replacing them. Simpler than threading a separate parameter.
+      if (agentType?.prompt) {
+        runOpts.souls = [
+          {
+            scope: 'session',
+            path: agentType.path,
+            content: `# Sub-agent role: ${agentType.name}\n${agentType.prompt}`,
+          },
+        ];
+      }
+      if (allowedTools && allowedTools.length > 0) {
+        runOpts.allowedTools = allowedTools;
+      }
+      const result = await runAgentTurn(provider, state, prompt, runOpts);
+      const label = agentType ? `[${agentType.name}] ` : '';
       const tag =
         result.reason === 'end-turn'
-          ? '✓ sub-agent completed'
-          : `sub-agent ended: ${result.reason}`;
+          ? `${label}✓ sub-agent completed`
+          : `${label}sub-agent ended: ${result.reason}`;
       return ok(`${tag}\n---\n${result.finalText || '(no text returned)'}`);
     } catch (e) {
       return err(`sub-agent failed: ${(e as Error).message}`);

@@ -119,6 +119,10 @@ export interface RunOptions {
    *  system prompt so the agent knows who it is and who it's talking to. */
   souls?: readonly Soul[];
   hooks?: readonly HookConfig[];
+  /** Optional allow-list of tool names. When set, the model only sees
+   *  these tools; the rest are hidden. Used by specialised sub-agent
+   *  types (e.g. read-only research roles). */
+  allowedTools?: readonly string[];
   /** Session that owns this turn's tool state. Tasks, plan mode, worktrees,
    *  browser pages, and monitors are keyed by session.id so Telegram /
    *  WhatsApp users never see each other's stuff. The REPL passes
@@ -208,10 +212,14 @@ async function runAgentTurnInner(
             const sendOpts: { signal?: AbortSignal; onText?: (delta: string) => void } = {};
             if (signal) sendOpts.signal = signal;
             if (opts.onAssistantDelta) sendOpts.onText = opts.onAssistantDelta;
+            const allTools = toolDefinitions();
+            const tools = opts.allowedTools && opts.allowedTools.length > 0
+              ? allTools.filter((t) => opts.allowedTools!.includes(t.name))
+              : allTools;
             return provider.send({
               system: systemPrompt,
               messages: state.history,
-              tools: toolDefinitions(),
+              tools,
               ...sendOpts,
             });
           },

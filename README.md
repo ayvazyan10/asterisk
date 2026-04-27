@@ -16,9 +16,11 @@ same assistant to Telegram and WhatsApp.
   API, [Model Context Protocol](https://modelcontextprotocol.io), Playwright.
 - **Apache 2.0** licensed.
 
-Status `0.1.0` — early but real. ~30 built-in tools, 17 slash commands,
-14 daemon-managed scheduling/lifecycle features, 8 bundled skills, and a
-SOUL.md persona system that bot users can manage per-chat.
+Status `0.1.0` — early but real. ~30 built-in tools, 18 slash commands,
+14 daemon-managed scheduling/lifecycle features, 8 bundled skills, **27
+specialised sub-agent types** the agent can dispatch on demand, layered
+multi-language rules, and a SOUL.md persona system that bot users can
+manage per-chat.
 
 ## Install
 
@@ -113,6 +115,7 @@ asterisk help
 | `/config`          | Interactive forms for each config section                   |
 | `/reset`           | Clear history and rebuild the provider from config          |
 | `/mcp`             | Manage MCP servers — list/add/edit/remove/reload (visual)   |
+| `/agents`          | List specialised sub-agent types you can dispatch           |
 | `/rules`           | List the rules currently loaded into the system prompt      |
 | `/skills`          | List installed skills (bundled + user + project)            |
 | `/skill [name]`    | Run a skill — picker if no name given                       |
@@ -147,7 +150,9 @@ the agent can only research.
 
 **Delegation**
 `Agent` — spawn a sub-agent in an isolated conversation for focused
-research or parallel investigation.
+research or parallel investigation. Pass `subagent_type: <name>` to
+dispatch a specialised role (code-reviewer, security-reviewer, planner,
+explore, …) — see [Sub-agent types](#sub-agent-types) below.
 
 **Worktree**
 `EnterWorktree` / `ExitWorktree` — create / remove a `git worktree` for
@@ -189,11 +194,21 @@ Add your own at `~/.asterisk/skills/<name>/SKILL.md` (user-global) or
 `<repo>/.asterisk/skills/<name>/SKILL.md` (project-local). User/project
 skills override bundled ones with the same name.
 
-**Rules** — markdown auto-loaded into the system prompt:
+**Rules** — markdown auto-loaded into the system prompt. Two layouts:
 
+*Flat (simple):*
 - `~/.asterisk/rules/*.md` — user-global (e.g. tone, coding style)
 - `<repo>/.asterisk/rules/*.md` — project-local
 - `<repo>/ASTERISK.md` — project root marker
+
+*Layered (multi-language):*
+- `~/.asterisk/rules/common/*.md` — universal, always loaded
+- `~/.asterisk/rules/<lang>/*.md` — only loaded when the project's
+  primary language matches (`typescript`, `python`, `golang`, `rust`,
+  `java`, `php`, `swift`, `dart`, `cpp`, `web`, `ruby`, …).
+- Same structure under `<repo>/.asterisk/rules/`.
+- Auto-detection from manifest files (`package.json`, `Cargo.toml`,
+  `pyproject.toml`, `go.mod`, …). Override via `ASTERISK_LANG=python`.
 
 **Hooks** — shell commands fired at agent-loop lifecycle events
 (`before_turn`, `after_turn`, `before_tool`, `after_tool`, `on_error`).
@@ -218,6 +233,48 @@ In Telegram / WhatsApp: `/soul`, `/soul set <multi-line markdown>`,
 `/soul edit`, `/soul clear`, `/soul help` — all scoped to the current
 chat. `/soul set Call me Levon, reply in Russian, skip apologies` is
 enough to teach the bot a new persona for that chat alone.
+
+## Sub-agent types
+
+The `Agent` tool can dispatch a sub-agent with a tailored system prompt
+and (sometimes) a restricted tool-set. The parent agent passes
+`subagent_type: <name>` to pick a specialist; omitting it spawns a
+general-purpose sub-agent with the parent's full tools.
+
+**27 bundled types out of the box:**
+
+- **Exploration / research:** `general-purpose`, `explore` (read-only
+  scout), `docs-lookup`
+- **Planning / architecture:** `planner`, `architect`
+- **Code review:** `code-reviewer`, `security-reviewer`,
+  `database-reviewer`, `performance-optimizer`, `refactor-cleaner`,
+  `doc-updater`
+- **Language-specific reviewers:** `typescript-reviewer`,
+  `python-reviewer`, `go-reviewer`, `rust-reviewer`
+- **Build / test:** `build-error-resolver`, `tdd-guide`, `e2e-runner`
+- **Domain:** `chief-of-staff` (multi-channel triage),
+  `healthcare-reviewer`
+- **Open-source pipeline:** `opensource-forker` →
+  `opensource-sanitizer` → `opensource-packager`
+- **Loops / harnesses:** `loop-operator`, `gan-planner`,
+  `gan-generator`, `gan-evaluator`
+
+Add your own at `~/.asterisk/agents/<name>.md` (user-global) or
+`<repo>/.asterisk/agents/<name>.md` (project-local). Same markdown +
+frontmatter format as skills:
+
+```markdown
+---
+name: my-reviewer
+description: Reviews against our internal style guide.
+allowedTools: Read, Grep, Glob, Bash
+maxTurns: 12
+---
+You review code against the patterns in our internal style guide …
+```
+
+User/project files override bundled by name. Run `/agents` to see what's
+loaded.
 
 ## Bot transports
 
