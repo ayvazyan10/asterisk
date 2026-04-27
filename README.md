@@ -16,23 +16,54 @@ same agent to Telegram and WhatsApp.
 Status: `0.1.0` — early but usable. Six file/shell tools, five slash commands,
 daemon lifecycle, three bot transports.
 
-## Quick start
+## Install
 
-Requirements:
-
-- [Bun](https://bun.sh) ≥ 1.1
-- An Ollama server reachable from this machine, or an `ANTHROPIC_API_KEY`
+One-line install (macOS / Linux / WSL):
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/ayvazyan10/asterisk/master/install.sh | bash
+```
+
+The installer:
+
+1. Installs [Bun](https://bun.sh) if it isn't already on your machine.
+2. Clones Asterisk into `~/.local/share/asterisk`.
+3. Builds `dist/`.
+4. Symlinks `~/.local/bin/asterisk` so the `asterisk` command is on your PATH.
+
+Override locations via env vars: `ASTERISK_INSTALL_DIR`, `ASTERISK_BIN_DIR`,
+`ASTERISK_BRANCH`.
+
+To uninstall:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/ayvazyan10/asterisk/master/uninstall.sh)
+```
+
+Your `~/.asterisk/` config is preserved unless you delete it explicitly.
+
+### From source
+
+```bash
+git clone https://github.com/ayvazyan10/asterisk.git && cd asterisk
 bun install
 bun run build
 ./bin/asterisk help
 ```
 
+## Quick start
+
+Requirements:
+
+- [Bun](https://bun.sh) ≥ 1.1 (handled by the installer)
+- An Ollama server reachable from this machine, or an `ANTHROPIC_API_KEY`
+
+After the installer finishes, the `asterisk` command is on your PATH:
+
 ### REPL
 
 ```bash
-./bin/asterisk
+asterisk
 ```
 
 You'll get an Ink-rendered prompt; type messages and the agent will use
@@ -42,11 +73,11 @@ your project. Slash commands: `/help`, `/clear`, `/model`, `/config`, `/quit`.
 ### Daemon
 
 ```bash
-./bin/asterisk start      # spawn the daemon, write ~/.asterisk/asterisk.pid
-./bin/asterisk status     # show pid + log size
-./bin/asterisk logs 100   # tail the last 100 daemon log lines
-./bin/asterisk restart
-./bin/asterisk stop
+asterisk start      # spawn the daemon, write ~/.asterisk/asterisk.pid
+asterisk status     # show pid + log size
+asterisk logs 100   # tail the last 100 daemon log lines
+asterisk restart
+asterisk stop
 ```
 
 The daemon hosts whichever bot adapters you enabled in your config.
@@ -54,7 +85,7 @@ The daemon hosts whichever bot adapters you enabled in your config.
 ### Configure
 
 ```bash
-./bin/asterisk configure
+asterisk configure
 ```
 
 Walks an interactive wizard that writes:

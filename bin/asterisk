@@ -5,7 +5,18 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Resolve through symlinks so `asterisk` works when this file is symlinked
+# into ~/.local/bin or /usr/local/bin from the real install dir.
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+  TARGET="$(readlink "$SOURCE")"
+  if [[ "$TARGET" = /* ]]; then
+    SOURCE="$TARGET"
+  else
+    SOURCE="$(cd -P "$(dirname "$SOURCE")" && pwd)/$TARGET"
+  fi
+done
+ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
 DIST_CLI="$ROOT/dist/cli.js"
 DIST_DAEMON="$ROOT/dist/daemon.js"
 DIST_CONTROL="$ROOT/dist/control.js"
