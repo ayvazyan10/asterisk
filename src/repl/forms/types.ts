@@ -26,6 +26,7 @@ export interface SelectField {
 export interface SelectOption {
   value: string;
   label: string;
+  /** Optional secondary text (rendered dim, only shown next to the active row in vertical-list mode). */
   description?: string;
 }
 

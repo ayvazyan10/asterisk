@@ -269,6 +269,46 @@ function SelectRow({ field, value, onChange, active, onAdvance, isLast }: Select
     { isActive: active },
   );
 
+  // For long option lists (e.g. all Anthropic models), render vertically so
+  // the user sees every choice. Use ←/→ to cycle (already handled above).
+  if (field.options.length > 4) {
+    return (
+      <Box flexDirection="column">
+        {field.options.map((opt) => {
+          const isSelected = opt.value === value;
+          if (active && isSelected) {
+            return (
+              <Box key={opt.value}>
+                <Text color="cyan" bold>
+                  {'› ● '}
+                  {opt.label}
+                </Text>
+                {opt.description && opt.description !== opt.label && (
+                  <Text dimColor>{`  ${opt.description}`}</Text>
+                )}
+              </Box>
+            );
+          }
+          if (isSelected) {
+            return (
+              <Box key={opt.value}>
+                <Text>{'  ● ' + opt.label}</Text>
+                {opt.description && opt.description !== opt.label && (
+                  <Text dimColor>{`  ${opt.description}`}</Text>
+                )}
+              </Box>
+            );
+          }
+          return (
+            <Box key={opt.value}>
+              <Text dimColor>{'  ○ ' + opt.label}</Text>
+            </Box>
+          );
+        })}
+      </Box>
+    );
+  }
+
   return (
     <Box>
       {field.options.map((opt, i) => {

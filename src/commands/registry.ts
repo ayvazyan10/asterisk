@@ -48,6 +48,51 @@ async function listOllamaModels(baseUrl: string): Promise<string[]> {
   }
 }
 
+// Static fallback used when /v1/models can't be reached (no key, network
+// error, or the endpoint is throttled). Ordered newest-first so the visible
+// default lands on a current model.
+const ANTHROPIC_FALLBACK_MODELS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
+  { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+  { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5 (2025-10-01)' },
+  { id: 'claude-opus-4-5', label: 'Claude Opus 4.5' },
+  { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
+  { id: 'claude-opus-4-0', label: 'Claude Opus 4.0' },
+  { id: 'claude-sonnet-4-0', label: 'Claude Sonnet 4.0' },
+  { id: 'claude-3-7-sonnet-latest', label: 'Claude Sonnet 3.7' },
+  { id: 'claude-3-5-sonnet-latest', label: 'Claude Sonnet 3.5' },
+  { id: 'claude-3-5-haiku-latest', label: 'Claude Haiku 3.5' },
+];
+
+interface AnthropicModel {
+  id: string;
+  label: string;
+}
+
+async function listAnthropicModels(apiKey: string): Promise<AnthropicModel[]> {
+  if (!apiKey) return [...ANTHROPIC_FALLBACK_MODELS];
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/models?limit=100', {
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return [...ANTHROPIC_FALLBACK_MODELS];
+    const data = (await res.json()) as {
+      data?: Array<{ id: string; display_name?: string }>;
+    };
+    const fetched = (data.data ?? []).map((m) => ({
+      id: m.id,
+      label: m.display_name ?? m.id,
+    }));
+    return fetched.length > 0 ? fetched : [...ANTHROPIC_FALLBACK_MODELS];
+  } catch {
+    return [...ANTHROPIC_FALLBACK_MODELS];
+  }
+}
+
 function parseProviderName(name: string): { kind: 'ollama' | 'anthropic'; model: string } | null {
   const colon = name.indexOf(':');
   if (colon === -1) return null;
@@ -120,24 +165,31 @@ export const COMMANDS: SlashCommand[] = [
         return list;
       }
 
-      // Anthropic: free-form text input.
-      const form: FormSpec = {
-        kind: 'form',
-        title: 'Switch model',
-        fields: [
-          {
-            kind: 'text',
-            key: 'model',
-            label: 'Model name',
-            defaultValue: current?.model ?? '',
-            placeholder: 'claude-3-5-sonnet-latest',
-            required: true,
-          },
-        ],
-        onSubmit: (v) => switchModel(ctx, v['model'] ?? ''),
+      // Anthropic: fetch the live list from /v1/models when we have a key.
+      const apiKey = loadConfig().secrets.ANTHROPIC_API_KEY ?? '';
+      const models = await listAnthropicModels(apiKey);
+      const items = models.map((m) => ({
+        value: m.id,
+        label: m.label,
+        description: m.label === m.id ? undefined : m.id,
+        ...(m.id === current?.model ? { badge: '* current' } : {}),
+      }));
+      const list: ListSpec = {
+        kind: 'list',
+        title: apiKey ? 'Pick an Anthropic model' : 'Pick an Anthropic model (offline list)',
+        items: items.map((i) => {
+          const out: { value: string; label: string; description?: string; badge?: string } = {
+            value: i.value,
+            label: i.label,
+          };
+          if (i.description !== undefined) out.description = i.description;
+          if (i.badge !== undefined) out.badge = i.badge;
+          return out;
+        }),
+        onPick: async (value) => switchModel(ctx, value),
         onCancel: () => null,
       };
-      return form;
+      return list;
     },
   },
   {
@@ -720,7 +772,7 @@ interface ConfigSection {
   key: string;
   label: string;
   summary: string;
-  open(ctx: CommandContext): FormSpec | string;
+  open(ctx: CommandContext): Promise<FormSpec | string> | FormSpec | string;
 }
 
 const CONFIG_SECTIONS: ConfigSection[] = [
@@ -792,24 +844,38 @@ const CONFIG_SECTIONS: ConfigSection[] = [
     key: 'anthropic',
     label: 'Anthropic settings',
     summary: 'default model + API key (chmod-600 secrets file)',
-    open() {
+    async open() {
       const cfg = loadConfig();
+      const apiKey = cfg.secrets.ANTHROPIC_API_KEY ?? '';
+      const models = await listAnthropicModels(apiKey);
+      const defaultModel = models.some((m) => m.id === cfg.config.anthropic.model)
+        ? cfg.config.anthropic.model
+        : (models[0]?.id ?? cfg.config.anthropic.model);
       return {
         kind: 'form',
-        title: 'Anthropic settings',
+        title: apiKey
+          ? `Anthropic settings (${models.length} models from /v1/models)`
+          : 'Anthropic settings (offline list — set API key for live)',
         fields: [
           {
-            kind: 'text',
+            kind: 'select',
             key: 'model',
             label: 'Default model',
-            defaultValue: cfg.config.anthropic.model,
-            required: true,
+            options: models.map((m) => {
+              const opt: { value: string; label: string; description?: string } = {
+                value: m.id,
+                label: m.label,
+              };
+              if (m.label !== m.id) opt.description = m.id;
+              return opt;
+            }),
+            defaultValue: defaultModel,
           },
           {
             kind: 'text',
             key: 'apiKey',
             label: 'API key (leave empty to keep existing)',
-            placeholder: cfg.secrets.ANTHROPIC_API_KEY ? '(set)' : '(unset)',
+            placeholder: apiKey ? '(set)' : '(unset)',
             secret: true,
           },
         ],
@@ -933,8 +999,11 @@ function configSectionByKey(key: string): ConfigSection | undefined {
   return CONFIG_SECTIONS.find((s) => s.key === key);
 }
 
-function openConfigSection(ctx: CommandContext, section: ConfigSection): CommandResult {
-  return section.open(ctx);
+async function openConfigSection(
+  ctx: CommandContext,
+  section: ConfigSection,
+): Promise<CommandResult> {
+  return await section.open(ctx);
 }
 
 export function lookupCommand(input: string): { command: SlashCommand; args: string } | null {
