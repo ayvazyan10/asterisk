@@ -102,6 +102,8 @@ manager
     if (handled) {
       log.debug({ chatId: msg.chatId, command: msg.text.split(' ')[0] }, 'bot command');
       sink?.({ type: 'final' });
+      // Note: heartbeat hasn't been created yet at this branch (declared
+      // below the slash-command check). Nothing to clear here.
       return handled;
     }
 
@@ -113,6 +115,28 @@ manager
     const outputStyle = await import('../output-styles/styles.ts').then((m) =>
       m.findOutputStyle(cfg.outputStyle),
     );
+
+    // Silence detector — Ollama doesn't stream tool_call arguments, so a
+    // model generating a multi-thousand-line Write payload looks identical
+    // to a hang. Push a periodic heartbeat to the sink so bots can show
+    // "generating · 45s of silence" instead of a stale placeholder.
+    let lastSig = Date.now();
+    const botBump = (): void => {
+      lastSig = Date.now();
+    };
+    const heartbeat = setInterval(() => {
+      const silenceSec = Math.floor((Date.now() - lastSig) / 1000);
+      if (silenceSec >= 20) {
+        sink?.({
+          type: 'status',
+          text: `generating · ${silenceSec}s of silence (no content stream — likely a large tool input)`,
+        });
+      }
+    }, 15_000);
+    if (typeof (heartbeat as { unref?: () => void }).unref === 'function') {
+      (heartbeat as { unref?: () => void }).unref?.();
+    }
+
     const attachments: Array<{ kind: string; path: string; caption?: string }> = [];
     const turn = await runAgentTurn(provider, state, msg.text, {
       // Per-user isolation — every chatId gets its own task list, plan-mode
@@ -130,8 +154,14 @@ manager
       // ignore stream:true for tool-only turns) still get something to show.
       // The sink-side Telegram adapter dedupes by tracking whether deltas
       // have already arrived for the current turn — see streamMode='stream'.
-      onAssistantText: (t) => sink?.({ type: 'text-final', text: t }),
-      onAssistantDelta: (d) => sink?.({ type: 'text', text: d }),
+      onAssistantText: (t) => {
+        botBump();
+        sink?.({ type: 'text-final', text: t });
+      },
+      onAssistantDelta: (d) => {
+        botBump();
+        sink?.({ type: 'text', text: d });
+      },
       // Surface chain-of-thought activity as a status event so Telegram's
       // status / stream modes can show "thinking · N chars" instead of
       // a static placeholder during long reasoning phases.
@@ -139,6 +169,7 @@ manager
         let lastReported = 0;
         let total = 0;
         return (d: string) => {
+          botBump();
           total += d.length;
           // Throttle: only emit every 200 chars to avoid edit-spam in the
           // bot adapter (already rate-limited to 1 edit/sec, but no point
@@ -167,6 +198,7 @@ manager
       onAttachment: (a: { kind: string; path: string; caption?: string }) =>
         attachments.push(a),
     });
+    clearInterval(heartbeat);
     sink?.({ type: 'final' });
     if (turn.reason !== 'end-turn')
       log.warn({ chatId: msg.chatId, reason: turn.reason }, 'turn ended early');
