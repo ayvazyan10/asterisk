@@ -17,6 +17,7 @@ import { CommandMenu, clampSelection, filterCommands } from './CommandMenu.tsx';
 import { Form } from './forms/Form.tsx';
 import { ListPicker } from './forms/ListPicker.tsx';
 import type { CommandResult, FormSpec, ListSpec } from './forms/types.ts';
+import { detectInlineProtocol, renderInlineImage } from './inline-image.ts';
 import { MarkdownText } from './MarkdownText.tsx';
 import { StatusBar } from './StatusBar.tsx';
 import { WorkingIndicator } from './WorkingIndicator.tsx';
@@ -223,6 +224,15 @@ export function App({ initialProvider, state, mcp }: Props) {
           onToolResult: (name, output, isError) => {
             setWorkingStatus('thinking');
             append(isError ? 'error' : 'tool-result', `${name} → ${truncate(output, 800)}`);
+            // Try to render screenshots inline when the terminal supports it.
+            if (name === 'BrowserScreenshot' && !isError) {
+              const m = /screenshot saved · (\S.+?)(?:\n|$)/.exec(output);
+              const path = m?.[1]?.trim();
+              if (path && detectInlineProtocol()) {
+                // Side-effect: writes escape sequences directly to stdout.
+                renderInlineImage(path);
+              }
+            }
           },
           onRetry: (attempt, delayMs, why) => {
             setWorkingStatus(`retrying (#${attempt} in ${Math.round(delayMs / 1000)}s)`);

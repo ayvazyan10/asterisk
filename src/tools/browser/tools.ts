@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 
 import { type Tool, ok, err } from '../types.ts';
+import { expandHome } from '../../utils/path.ts';
 import { closeBrowser, getPage, hookProcessExit, isOpen } from './session.ts';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -226,35 +227,54 @@ export const browserSnapshotTool: Tool = {
 
 export const browserScreenshotTool: Tool = {
   name: 'BrowserScreenshot',
-  description: 'Save a PNG screenshot of the current page. Returns the absolute path.',
+  description:
+    'Save a PNG screenshot of the current page. Returns the absolute path. Supports `~/`. Set open=true to launch the OS image viewer (xdg-open / explorer.exe on WSL / open on macOS).',
   input_schema: {
     type: 'object',
     properties: {
       path: {
         type: 'string',
-        description: 'Optional output path (default ~/.asterisk/screenshots/<timestamp>.png).',
+        description:
+          'Optional output path (supports ~/). Default ~/.asterisk/screenshots/<ts>.png.',
       },
-      fullPage: { type: 'boolean', description: 'Capture the full scrollable page (default true).' },
+      fullPage: {
+        type: 'boolean',
+        description: 'Capture the full scrollable page (default true).',
+      },
+      open: {
+        type: 'boolean',
+        description: 'After saving, open in the OS image viewer (default false).',
+      },
     },
     additionalProperties: false,
   },
   async execute(input) {
     const fullPage = input['fullPage'] !== false;
-    const target =
+    const requestedPath =
       typeof input['path'] === 'string' && input['path']
-        ? input['path']
+        ? expandHome(input['path'])
         : join(
             process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'),
             'screenshots',
             `${new Date().toISOString().replace(/[:.]/g, '-')}.png`,
           );
+    const { resolve, dirname } = await import('node:path');
+    const target = resolve(requestedPath);
     try {
       const page = await getPage();
       const { mkdir } = await import('node:fs/promises');
-      const { dirname } = await import('node:path');
       await mkdir(dirname(target), { recursive: true });
       await page.screenshot({ path: target, fullPage });
-      return ok(`screenshot saved · ${target}`);
+      let openMessage = '';
+      if (input['open'] === true) {
+        try {
+          await openWithSystemViewer(target);
+          openMessage = '\nopened in system viewer';
+        } catch (e) {
+          openMessage = `\nopen failed: ${(e as Error).message}`;
+        }
+      }
+      return ok(`screenshot saved · ${target}\nfile://${target}${openMessage}`);
     } catch (e) {
       return err(`BrowserScreenshot failed: ${(e as Error).message}`);
     }
@@ -314,6 +334,35 @@ export const browserCloseTool: Tool = {
     return ok('browser closed');
   },
 };
+
+async function openWithSystemViewer(path: string): Promise<void> {
+  const { execa } = await import('execa');
+  const isWsl =
+    !!process.env['WSL_DISTRO_NAME'] || !!process.env['WSL_INTEROP'];
+  const platform = process.platform;
+  const candidates: { cmd: string; args: string[] }[] =
+    platform === 'darwin'
+      ? [{ cmd: 'open', args: [path] }]
+      : (platform as string) === 'win32'
+        ? [{ cmd: 'cmd.exe', args: ['/c', 'start', '', path] }]
+        : isWsl
+          ? [
+              { cmd: 'wslview', args: [path] },
+              { cmd: 'explorer.exe', args: [path] },
+              { cmd: 'xdg-open', args: [path] },
+            ]
+          : [{ cmd: 'xdg-open', args: [path] }];
+  let lastError: Error | null = null;
+  for (const { cmd, args } of candidates) {
+    try {
+      await execa(cmd, args, { reject: false, stdio: 'ignore' });
+      return;
+    } catch (e) {
+      lastError = e as Error;
+    }
+  }
+  if (lastError) throw lastError;
+}
 
 export const BROWSER_TOOLS = [
   browserNavigateTool,
