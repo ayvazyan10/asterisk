@@ -3,14 +3,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type { z } from 'zod';
+
 import { createBotManager } from '../src/bots/manager.ts';
 import { createWhatsappMetaCloudAdapter } from '../src/bots/whatsapp/meta-cloud.ts';
 import type { LoadedConfig } from '../src/config/load.ts';
 import { ConfigSchema } from '../src/config/schema.ts';
 
-function loadedConfig(overrides: Partial<LoadedConfig['config']> = {}, secrets = {}): LoadedConfig {
+type ConfigInput = z.input<typeof ConfigSchema>;
+
+function loadedConfig(overrides: ConfigInput = {}, secrets = {}): LoadedConfig {
   return {
-    config: ConfigSchema.parse({ ...overrides }),
+    config: ConfigSchema.parse(overrides),
     secrets,
   };
 }

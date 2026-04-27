@@ -6,6 +6,7 @@ coverage/
 .env
 .env.local
 .asterisk/
+secrets.env
 bun.lockb
 *.tsbuildinfo
 .vscode/
