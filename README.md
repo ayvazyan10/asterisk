@@ -31,8 +31,16 @@ The installer:
 3. Builds `dist/`.
 4. Symlinks `~/.local/bin/asterisk` so the `asterisk` command is on your PATH.
 
-Override locations via env vars: `ASTERISK_INSTALL_DIR`, `ASTERISK_BIN_DIR`,
-`ASTERISK_BRANCH`.
+Override locations or branch via env vars on the receiving `bash`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ayvazyan10/asterisk/master/install.sh \
+  | ASTERISK_INSTALL_DIR=/opt/asterisk ASTERISK_BIN_DIR=/usr/local/bin bash
+```
+
+Available: `ASTERISK_INSTALL_DIR` (default `~/.local/share/asterisk`),
+`ASTERISK_BIN_DIR` (default `~/.local/bin`), `ASTERISK_BRANCH` (default
+`master`), `ASTERISK_REPO_URL`.
 
 To uninstall:
 
