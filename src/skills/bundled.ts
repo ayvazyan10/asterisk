@@ -164,6 +164,225 @@ Steps:
 Don't propose "more logging" as the fix unless the user explicitly asks. The point is to find the cause, not delegate the search to runtime.`,
   },
   {
+    name: 'prp-plan',
+    description: 'PRP step 1 — capture a one-page Plan-Requirements-Pitch doc the implementer can build against.',
+    scope: 'bundled',
+    path: 'bundled:prp-plan',
+    prompt: `You're producing the planning doc for a feature in the PRP
+(Plan / Requirements / Pitch) style. Stay in Plan Mode the whole time —
+only read, don't write code. Drop the doc when you're done.
+
+Steps:
+1. Restate the request in one sentence. AskUserQuestion if anything is
+   ambiguous (target file, surface area, must-have vs nice-to-have).
+2. Enter Plan Mode (EnterPlanMode) so you literally can't write anything
+   until the plan is approved.
+3. Map the codebase touch-points by Read / Grep / Glob — files,
+   functions, schemas. Cite each with file:line.
+4. Write the doc to PRP-<kebab-name>.md in the current dir (or wherever
+   the user pins). Sections:
+   - **Pitch** (3 sentences): what · for whom · why now.
+   - **Requirements**: must-have list · nice-to-have list · explicit
+     non-goals (what we're NOT doing).
+   - **Plan**: numbered steps in apply order, with a one-sentence
+     rationale per step and the target file(s).
+   - **Risks**: tests that might break · rollback strategy · migration
+     story for any persisted data or public API.
+   - **Test plan**: which existing tests cover this · what's needed new.
+5. Save the file via Write. ExitPlanMode. Hand off the path to the user.
+
+Don't apply the changes. The implementer (prp-implement) does that next.`,
+  },
+  {
+    name: 'prp-implement',
+    description: 'PRP step 2 — implement against an existing PRP-*.md doc, then verify.',
+    scope: 'bundled',
+    path: 'bundled:prp-implement',
+    prompt: `You implement against a PRP doc. The plan exists; your job is
+to execute it without redesigning along the way.
+
+Steps:
+1. Find the doc — Glob \`PRP-*.md\` (or read whichever path the user
+   passed). Read it.
+2. Re-confirm with the user via AskUserQuestion if anything in the doc
+   looks stale or ambiguous given the current code.
+3. Create a TaskCreate entry per Plan step so progress is visible.
+4. For each step in the doc's Plan section, in order:
+   - Read the affected file.
+   - Apply the change via Edit (use replaceAll:true for repeated
+     swaps). Emit independent Edits in the same turn rather than
+     sequencing them across turns.
+   - Mark the task in_progress while working, completed when done,
+     cancelled if you skipped (with a reason).
+5. Run the project's checks (use the \`verify\` skill or run
+   typecheck / lint / tests directly). Don't claim done until they're
+   green.
+6. Summarise: what shipped · what was deferred · what's left as
+   follow-up. Call out any deviation from the doc and why.
+
+If a Plan step turns out to be wrong (the doc was stale, the code
+changed underneath you), STOP and re-plan via prp-plan. Don't barrel
+through.`,
+  },
+  {
+    name: 'prp-pr',
+    description: 'PRP step 3 — open a pull request from the current branch with a real summary + test plan.',
+    scope: 'bundled',
+    path: 'bundled:prp-pr',
+    prompt: `You open a pull request for the current branch's work. Goal: a
+PR description a reviewer can act on without re-deriving context.
+
+Steps:
+1. Verify the branch is ready: \`git status\` (no uncommitted local
+   changes), \`git log --oneline -20\`, \`git diff <base>...HEAD\` to
+   see the full delta. Pick the right base (\`main\` or \`master\` or
+   the parent feature branch).
+2. Find the PRP doc if there is one (Glob PRP-*.md) — its Pitch /
+   Requirements feed the PR summary.
+3. Push the branch if it doesn't have a remote tracking branch
+   (\`git push -u origin <branch>\`).
+4. Open the PR via \`gh pr create\` with:
+   - Title: imperative mood, ≤ 72 chars, no emoji unless the project
+     uses them, no Co-Authored-By unless explicitly authorised.
+   - Body sections: **Summary** (1-3 bullets · what changed and why) ·
+     **Test plan** (markdown checklist · what reviewer should verify) ·
+     **Notes** (if any: migration, follow-up, deferred items).
+5. Return the PR URL.
+
+Never \`gh pr create --no-edit\` your way around a missing description.
+A blank PR description is a regression on every reviewer.`,
+  },
+  {
+    name: 'prp-commit',
+    description: 'PRP step 4 — commit the current staged + unstaged work with a real WHY message.',
+    scope: 'bundled',
+    path: 'bundled:prp-commit',
+    prompt: `You write a commit for the current state of the working tree.
+
+Steps:
+1. \`git status\` — list staged + unstaged + untracked.
+2. \`git diff\` (staged) and \`git diff HEAD\` (unstaged) — read what's
+   actually changing. Don't commit blind.
+3. If there are untracked files that look like artifacts (build outputs,
+   logs, secrets), STOP — ask the user to add them to .gitignore first.
+   Never \`git add -A\` something that might leak credentials.
+4. Stage the right files explicitly (\`git add <path> <path>\`). If
+   uncommitted work spans multiple concerns, propose splitting into N
+   commits and ask the user.
+5. Commit with a real message:
+   - First line: ≤ 72 chars, imperative mood, no leading emoji.
+   - Body: WHY this change exists, WHAT it deliberately doesn't address,
+     any follow-ups. Ground references in file:line where useful.
+   - No Co-Authored-By unless explicitly authorised.
+6. \`git status\` after to confirm clean. Output the new commit hash.
+
+If a pre-commit hook fails, FIX the underlying issue and retry — never
+\`--no-verify\` your way past a hook unless the user explicitly says so.`,
+  },
+  {
+    name: 'santa-loop',
+    description: 'Adversarial dual-review — two reviewer sub-agents must both approve before the work is "done".',
+    scope: 'bundled',
+    path: 'bundled:santa-loop',
+    prompt: `You drive a dual-review convergence loop: two independent
+reviewer sub-agents look at the same change with different lenses, and
+the work is only done when both approve. Stops drift toward any single
+reviewer's blind spots.
+
+Steps:
+1. Capture the work to review: a diff (\`git diff main...HEAD\`), a
+   specific file, or whatever the user pointed at. Stash the contents
+   so the loop can re-fetch without re-running expensive setup.
+2. Round 1 — dispatch two sub-agents IN PARALLEL via the Agent tool:
+   - Agent({prompt:"<change>", subagent_type:"code-reviewer"}) — quality,
+     reuse, naming, correctness.
+   - Agent({prompt:"<change>", subagent_type:"security-reviewer"}) —
+     OWASP, secrets, auth, injection.
+   Wait for both. Collect findings.
+3. If both reviewers say PASS (no CRITICAL or HIGH issues), you're done.
+   Summarise their feedback and stop.
+4. If either reports issues, apply the fixes (Edit) and go back to
+   step 2. Cap at 5 rounds — if the loop hasn't converged by then,
+   surface the remaining disagreement to the user and let them decide.
+5. Final output: per-round summary · what changed · final reviewer
+   verdicts · the user-decision pivot if any.
+
+Don't argue with the reviewers — fix what's flagged or note explicitly
+why you disagree (with reasoning). The loop only converges if you act
+on feedback.`,
+    // The harness needs more rounds than a typical sub-agent budget.
+  },
+  {
+    name: 'youtube-summarizer',
+    description: 'Summarise a YouTube video — title, description, key points, sentiment.',
+    scope: 'bundled',
+    path: 'bundled:youtube-summarizer',
+    prompt: `You summarise a YouTube video. Asterisk doesn't ship with a
+transcript fetcher, so you'll lean on what's reachable via WebFetch and
+(if installed) yt-dlp / yt-dlp via Bash.
+
+Steps:
+1. Get the URL. AskUserQuestion if it's not in the prompt.
+2. Try yt-dlp first (\`yt-dlp --get-description --get-title --skip-download
+   <url>\`). If yt-dlp is on PATH, also try
+   \`yt-dlp --write-auto-subs --skip-download --sub-format srv1 -o '%(id)s' <url>\`
+   and then read the resulting .srv1 / .vtt file for the auto-caption
+   transcript. This gives you the full content.
+3. If yt-dlp isn't available, fall back to WebFetch on the watch URL —
+   you'll only see the rendered HTML title + description, not the
+   transcript.
+4. Produce:
+   - **Title** + uploader + duration if known.
+   - **TL;DR** (1-2 sentences).
+   - **Key points** (5-10 bullets, in the video's order).
+   - **Notable quotes** (≤3, with timestamps if you have them).
+   - **Sentiment / tone** (one line: explanatory / opinionated / promotional / news / tutorial / …).
+   - **Caveat** if you only had the description (not the transcript) —
+     say so plainly so the user knows the summary's depth.
+
+Don't fabricate timestamps or quotes that you didn't actually read in
+the source.`,
+  },
+  {
+    name: 'cloud-infrastructure-security',
+    description: 'Cloud-focused security review — IAM, secrets, network, supply chain. AWS / GCP / Azure / K8s / Terraform.',
+    scope: 'bundled',
+    path: 'bundled:cloud-infrastructure-security',
+    prompt: `You audit cloud infrastructure code (Terraform, Pulumi, CDK,
+Helm, raw YAML, CloudFormation) for security issues. This is narrower than
+the general security-reviewer — it's about the *infrastructure* surface,
+not application code.
+
+Checklist (run Grep across the relevant directories):
+- **IAM / RBAC.** Wildcard actions ("Action": "*"), wildcard resources,
+  cross-account trust without an external-id, K8s ServiceAccounts with
+  cluster-admin, GCP allUsers / allAuthenticatedUsers bindings.
+- **Secrets at rest.** Hardcoded keys/passwords in tfvars, environment
+  blocks, or YAML. Plaintext secrets that should be in Secrets Manager /
+  Key Vault / Sealed Secrets / SOPS.
+- **Network exposure.** SecurityGroups / NSGs with 0.0.0.0/0 on admin
+  ports (22, 3389, 5432, 27017, etc.). Storage buckets public when they
+  shouldn't be (S3, GCS, Azure Blob). Internal services with public
+  load balancers.
+- **Encryption.** Storage / volumes / databases without encryption at
+  rest. TLS termination at LB but plaintext to backend without
+  justification.
+- **Logging / audit.** Missing CloudTrail / Cloud Audit Logs / K8s audit
+  policy. Logs that capture full request bodies (PII / secrets risk).
+- **Supply chain.** Container images pulled by tag instead of digest,
+  unverified Helm chart sources, Terraform modules from untrusted
+  registries.
+- **Drift / least-privilege.** Service accounts with project-level
+  Owner/Editor instead of narrow roles. IRSA / Workload Identity not
+  used where it should be.
+
+For each finding: severity (CRITICAL / HIGH / MEDIUM / LOW), the file:line,
+the specific resource name (so the user can grep), the exact attack vector
+in one sentence, and the remediation as a concrete diff.
+
+If you find ZERO issues, say so plainly. Don't manufacture findings.`,
+  },
+  {
     name: 'feature',
     description: 'Plan → implement → review → commit, the full feature pipeline. Adapted from PRP / agentic-eng style.',
     scope: 'bundled',

@@ -108,7 +108,11 @@ manager
     const rules = loadRules();
     const session = { id: sessionId, scope: 'unknown' as const };
     const souls = loadSouls(process.cwd(), session);
-    const hooks = loadConfig().config.hooks;
+    const cfg = loadConfig().config;
+    const hooks = cfg.hooks;
+    const outputStyle = await import('../output-styles/styles.ts').then((m) =>
+      m.findOutputStyle(cfg.outputStyle),
+    );
     const attachments: Array<{ kind: string; path: string; caption?: string }> = [];
     const turn = await runAgentTurn(provider, state, msg.text, {
       // Per-user isolation — every chatId gets its own task list, plan-mode
@@ -119,6 +123,7 @@ manager
       rules,
       souls,
       hooks,
+      ...(outputStyle ? { outputStyle } : {}),
       // Streaming: forward per-token deltas to the sink as they arrive.
       // Also fire a 'text' event from the post-turn whole-text callback so
       // bots running against a non-streaming provider (or Ollama models that
@@ -183,12 +188,17 @@ const scheduler = createScheduler({
     const rules = loadRules();
     const session = { id: `scheduled:${source}`, scope: 'scheduled' as const };
     const souls = loadSouls(process.cwd(), session);
-    const hooks = loadConfig().config.hooks;
+    const sCfg = loadConfig().config;
+    const hooks = sCfg.hooks;
+    const sStyle = await import('../output-styles/styles.ts').then((m) =>
+      m.findOutputStyle(sCfg.outputStyle),
+    );
     const result = await runAgentTurn(provider, sched, prompt, {
       session,
       rules,
       souls,
       hooks,
+      ...(sStyle ? { outputStyle: sStyle } : {}),
       onToolUse: (name) => log.debug({ tool: name }, 'scheduled tool_use'),
     });
     log.info(

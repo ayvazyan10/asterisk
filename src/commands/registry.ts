@@ -15,6 +15,7 @@ import { loadRules } from '../rules/loader.ts';
 import { loadSkills, type Skill } from '../skills/loader.ts';
 import { DEFAULT_SOUL_TEMPLATE, type Soul, loadSouls } from '../soul/loader.ts';
 import { loadAgents } from '../agents/loader.ts';
+import { findOutputStyle, OUTPUT_STYLES } from '../output-styles/styles.ts';
 import { isPlanMode, setPlanMode } from '../tools/planmode.ts';
 import { _allTasks } from '../tools/tasks.ts';
 import { runWithSession } from '../agent/context.ts';
@@ -567,6 +568,27 @@ export const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: '/output-style',
+    description: 'Switch reply style — default | concise | explanatory | learning',
+    usage: '/output-style [name]',
+    async execute(_ctx, args) {
+      const requested = args.trim().toLowerCase();
+      if (!requested) {
+        return {
+          kind: 'list',
+          title: 'Output style',
+          items: OUTPUT_STYLES.map((s) => ({
+            value: s.name,
+            label: s.name,
+            description: s.description,
+          })),
+          onPick: (v: string) => applyOutputStyle(v),
+        };
+      }
+      return applyOutputStyle(requested);
+    },
+  },
+  {
     name: '/plan',
     description: 'Toggle Plan Mode — read-only research mode (no Edit/Write/Bash)',
     execute() {
@@ -609,6 +631,18 @@ export const COMMANDS: SlashCommand[] = [
     },
   },
 ];
+
+function applyOutputStyle(name: string): string {
+  const next = findOutputStyle(name);
+  if (!next) {
+    const valid = OUTPUT_STYLES.map((s) => s.name).join(' · ');
+    return `unknown output style "${name}". Valid: ${valid}`;
+  }
+  const cfg = loadConfig().config;
+  cfg.outputStyle = next.name;
+  saveConfig(cfg);
+  return `✓ output style set to "${next.name}" — ${next.description}\n  (applies on the next turn)`;
+}
 
 function runSkill(ctx: CommandContext, skill: Skill): string {
   if (ctx.injectInput) {

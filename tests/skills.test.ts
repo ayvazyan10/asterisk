@@ -65,13 +65,20 @@ describe('loadSkills', () => {
     const names = skills.map((s) => s.name).sort();
     expect(names).toEqual([
       'batch',
+      'cloud-infrastructure-security',
       'debug',
       'dream',
       'feature',
+      'prp-commit',
+      'prp-implement',
+      'prp-plan',
+      'prp-pr',
+      'santa-loop',
       'simplify',
       'skillify',
       'stuck',
       'verify',
+      'youtube-summarizer',
     ]);
     for (const s of skills) expect(s.scope).toBe('bundled');
   });

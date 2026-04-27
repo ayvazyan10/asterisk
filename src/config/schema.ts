@@ -120,12 +120,20 @@ export const McpServerSchema = z.discriminatedUnion('transport', [
 
 export type McpServerConfig = z.infer<typeof McpServerSchema>;
 
+// Output style — global behaviour modifier spliced into the system prompt.
+//   default     — baseline, no extra instructions (current behaviour)
+//   concise     — trim every reply to the minimum
+//   explanatory — show reasoning + tradeoffs alongside the answer
+//   learning    — collaborative, ask the user to pick on non-trivial decisions
+export const OutputStyleSchema = z.enum(['default', 'concise', 'explanatory', 'learning']);
+
 export const ConfigSchema = z.object({
   provider: ProviderSchema.default('ollama'),
   ollama: OllamaSchema.default({}),
   anthropic: AnthropicSchema.default({}),
   bots: BotsSchema.default({}),
   daemon: DaemonSchema.default({}),
+  outputStyle: OutputStyleSchema.default('default'),
   mcpServers: z.array(McpServerSchema).default([]),
   hooks: z.array(HookConfigSchema).default([]),
 });

@@ -203,6 +203,35 @@ describe('bot commands', () => {
     expect(stored).toContain('no apologies');
   });
 
+  it('/style with no args lists styles + marks the current one', async () => {
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/style', ctx(state)),
+    );
+    expect(r?.text).toMatch(/Current output style/);
+    expect(r?.text).toMatch(/concise/);
+    expect(r?.text).toMatch(/explanatory/);
+    expect(r?.text).toMatch(/learning/);
+  });
+
+  it('/style <name> persists to config', async () => {
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/style explanatory', ctx(state)),
+    );
+    expect(r?.text).toMatch(/✓ output style set to "explanatory"/);
+    // Re-reading config should show the persisted value.
+    const { loadConfig } = await import('../src/config/load.ts');
+    expect(loadConfig().config.outputStyle).toBe('explanatory');
+  });
+
+  it('/style <bad> rejects with the valid options', async () => {
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/style nonsense', ctx(state)),
+    );
+    expect(r?.text).toMatch(/unknown style/);
+    expect(r?.text).toMatch(/default/);
+    expect(r?.text).toMatch(/concise/);
+  });
+
   it('command list is non-empty and well-formed', () => {
     expect(BOT_COMMAND_LIST.length).toBeGreaterThanOrEqual(7);
     for (const c of BOT_COMMAND_LIST) {

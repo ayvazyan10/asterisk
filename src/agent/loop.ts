@@ -19,6 +19,7 @@ import { fireHooks, type HookResult } from '../hooks/runner.ts';
 import { ProviderError, isAbort, isRetryable, retryAfterMs } from '../providers/errors.ts';
 import { rulesToPromptSection, type Rule } from '../rules/loader.ts';
 import { soulsToPromptSection, type Soul } from '../soul/loader.ts';
+import { outputStyleToPromptSection, type OutputStyle } from '../output-styles/styles.ts';
 import { getTool, toolDefinitions } from '../tools/registry.ts';
 import { retry } from '../utils/retry.ts';
 import { type AgentSession, runWithSession } from './context.ts';
@@ -119,6 +120,9 @@ export interface RunOptions {
    *  system prompt so the agent knows who it is and who it's talking to. */
   souls?: readonly Soul[];
   hooks?: readonly HookConfig[];
+  /** Optional output-style modifier (concise / explanatory / learning).
+   *  Spliced into the system prompt so the model adjusts its reply shape. */
+  outputStyle?: OutputStyle;
   /** Optional allow-list of tool names. When set, the model only sees
    *  these tools; the rest are hidden. Used by specialised sub-agent
    *  types (e.g. read-only research roles). */
@@ -176,7 +180,8 @@ async function runAgentTurnInner(
 
   const soulSection = soulsToPromptSection(souls);
   const rulesSection = rulesToPromptSection(rules);
-  const systemPrompt = [SYSTEM_PROMPT, soulSection, rulesSection]
+  const styleSection = outputStyleToPromptSection(opts.outputStyle);
+  const systemPrompt = [SYSTEM_PROMPT, soulSection, rulesSection, styleSection]
     .filter((s) => s && s.length > 0)
     .join('\n\n');
 

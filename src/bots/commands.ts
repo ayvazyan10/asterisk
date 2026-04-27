@@ -8,7 +8,8 @@
 
 import type { AgentState } from '../agent/loop.ts';
 import { currentSession, currentSessionId } from '../agent/context.ts';
-import { loadConfig } from '../config/load.ts';
+import { loadConfig, saveConfig } from '../config/load.ts';
+import { findOutputStyle, OUTPUT_STYLES } from '../output-styles/styles.ts';
 import {
   clearSessionSoul,
   loadSouls,
@@ -35,6 +36,7 @@ export const BOT_COMMAND_LIST: BotCommandSpec[] = [
   { command: 'tasks', description: 'List your tasks' },
   { command: 'plan', description: 'Toggle plan mode (read-only research mode)' },
   { command: 'soul', description: 'Show / set / clear your personal persona' },
+  { command: 'style', description: 'Switch reply style (default / concise / explanatory / learning)' },
 ];
 
 const HELP_TEXT = `👋 I'm Asterisk, a personal AI assistant. Just message me anything — I can read files, run shell commands, browse the web, take screenshots, schedule tasks, and more.
@@ -110,6 +112,11 @@ export function tryHandleBotCommand(
 
     case 'soul':
       return { text: handleSoulCommand(rest) };
+
+    case 'style':
+    case 'output-style':
+    case 'output_style':
+      return { text: handleStyleCommand(rest) };
 
     default:
       // Unknown slash command — fall through. The agent might still want to
@@ -210,6 +217,29 @@ function handleSoulCommand(rest: string): string {
   // No verb (or anything we don't recognise as an action) → show what's loaded.
   if (verb === '' || verb === 'show') return renderSoulDisplay(session);
   return `Unknown subcommand "${verb}". /soul help for the list.`;
+}
+
+function handleStyleCommand(rest: string): string {
+  const requested = rest.trim().toLowerCase();
+  if (!requested) {
+    const cur = loadConfig().config.outputStyle;
+    const lines = [`Current output style: ${cur}`, '', 'Options:'];
+    for (const s of OUTPUT_STYLES) {
+      const marker = s.name === cur ? '●' : '○';
+      lines.push(`  ${marker} ${s.name.padEnd(11)} ${s.description}`);
+    }
+    lines.push('', 'Switch with: /style <name>');
+    return lines.join('\n');
+  }
+  const next = findOutputStyle(requested);
+  if (!next) {
+    const valid = OUTPUT_STYLES.map((s) => s.name).join(' · ');
+    return `unknown style "${requested}". Valid: ${valid}`;
+  }
+  const cfg = loadConfig().config;
+  cfg.outputStyle = next.name;
+  saveConfig(cfg);
+  return `✓ output style set to "${next.name}" — ${next.description}`;
 }
 
 function renderSoulDisplay(session: ReturnType<typeof currentSession>): string {

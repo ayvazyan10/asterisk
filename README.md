@@ -16,11 +16,12 @@ same assistant to Telegram and WhatsApp.
   API, [Model Context Protocol](https://modelcontextprotocol.io), Playwright.
 - **Apache 2.0** licensed.
 
-Status `0.1.0` — early but real. ~30 built-in tools, 18 slash commands,
-14 daemon-managed scheduling/lifecycle features, 8 bundled skills, **27
-specialised sub-agent types** the agent can dispatch on demand, layered
-multi-language rules, and a SOUL.md persona system that bot users can
-manage per-chat.
+Status `0.1.0` — early but real. ~30 built-in tools, 19 slash commands,
+14 daemon-managed scheduling/lifecycle features, **15 bundled skills**,
+**27 specialised sub-agent types** the agent can dispatch on demand,
+layered multi-language rules, switchable output styles
+(default / concise / explanatory / learning), and a SOUL.md persona
+system that bot users can manage per-chat.
 
 ## Install
 
@@ -116,6 +117,7 @@ asterisk help
 | `/reset`           | Clear history and rebuild the provider from config          |
 | `/mcp`             | Manage MCP servers — list/add/edit/remove/reload (visual)   |
 | `/agents`          | List specialised sub-agent types you can dispatch           |
+| `/output-style`    | Switch reply style — default / concise / explanatory / learning |
 | `/rules`           | List the rules currently loaded into the system prompt      |
 | `/skills`          | List installed skills (bundled + user + project)            |
 | `/skill [name]`    | Run a skill — picker if no name given                       |
@@ -176,19 +178,36 @@ Plus any tools exposed by configured MCP servers, namespaced as
 
 ## Skills, rules, hooks, souls
 
-**Skills** — reusable workflows. 8 bundled out of the box:
+**Skills** — reusable workflows. 15 bundled out of the box:
 
+*Core workflow:*
 - `simplify` — review your recent changes for reuse / quality / efficiency
 - `batch` — apply one operation across many targets, with progress tracking
 - `stuck` — diagnose why a task is blocked, propose alternatives
 - `dream` — free-form roam, find one improvement worth making
 - `skillify` — capture the current conversation as a new SKILL.md
-- `verify` — run typecheck / lint / tests / build for the project, classify
-  each result, and isolate root causes for any failures
+- `verify` — run typecheck / lint / tests / build, classify each result,
+  isolate root causes for any failures
 - `debug` — diagnose a specific failure end-to-end: reproduce, read the
   error literally, hypothesise + verify, propose a concrete fix, re-run
 - `feature` — drive a feature plan → implement → review → verify →
   commit, with Plan Mode discipline on the planning phase
+
+*PRP pipeline (granular alternative to `feature`):*
+- `prp-plan` — write a one-page Plan-Requirements-Pitch doc in Plan Mode
+- `prp-implement` — execute against the PRP doc, with task tracking + verify
+- `prp-pr` — open a real GitHub PR with summary + test plan via `gh`
+- `prp-commit` — write a coherent commit with a real WHY message
+
+*Other:*
+- `santa-loop` — adversarial dual-review: dispatches `code-reviewer`
+  and `security-reviewer` sub-agents in parallel, iterates until both
+  approve or hits a 5-round cap
+- `youtube-summarizer` — summarise a YouTube video (uses `yt-dlp` if
+  available for the transcript, falls back to WebFetch on description)
+- `cloud-infrastructure-security` — focused security audit for
+  Terraform / Pulumi / CDK / Helm / K8s / CloudFormation: IAM wildcards,
+  exposed ports, plaintext secrets, supply-chain
 
 Add your own at `~/.asterisk/skills/<name>/SKILL.md` (user-global) or
 `<repo>/.asterisk/skills/<name>/SKILL.md` (project-local). User/project
@@ -209,6 +228,20 @@ skills override bundled ones with the same name.
 - Same structure under `<repo>/.asterisk/rules/`.
 - Auto-detection from manifest files (`package.json`, `Cargo.toml`,
   `pyproject.toml`, `go.mod`, …). Override via `ASTERISK_LANG=python`.
+
+**Output styles** — pluggable behaviour modifiers spliced into the
+system prompt alongside rules + soul. Switch via `/output-style <name>`
+in the REPL or `/style <name>` in the bots; persists to `config.json`.
+Four bundled:
+
+- `default` — baseline, no extra style instructions.
+- `concise` — trim every reply to the minimum useful answer; lists
+  over prose; skip preambles and pleasantries.
+- `explanatory` — show reasoning + tradeoffs alongside the answer.
+  Good for learning a codebase or onboarding to a domain.
+- `learning` — collaborative; the agent surfaces non-trivial design
+  decisions via `AskUserQuestion` and waits for the user to pick before
+  applying.
 
 **Hooks** — shell commands fired at agent-loop lifecycle events
 (`before_turn`, `after_turn`, `before_tool`, `after_tool`, `on_error`).

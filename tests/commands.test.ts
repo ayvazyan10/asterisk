@@ -67,6 +67,7 @@ describe('command registry', () => {
         '/hooks',
         '/mcp',
         '/model',
+        '/output-style',
         '/plan',
         '/provider',
         '/quit',

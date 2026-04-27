@@ -12,6 +12,7 @@ import { loadConfig } from '../config/load.ts';
 import type { McpManager } from '../mcp/manager.ts';
 import { loadRules } from '../rules/loader.ts';
 import { loadSouls } from '../soul/loader.ts';
+import { findOutputStyle } from '../output-styles/styles.ts';
 import {
   type AskQuestion,
   answerAskQuestion,
@@ -264,12 +265,15 @@ export function App({ initialProvider, state, mcp }: Props) {
         const rules = loadRules();
         const session = { id: 'repl', scope: 'repl' as const };
         const souls = loadSouls(process.cwd(), session);
-        const hooks = loadConfig().config.hooks;
+        const cfg = loadConfig().config;
+        const hooks = cfg.hooks;
+        const outputStyle = findOutputStyle(cfg.outputStyle);
         const turn = await runAgentTurn(provider, state, text, {
           session,
           rules,
           souls,
           hooks,
+          ...(outputStyle ? { outputStyle } : {}),
           onAssistantText: (t) => {
             setWorkingStatus('writing response');
             append('assistant', t);
