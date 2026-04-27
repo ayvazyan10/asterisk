@@ -263,6 +263,7 @@ export function App({ initialProvider, state, mcp }: Props) {
         const rules = loadRules();
         const hooks = loadConfig().config.hooks;
         const turn = await runAgentTurn(provider, state, text, {
+          session: { id: 'repl', scope: 'repl' },
           rules,
           hooks,
           onAssistantText: (t) => {

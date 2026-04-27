@@ -7,6 +7,7 @@
 // loop so the sub-task can't run forever.
 
 import { type AgentState, createAgentState, runAgentTurn } from '../agent/loop.ts';
+import { currentSession } from '../agent/context.ts';
 import { loadConfig } from '../config/load.ts';
 import { createAnthropicProvider } from '../providers/anthropic.ts';
 import { createOllamaProvider } from '../providers/ollama.ts';
@@ -80,8 +81,14 @@ export const subAgentTool: Tool = {
     const rules = loadRules();
     const hooks = loadConfig().config.hooks;
 
+    // Sub-agents inherit the parent's session so any tasks they create,
+    // worktrees they enter, etc. show up in the parent's view too. The
+    // sub-agent runs in a fresh AgentState so the parent's conversation
+    // history isn't polluted, but tool state stays shared.
+    const parent = currentSession();
     try {
       const result = await runAgentTurn(provider, state, prompt, {
+        session: { id: parent.id, scope: 'sub-agent' },
         maxTurns,
         maxRetries: DEFAULT_SUB_MAX_RETRIES,
         rules,

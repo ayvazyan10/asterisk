@@ -7,6 +7,7 @@ import { execa } from 'execa';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
+import { currentSessionId } from '../agent/context.ts';
 import { type Tool, ok, err } from './types.ts';
 
 interface ActiveWorktree {
@@ -15,10 +16,20 @@ interface ActiveWorktree {
   createdAt: number;
 }
 
-let active: ActiveWorktree | null = null;
+const worktreesBySession = new Map<string, ActiveWorktree>();
+
+function getActive(): ActiveWorktree | null {
+  return worktreesBySession.get(currentSessionId()) ?? null;
+}
+
+function setActive(w: ActiveWorktree | null): void {
+  const sid = currentSessionId();
+  if (w) worktreesBySession.set(sid, w);
+  else worktreesBySession.delete(sid);
+}
 
 export function activeWorktree(): ActiveWorktree | null {
-  return active;
+  return getActive();
 }
 
 const DEFAULT_ROOT = join(
@@ -49,8 +60,9 @@ export const enterWorktreeTool: Tool = {
     additionalProperties: false,
   },
   async execute(input) {
-    if (active) {
-      return err(`already in worktree at ${active.path} (call ExitWorktree first)`);
+    const current = getActive();
+    if (current) {
+      return err(`already in worktree at ${current.path} (call ExitWorktree first)`);
     }
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const branch =
@@ -79,7 +91,7 @@ export const enterWorktreeTool: Tool = {
         return err(`git worktree add failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`);
       }
 
-      active = { path, branch, createdAt: Date.now() };
+      setActive({ path, branch, createdAt: Date.now() });
       return ok(
         [
           `✓ worktree ready`,
@@ -107,19 +119,19 @@ export const exitWorktreeTool: Tool = {
     additionalProperties: false,
   },
   async execute(input) {
-    if (!active) return err('no active worktree');
+    const current = getActive();
+    if (!current) return err('no active worktree');
     const force = input['force'] === true;
     try {
       const args = ['worktree', 'remove'];
       if (force) args.push('--force');
-      args.push(active.path);
+      args.push(current.path);
       const result = await execa('git', args, { reject: false, encoding: 'utf8' });
       if (result.exitCode !== 0) {
         return err(`git worktree remove failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`);
       }
-      const removed = active;
-      active = null;
-      return ok(`✓ worktree removed · ${removed.path} (branch ${removed.branch})`);
+      setActive(null);
+      return ok(`✓ worktree removed · ${current.path} (branch ${current.branch})`);
     } catch (e) {
       return err(`ExitWorktree failed: ${(e as Error).message}`);
     }

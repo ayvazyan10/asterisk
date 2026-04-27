@@ -20,6 +20,7 @@ import { ProviderError, isAbort, isRetryable, retryAfterMs } from '../providers/
 import { rulesToPromptSection, type Rule } from '../rules/loader.ts';
 import { getTool, toolDefinitions } from '../tools/registry.ts';
 import { retry } from '../utils/retry.ts';
+import { type AgentSession, runWithSession } from './context.ts';
 
 const SYSTEM_PROMPT = `You are Asterisk, a personal AI assistant running on the user's machine.
 
@@ -81,6 +82,11 @@ export interface RunOptions {
   signal?: AbortSignal;
   rules?: readonly Rule[];
   hooks?: readonly HookConfig[];
+  /** Session that owns this turn's tool state. Tasks, plan mode, worktrees,
+   *  browser pages, and monitors are keyed by session.id so Telegram /
+   *  WhatsApp users never see each other's stuff. The REPL passes
+   *  { id: 'repl', scope: 'repl' }; the daemon passes the chatId. */
+  session?: AgentSession;
   onAssistantText?(text: string): void;
   onToolUse?(name: string, input: Record<string, unknown>): void;
   onToolResult?(name: string, output: string, isError: boolean): void;
@@ -98,6 +104,16 @@ export interface AgentTurnResult {
 }
 
 export async function runAgentTurn(
+  provider: Provider,
+  state: AgentState,
+  userInput: string,
+  opts: RunOptions = {},
+): Promise<AgentTurnResult> {
+  const session: AgentSession = opts.session ?? { id: 'default', scope: 'unknown' };
+  return runWithSession(session, () => runAgentTurnInner(provider, state, userInput, opts));
+}
+
+async function runAgentTurnInner(
   provider: Provider,
   state: AgentState,
   userInput: string,

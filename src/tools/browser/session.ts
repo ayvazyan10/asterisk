@@ -1,10 +1,14 @@
-// Lazy-loaded Playwright session. Holds a singleton browser + context + page
-// for the lifetime of the Asterisk process. Browser is launched on first
-// tool call; close() cleans everything up on shutdown.
+// Playwright session pool. One Chromium process is shared by every session
+// (cheap, just an extra OS process), but each session (each Telegram chat,
+// each WhatsApp number, the REPL) gets its own BrowserContext + Page. That
+// way cookies / logged-in state / local storage / cache are isolated by
+// user, the way they would be on different physical machines.
 //
 // Reference: https://playwright.dev/docs/api/class-page
 
 import type { Browser, BrowserContext, Page } from 'playwright';
+
+import { currentSessionId } from '../../agent/context.ts';
 
 export interface BrowserSessionOptions {
   headless?: boolean;
@@ -13,17 +17,20 @@ export interface BrowserSessionOptions {
   viewportHeight?: number;
 }
 
-interface SessionState {
+interface PerSession {
+  context: BrowserContext;
+  page: Page;
+}
+
+interface State {
   browser: Browser | null;
-  context: BrowserContext | null;
-  page: Page | null;
+  sessions: Map<string, PerSession>;
   options: BrowserSessionOptions;
 }
 
-const state: SessionState = {
+const state: State = {
   browser: null,
-  context: null,
-  page: null,
+  sessions: new Map(),
   options: {},
 };
 
@@ -31,47 +38,62 @@ export function configureBrowser(opts: BrowserSessionOptions): void {
   state.options = { ...state.options, ...opts };
 }
 
-export async function getPage(): Promise<Page> {
-  if (state.page && !state.page.isClosed()) return state.page;
-
+async function ensureBrowser(): Promise<Browser> {
+  if (state.browser) return state.browser;
   // Lazy-import Playwright so cold-start of the REPL stays fast for users
   // who never touch a browser tool.
   const { chromium } = await import('playwright');
+  state.browser = await chromium.launch({ headless: state.options.headless ?? true });
+  return state.browser;
+}
 
-  if (!state.browser) {
-    state.browser = await chromium.launch({
-      headless: state.options.headless ?? true,
-    });
+export async function getPage(): Promise<Page> {
+  const sid = currentSessionId();
+  const existing = state.sessions.get(sid);
+  if (existing && !existing.page.isClosed()) return existing.page;
+
+  const browser = await ensureBrowser();
+  const contextOpts: Parameters<Browser['newContext']>[0] = {};
+  if (state.options.userAgent) contextOpts.userAgent = state.options.userAgent;
+  if (state.options.viewportWidth && state.options.viewportHeight) {
+    contextOpts.viewport = {
+      width: state.options.viewportWidth,
+      height: state.options.viewportHeight,
+    };
   }
-  if (!state.context) {
-    const contextOpts: Parameters<Browser['newContext']>[0] = {};
-    if (state.options.userAgent) contextOpts.userAgent = state.options.userAgent;
-    if (state.options.viewportWidth && state.options.viewportHeight) {
-      contextOpts.viewport = {
-        width: state.options.viewportWidth,
-        height: state.options.viewportHeight,
-      };
-    }
-    state.context = await state.browser.newContext(contextOpts);
-  }
-  state.page = await state.context.newPage();
-  return state.page;
+  const context = await browser.newContext(contextOpts);
+  const page = await context.newPage();
+  state.sessions.set(sid, { context, page });
+  return page;
 }
 
 export function isOpen(): boolean {
   return state.browser !== null;
 }
 
-export async function closeBrowser(): Promise<void> {
+/** Close the current session's context only — leaves other users' tabs alone. */
+export async function closeSessionBrowser(): Promise<void> {
+  const sid = currentSessionId();
+  const s = state.sessions.get(sid);
+  if (!s) return;
+  state.sessions.delete(sid);
   try {
-    await state.context?.close();
+    await s.context.close();
   } catch {}
+}
+
+/** Close everything — used on process exit / daemon shutdown. */
+export async function closeBrowser(): Promise<void> {
+  for (const s of state.sessions.values()) {
+    try {
+      await s.context.close();
+    } catch {}
+  }
+  state.sessions.clear();
   try {
     await state.browser?.close();
   } catch {}
-  state.context = null;
   state.browser = null;
-  state.page = null;
 }
 
 // Best-effort cleanup on process exit so we don't leave headless chromium

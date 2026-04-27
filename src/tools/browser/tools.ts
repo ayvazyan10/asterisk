@@ -14,7 +14,7 @@ import { homedir } from 'node:os';
 
 import { type Tool, ok, err } from '../types.ts';
 import { expandHome } from '../../utils/path.ts';
-import { closeBrowser, getPage, hookProcessExit, isOpen } from './session.ts';
+import { closeSessionBrowser, getPage, hookProcessExit, isOpen } from './session.ts';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const NAV_TIMEOUT_MS = 30_000;
@@ -361,7 +361,8 @@ export const browserCloseTool: Tool = {
   },
   async execute() {
     if (!isOpen()) return ok('browser not open');
-    await closeBrowser();
+    // Close only this session's context — other users keep their tabs.
+    await closeSessionBrowser();
     return ok('browser closed');
   },
 };

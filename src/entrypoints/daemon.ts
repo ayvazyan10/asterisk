@@ -76,6 +76,11 @@ manager
     const hooks = loadConfig().config.hooks;
     const attachments: Array<{ kind: string; path: string; caption?: string }> = [];
     const turn = await runAgentTurn(provider, state, msg.text, {
+      // Per-user isolation — every chatId gets its own task list, plan-mode
+      // flag, browser context, monitored processes, etc. Telegram + WhatsApp
+      // share this code path; the chatId itself is unique enough across
+      // transports that we don't need to disambiguate here.
+      session: { id: `bot:${msg.chatId}`, scope: 'unknown' },
       rules,
       hooks,
       onToolUse: (name, input) => log.debug({ tool: name, input }, 'tool_use'),
@@ -128,6 +133,7 @@ const scheduler = createScheduler({
     const rules = loadRules();
     const hooks = loadConfig().config.hooks;
     const result = await runAgentTurn(provider, sched, prompt, {
+      session: { id: `scheduled:${source}`, scope: 'scheduled' },
       rules,
       hooks,
       onToolUse: (name) => log.debug({ tool: name }, 'scheduled tool_use'),

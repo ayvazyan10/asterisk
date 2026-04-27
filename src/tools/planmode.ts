@@ -1,8 +1,11 @@
-// Plan Mode — when active, write/mutate tools are hidden from the agent so
-// it can only research. EnterPlanMode flips the flag on; ExitPlanMode flips
-// it off. listTools() in the registry consults this flag and filters.
+// Plan Mode — when active for the current session, write/mutate tools are
+// hidden from the agent so it can only research. State is per-session: each
+// Telegram chat / WhatsApp number / the REPL toggles independently.
 
-let planModeActive = false;
+import { currentSessionId } from '../agent/context.ts';
+import { type Tool, ok } from './types.ts';
+
+const planModeBySession = new Set<string>();
 
 const READ_ONLY_NAMES = new Set([
   'Read',
@@ -24,18 +27,18 @@ const READ_ONLY_NAMES = new Set([
 ]);
 
 export function isPlanMode(): boolean {
-  return planModeActive;
+  return planModeBySession.has(currentSessionId());
 }
 
 export function setPlanMode(v: boolean): void {
-  planModeActive = v;
+  const sid = currentSessionId();
+  if (v) planModeBySession.add(sid);
+  else planModeBySession.delete(sid);
 }
 
 export function isReadOnlyToolName(name: string): boolean {
   return READ_ONLY_NAMES.has(name);
 }
-
-import { type Tool, ok } from './types.ts';
 
 export const enterPlanModeTool: Tool = {
   name: 'EnterPlanMode',

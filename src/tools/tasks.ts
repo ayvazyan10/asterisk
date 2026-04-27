@@ -1,8 +1,9 @@
-// Task tracker tools — give the agent its own todo list. Useful when it
-// plans multi-step work and wants to mark progress as it goes. State lives
-// in-memory for the lifetime of the Asterisk process; resets across REPL
-// restarts. Five tools: TaskCreate, TaskUpdate, TaskList, TaskGet, TaskStop.
+// Task tracker tools — give the agent its own todo list. State is per-
+// session: each Telegram chat / WhatsApp number / the REPL gets its own
+// task list. Sub-agents inherit their parent's session so the parent's
+// list reflects what the sub-agent created.
 
+import { currentSessionId } from '../agent/context.ts';
 import { type Tool, ok, err } from './types.ts';
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
@@ -16,16 +17,30 @@ export interface AgentTask {
   updatedAt: number;
 }
 
-const tasks = new Map<string, AgentTask>();
-let nextId = 1;
+interface SessionTasks {
+  byId: Map<string, AgentTask>;
+  nextId: number;
+}
+
+const tasksBySession = new Map<string, SessionTasks>();
+
+function bucket(): SessionTasks {
+  const sid = currentSessionId();
+  let b = tasksBySession.get(sid);
+  if (!b) {
+    b = { byId: new Map(), nextId: 1 };
+    tasksBySession.set(sid, b);
+  }
+  return b;
+}
 
 export function _resetTasksForTesting(): void {
-  tasks.clear();
-  nextId = 1;
+  tasksBySession.clear();
 }
 
 export function _allTasks(): AgentTask[] {
-  return [...tasks.values()].sort((a, b) => a.createdAt - b.createdAt);
+  const b = bucket();
+  return [...b.byId.values()].sort((a, b2) => a.createdAt - b2.createdAt);
 }
 
 function fmtTask(t: AgentTask): string {
@@ -58,7 +73,8 @@ export const taskCreateTool: Tool = {
     if (!title) return err('title is required');
     const description =
       typeof input['description'] === 'string' ? input['description'].trim() : '';
-    const id = String(nextId++);
+    const b = bucket();
+    const id = String(b.nextId++);
     const now = Date.now();
     const task: AgentTask = {
       id,
@@ -68,7 +84,7 @@ export const taskCreateTool: Tool = {
       createdAt: now,
       updatedAt: now,
     };
-    tasks.set(id, task);
+    b.byId.set(id, task);
     return ok(`created task ${id}: ${title}`);
   },
 };
@@ -93,7 +109,7 @@ export const taskUpdateTool: Tool = {
   },
   async execute(input) {
     const id = typeof input['id'] === 'string' ? input['id'] : '';
-    const task = tasks.get(id);
+    const task = bucket().byId.get(id);
     if (!task) return err(`no task with id ${id}`);
     const status = typeof input['status'] === 'string' ? input['status'] : '';
     const allowed: TaskStatus[] = ['pending', 'in_progress', 'completed', 'cancelled'];
@@ -149,7 +165,7 @@ export const taskGetTool: Tool = {
   },
   async execute(input) {
     const id = typeof input['id'] === 'string' ? input['id'] : '';
-    const task = tasks.get(id);
+    const task = bucket().byId.get(id);
     if (!task) return err(`no task with id ${id}`);
     const elapsedMs = Date.now() - task.createdAt;
     const lines = [
@@ -178,7 +194,7 @@ export const taskStopTool: Tool = {
   },
   async execute(input) {
     const id = typeof input['id'] === 'string' ? input['id'] : '';
-    const task = tasks.get(id);
+    const task = bucket().byId.get(id);
     if (!task) return err(`no task with id ${id}`);
     task.status = 'cancelled';
     task.updatedAt = Date.now();

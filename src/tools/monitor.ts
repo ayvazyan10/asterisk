@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, openSync, readFileSync, statSync } from 'node:fs
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { currentSessionId } from '../agent/context.ts';
 import { type Tool, ok, err } from './types.ts';
 
 const MONITORS_DIR = join(
@@ -23,7 +24,17 @@ interface MonitorRecord {
   logFile: string;
 }
 
-const monitors = new Map<string, MonitorRecord>();
+const monitorsBySession = new Map<string, Map<string, MonitorRecord>>();
+
+function monitors(): Map<string, MonitorRecord> {
+  const sid = currentSessionId();
+  let m = monitorsBySession.get(sid);
+  if (!m) {
+    m = new Map();
+    monitorsBySession.set(sid, m);
+  }
+  return m;
+}
 
 function ensureDir() {
   if (!existsSync(MONITORS_DIR)) mkdirSync(MONITORS_DIR, { recursive: true });
@@ -68,9 +79,10 @@ export const monitorTool: Tool = {
   async execute(input) {
     const action = typeof input['action'] === 'string' ? input['action'] : '';
     if (action === 'list') {
-      if (monitors.size === 0) return ok('(no active monitors)');
+      const live = monitors();
+      if (live.size === 0) return ok('(no active monitors)');
       const lines: string[] = [];
-      for (const m of monitors.values()) {
+      for (const m of live.values()) {
         const alive = isAlive(m.pid);
         const elapsed = Math.round((Date.now() - m.startedAt) / 1000);
         lines.push(
@@ -101,13 +113,13 @@ export const monitorTool: Tool = {
         startedAt: Date.now(),
         logFile,
       };
-      monitors.set(id, record);
+      monitors().set(id, record);
       return ok(`✓ started monitor ${id} · pid ${child.pid}\n  log: ${logFile}`);
     }
 
     if (action === 'tail') {
       const id = typeof input['id'] === 'string' ? input['id'] : '';
-      const m = monitors.get(id);
+      const m = monitors().get(id);
       if (!m) return err(`no monitor with id ${id}`);
       const lines = typeof input['lines'] === 'number' ? input['lines'] : 50;
       const alive = isAlive(m.pid);
@@ -122,14 +134,14 @@ export const monitorTool: Tool = {
 
     if (action === 'stop') {
       const id = typeof input['id'] === 'string' ? input['id'] : '';
-      const m = monitors.get(id);
+      const m = monitors().get(id);
       if (!m) return err(`no monitor with id ${id}`);
       try {
         process.kill(m.pid, 'SIGTERM');
       } catch (e) {
         return err(`kill failed: ${(e as Error).message}`);
       }
-      monitors.delete(id);
+      monitors().delete(id);
       return ok(`✓ stopped ${m.id} (pid ${m.pid})`);
     }
 
