@@ -1,31 +1,84 @@
 // Daemon entrypoint — long-running process body.
-// Phase 4 will load bot adapters here. For now it just heartbeats so we can
-// exercise lifecycle and log-tailing.
+// Loads config, starts enabled bot adapters, pipes incoming messages through
+// the agent loop with a per-chat conversation pool.
 
+import { createAgentState, runAgentTurn } from '../agent/loop.ts';
+import { createBotManager } from '../bots/manager.ts';
+import { loadConfig } from '../config/load.ts';
 import { createDaemonLogger } from '../daemon/logger.ts';
 import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
+import { createAnthropicProvider } from '../providers/anthropic.ts';
+import { createOllamaProvider } from '../providers/ollama.ts';
+import type { Provider } from '../types/messages.ts';
+import type { AgentState } from '../agent/loop.ts';
 
 const paths = asteriskPaths();
 ensurePaths(paths);
 const log = createDaemonLogger(paths.daemonLog);
-
 log.info({ pid: process.pid }, 'asterisk daemon starting');
 
-const HEARTBEAT_MS = Number(process.env['ASTERISK_HEARTBEAT_MS'] ?? 60_000);
-const interval = setInterval(() => log.info('heartbeat'), HEARTBEAT_MS);
+const loaded = loadConfig();
+
+function pickProvider(): Provider {
+  if (loaded.config.provider === 'anthropic') {
+    if (!loaded.secrets.ANTHROPIC_API_KEY) {
+      log.warn('anthropic provider configured but ANTHROPIC_API_KEY missing; falling back to ollama');
+      return createOllamaProvider();
+    }
+    return createAnthropicProvider({
+      apiKey: loaded.secrets.ANTHROPIC_API_KEY,
+      model: loaded.config.anthropic.model,
+    });
+  }
+  return createOllamaProvider({
+    baseUrl: loaded.config.ollama.baseUrl,
+    model: loaded.config.ollama.model,
+    contextWindow: loaded.config.ollama.contextWindow,
+  });
+}
+
+const provider = pickProvider();
+log.info({ provider: provider.name }, 'provider ready');
+
+const conversations = new Map<string, AgentState>();
+function stateFor(chatId: string): AgentState {
+  let state = conversations.get(chatId);
+  if (!state) {
+    state = createAgentState();
+    conversations.set(chatId, state);
+  }
+  return state;
+}
+
+const manager = createBotManager(loaded);
+
+manager
+  .start(async (msg) => {
+    log.debug({ chatId: msg.chatId }, 'incoming message');
+    const state = stateFor(msg.chatId);
+    return await runAgentTurn(provider, state, msg.text, {
+      onToolUse: (name, input) => log.debug({ tool: name, input }, 'tool_use'),
+      onToolResult: (name, _output, isError) =>
+        isError ? log.warn({ tool: name }, 'tool_error') : undefined,
+    });
+  })
+  .then((started) => log.info({ adapters: started }, 'adapters started'))
+  .catch((e) => log.error({ err: e }, 'failed to start adapters'));
+
+const HEARTBEAT_MS = (loaded.config.daemon.heartbeatSeconds ?? 60) * 1000;
+const interval = setInterval(() => log.debug('heartbeat'), HEARTBEAT_MS);
 interval.unref();
-// Keep the process alive even if interval is unrefd (no other handles yet).
 const keepAlive = setInterval(() => {}, 1 << 30);
 
-function shutdown(signal: string): void {
+async function shutdown(signal: string): Promise<void> {
   log.info({ signal }, 'shutdown');
   clearInterval(interval);
   clearInterval(keepAlive);
-  // Give pino a moment to flush.
-  setTimeout(() => process.exit(0), 50);
+  await manager.stop().catch(() => {});
+  setTimeout(() => process.exit(0), 100);
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('uncaughtException', (e) => log.error({ err: e }, 'uncaught'));
 process.on('unhandledRejection', (e) => log.error({ err: e }, 'unhandled rejection'));

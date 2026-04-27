@@ -1,0 +1,76 @@
+// WhatsApp web-js adapter — uses whatsapp-web.js to drive WhatsApp Web via
+// puppeteer. Unofficial; **violates WhatsApp Terms of Service**; risks number
+// bans. Personal-use only. Users must opt in explicitly via configure.
+//
+// Reference: https://github.com/pedroslopez/whatsapp-web.js
+
+import type { BotAdapter, Handler, IncomingMessage } from '../adapter.ts';
+
+export interface WebJsOptions {
+  sessionDir: string;
+}
+
+interface WhatsappWebMessage {
+  from: string;
+  body: string;
+  fromMe: boolean;
+  reply(text: string): Promise<unknown>;
+}
+
+interface WhatsappWebClient {
+  on(event: 'qr', cb: (qr: string) => void): void;
+  on(event: 'ready', cb: () => void): void;
+  on(event: 'message', cb: (msg: WhatsappWebMessage) => void): void;
+  initialize(): Promise<void>;
+  destroy(): Promise<void>;
+}
+
+export function createWhatsappWebJsAdapter(opts: WebJsOptions): BotAdapter {
+  let client: WhatsappWebClient | undefined;
+
+  return {
+    name: 'whatsapp:web-js',
+    async start(handler: Handler): Promise<void> {
+      // Lazy import — keep the heavy puppeteer dep off the cold-start path
+      // when this transport isn't used.
+      const mod = (await import('whatsapp-web.js')) as unknown as {
+        Client: new (opts: { authStrategy?: unknown }) => WhatsappWebClient;
+        LocalAuth: new (opts: { dataPath: string }) => unknown;
+      };
+
+      client = new mod.Client({
+        authStrategy: new mod.LocalAuth({ dataPath: opts.sessionDir }),
+      });
+
+      client.on('qr', (qr) => {
+        process.stderr.write(
+          `\n[asterisk-whatsapp] scan this QR with WhatsApp -> Linked Devices:\n${qr}\n\n`,
+        );
+      });
+      client.on('ready', () => {
+        process.stderr.write('[asterisk-whatsapp] web-js ready\n');
+      });
+      client.on('message', async (msg: WhatsappWebMessage) => {
+        if (msg.fromMe) return;
+        const incoming: IncomingMessage = {
+          chatId: msg.from,
+          userId: msg.from,
+          text: msg.body,
+          timestamp: Date.now(),
+        };
+        try {
+          const reply = await handler(incoming);
+          await msg.reply(reply || '(empty)');
+        } catch (e) {
+          await msg.reply(`asterisk error: ${(e as Error).message}`).catch(() => {});
+        }
+      });
+
+      await client.initialize();
+    },
+    async stop(): Promise<void> {
+      if (!client) return;
+      await client.destroy();
+    },
+  };
+}
