@@ -8,12 +8,11 @@ import type { ListSpec } from './types.ts';
 
 interface Props {
   spec: ListSpec;
-  onComplete(): void;
   onPick(value: string): Promise<void> | void;
   onCancel(): Promise<void> | void;
 }
 
-export function ListPicker({ spec, onComplete, onPick, onCancel }: Props) {
+export function ListPicker({ spec, onPick, onCancel }: Props) {
   const [index, setIndex] = useState(0);
   const [busy, setBusy] = useState(false);
 
@@ -23,7 +22,7 @@ export function ListPicker({ spec, onComplete, onPick, onCancel }: Props) {
     if (busy) return;
     if (key.escape) {
       setBusy(true);
-      void Promise.resolve(onCancel()).then(onComplete);
+      void Promise.resolve(onCancel());
       return;
     }
     if (total === 0) return;
@@ -39,7 +38,7 @@ export function ListPicker({ spec, onComplete, onPick, onCancel }: Props) {
       const target = spec.items[index];
       if (!target) return;
       setBusy(true);
-      void Promise.resolve(onPick(target.value)).then(onComplete);
+      void Promise.resolve(onPick(target.value));
     }
   });
 

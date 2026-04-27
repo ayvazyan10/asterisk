@@ -11,12 +11,11 @@ import type { FormField, FormSpec, SelectField } from './types.ts';
 
 interface Props {
   spec: FormSpec;
-  onComplete(): void;
   onSubmit(values: Record<string, string>): Promise<void> | void;
   onCancel(): Promise<void> | void;
 }
 
-export function Form({ spec, onComplete, onSubmit, onCancel }: Props) {
+export function Form({ spec, onSubmit, onCancel }: Props) {
   const [active, setActive] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const initial = useMemo(() => {
@@ -35,7 +34,6 @@ export function Form({ spec, onComplete, onSubmit, onCancel }: Props) {
     if (submitting) return;
     setSubmitting(true);
     await onCancel();
-    onComplete();
   }
 
   async function trySubmit() {
@@ -51,7 +49,6 @@ export function Form({ spec, onComplete, onSubmit, onCancel }: Props) {
     }
     setSubmitting(true);
     await onSubmit(values);
-    onComplete();
   }
 
   // Global keys (Tab, Shift+Tab, ↑, ↓, Esc, Ctrl+S). The active field's local

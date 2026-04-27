@@ -274,7 +274,6 @@ export function App({ initialProvider, state, mcp }: Props) {
             <Form
               key={modal.title}
               spec={modal}
-              onComplete={() => setModal(null)}
               onSubmit={(values) => handleFormSubmit(modal, values)}
               onCancel={() => handleFormCancel(modal)}
             />
@@ -282,7 +281,6 @@ export function App({ initialProvider, state, mcp }: Props) {
             <ListPicker
               key={modal.title}
               spec={modal}
-              onComplete={() => setModal(null)}
               onPick={(v) => handleListPick(modal, v)}
               onCancel={() => handleListCancel(modal)}
             />
