@@ -344,6 +344,474 @@ Don't fabricate timestamps or quotes that you didn't actually read in
 the source.`,
   },
   {
+    name: 'loop',
+    description: 'Run a recurring task in a controlled loop with explicit stop conditions.',
+    scope: 'bundled',
+    path: 'bundled:loop',
+    prompt: `You drive a recurring task in a loop. The loop is only safe with
+explicit stop conditions — open-ended loops aren't allowed.
+
+Steps:
+1. Confirm the loop spec via AskUserQuestion if anything is missing:
+   what's one iteration · what's the stop condition (count cap, time cap,
+   convergence test) · cadence (immediate / interval / cron) · failure
+   budget (e.g. "stop after 3 consecutive failures").
+2. If a recurring schedule fits better than a tight loop, dispatch via
+   the CronCreate tool instead of looping inside this turn — cron survives
+   daemon restarts.
+3. For an in-turn loop:
+   - TaskCreate one task per iteration if bounded; otherwise track a
+     single rolling task whose description updates per round.
+   - Per iteration: run the work · classify success / soft-fail /
+     hard-fail · update the task · check the stop condition.
+4. Stop conditions are non-negotiable. If the user said "stop after 5
+   failures", you stop at the 5th — even if iteration 6 would have worked.
+5. Summarise: ran N iterations · M succeeded · K failed · time spent ·
+   last error if any.
+
+Never loop forever. If the parent didn't give a stop condition, ask before
+starting.`,
+  },
+  {
+    name: 'schedule',
+    description: 'Schedule a future or recurring task via ScheduleWakeup / CronCreate. Friendly wrapper.',
+    scope: 'bundled',
+    path: 'bundled:schedule',
+    prompt: `You set up a future or recurring task. Pick the right tool:
+
+- One-shot delay → ScheduleWakeup(delayMs, prompt). Asterisk fires once
+  when the delay elapses.
+- Specific time of day or recurring → CronCreate(expression, prompt).
+  Standard 5-field cron ("0 9 * * 1-5" = weekdays 9am).
+
+Steps:
+1. Get the task description in plain English ("remind me to review the PR
+   tomorrow morning"). AskUserQuestion if it's vague.
+2. Translate the human time into a delay or cron expression. Show the
+   user the parsed schedule + what'll happen at fire time, get explicit
+   confirmation before creating.
+3. Use the right tool. Capture the returned id.
+4. Confirm with CronList / TaskList so the user sees it landed.
+
+Time-zone discipline: assume the user's local TZ unless they specified
+otherwise. If they say "9am UTC" use UTC. If unspecified and ambiguous,
+ask.
+
+Don't fabricate cron expressions. If you're not sure how to spell
+"every other Tuesday", say so and propose an approximation.`,
+  },
+  {
+    name: 'dep-audit',
+    description: 'Run the language\'s dependency-vulnerability scanner, classify findings, propose upgrades.',
+    scope: 'bundled',
+    path: 'bundled:dep-audit',
+    prompt: `You audit the project's dependencies for known vulnerabilities.
+
+Steps:
+1. Detect the language from the manifest: package.json → \`bun audit\` /
+   \`npm audit --json\` / \`pnpm audit\`; pyproject / requirements →
+   \`pip-audit\` / \`safety check\`; Cargo.toml → \`cargo audit\`;
+   go.mod → \`govulncheck ./...\`; composer.json → \`composer audit\`.
+2. Run the scanner. Capture JSON output where the tool supports it.
+3. Classify each finding by severity: CRITICAL / HIGH / MEDIUM / LOW.
+   Drop findings the project already explicitly silenced (.npmrc audit
+   exceptions, cargo-audit ignore lists).
+4. For each CRITICAL + HIGH:
+   - Show the package · current version · fixed-in version · CVE id ·
+     one-line attack summary.
+   - Propose the upgrade as a concrete command (\`bun update <pkg>\`,
+     \`cargo update -p <pkg>\`, etc.) and check if it requires a
+     major-version bump (breaking changes possible).
+5. If the parent asked you to fix, apply the upgrade for safe (patch /
+   minor) bumps; flag major bumps for explicit user approval first.
+6. Verify nothing broke — run the project's tests after upgrades.
+
+Don't apply major-version upgrades autonomously. The fix isn't worth
+breaking the build.`,
+  },
+  {
+    name: 'release-notes',
+    description: 'Generate release notes from git log between two refs, grouped by type.',
+    scope: 'bundled',
+    path: 'bundled:release-notes',
+    prompt: `You generate release notes between two refs (default: last
+tag → HEAD).
+
+Steps:
+1. Determine the range. Default base: \`git describe --tags --abbrev=0\`
+   (last tag). Default head: \`HEAD\`. AskUserQuestion if the project
+   doesn't tag or the user wants a different range.
+2. Pull commit log: \`git log <base>..<head> --pretty='%h%x09%s%x09%b'\`.
+3. Parse Conventional Commits if present (feat: / fix: / chore: / etc.).
+   If the project doesn't use them, classify by keyword + diff inspection
+   (commits touching tests → "Tests"; commits in docs/ → "Docs").
+4. Group:
+   - **Added** — feat: + new functionality.
+   - **Changed** — refactor: + behaviour-affecting changes.
+   - **Fixed** — fix: + bug fixes.
+   - **Security** — anything CVE-mentioning, security: prefix.
+   - **Removed** — removals + deprecations.
+   - **Internal** — chore: / build: / ci: (collapsed at end).
+5. For each entry, write a one-line user-facing summary. Drop "fix typo"
+   / "format file" / merge commits unless aggregated.
+6. Surface breaking changes prominently — search commit bodies for
+   "BREAKING CHANGE:" and put them in their own ⚠ section at top.
+
+Don't invent a version number. If the user wants a version line at the
+top, ask which one.`,
+  },
+  {
+    name: 'pr-review',
+    description: 'Review an open GitHub PR end-to-end via gh — diff, classify findings, post a summary comment.',
+    scope: 'bundled',
+    path: 'bundled:pr-review',
+    prompt: `You review an open pull request. The parent will give you a PR
+number or URL.
+
+Steps:
+1. Fetch context: \`gh pr view <num> --json title,body,baseRefName,headRefName,additions,deletions,files\`
+   plus \`gh pr diff <num>\`.
+2. Read the description and the diff. Skim the file-list to understand
+   surface area.
+3. Apply the standard review checklist (use the \`code-reviewer\` agent
+   pattern):
+   a. Correctness — wrong behaviour, off-by-one, missing case.
+   b. Security — secrets, unsanitised input, missing auth, unsafe SQL/HTML.
+   c. Reuse — duplication of utilities the project already has.
+   d. Test coverage — does the diff add tests for the new behaviour?
+4. For complex PRs (>500 LOC or touching auth/payments/migrations),
+   dispatch the \`security-reviewer\` sub-agent in parallel via the
+   Agent tool for a second pass.
+5. Build the comment:
+   - One-paragraph verdict: approve / request-changes / comment-only.
+   - Numbered findings: severity · file:line · cause · suggested fix.
+   - Compliments: anything notable the author got right (don't pad,
+     but don't omit either).
+6. Either return the draft for the user to post manually, or with
+   confirmation post via \`gh pr review <num> --comment --body "..."\`
+   or \`--request-changes\` / \`--approve\`.
+
+Don't approve a PR you didn't actually read. Don't request changes for
+stylistic preferences the project's formatter already enforces.`,
+  },
+  {
+    name: 'audit-memory',
+    description: 'Inventory all rules / souls / hooks currently loaded into the agent and flag stale entries.',
+    scope: 'bundled',
+    path: 'bundled:audit-memory',
+    prompt: `You audit what's currently shaping the agent's behaviour
+beyond the codebase itself: rules, soul, hooks. The point is to surface
+stale entries the user has forgotten about.
+
+Steps:
+1. Read the rules: list every file under ~/.asterisk/rules/, the project's
+   .asterisk/rules/, and ASTERISK.md. Show the full file paths.
+2. Read the souls: ~/.asterisk/SOUL.md (operator), ~/.asterisk/souls/*.md
+   (per-chat), <cwd>/.asterisk/SOUL.md or <cwd>/SOUL.md (project).
+3. Read hooks: from ~/.asterisk/config.json under \`hooks\`. Show name,
+   event, command, enabled flag.
+4. For each entry, judge:
+   - **Active**: matches the agent's current work; clearly load-bearing.
+   - **Probably-stale**: references concepts/files/projects that no
+     longer exist (Grep for the cited paths/symbols; if absent, flag).
+   - **Outdated**: contradicts what the project actually does now (e.g.
+     a rule pinning Node 16 in a Bun project).
+5. For each probably-stale or outdated item, propose: keep / archive /
+   remove. Don't delete autonomously — show the proposal.
+6. Summary at the end: counts by status, plus a one-liner per
+   probably-stale item.
+
+Don't be aggressive. A rule the user wrote 2 weeks ago and hasn't
+referenced since is still probably load-bearing.`,
+  },
+  {
+    name: 'skill-stocktake',
+    description: 'Inventory installed skills + agents and identify dead weight (rarely / never invoked).',
+    scope: 'bundled',
+    path: 'bundled:skill-stocktake',
+    prompt: `You take stock of the agent's skill + agent catalogue. Goal:
+surface dead weight so the user can prune.
+
+Steps:
+1. List skills: bundled (from src/skills/bundled.ts via /skills) plus
+   user (~/.asterisk/skills/) plus project (.asterisk/skills/). Show
+   name · scope · path · description.
+2. List agents the same way (~/.asterisk/agents/, .asterisk/agents/).
+3. For each USER-installed entry (skip bundled — those ship with
+   Asterisk and aren't the user's choice to prune):
+   - Has the entry been edited recently? \`stat\` mtime; entries
+     untouched for >90 days are candidates for review.
+   - Does the description still match a workflow the user does? If you
+     can tell from the user's recent task list / git log, infer; otherwise
+     flag for the user to decide.
+4. Output:
+   - Counts (bundled / user / project).
+   - User entries grouped by "active" (likely useful) and "stale"
+     (candidate for prune).
+   - Per stale entry: name · last touched · proposed action (keep /
+     archive / remove).
+
+Don't auto-delete. The user's skill they wrote 2 years ago might still
+be load-bearing; the audit just surfaces candidates.`,
+  },
+  {
+    name: 'ai-regression-testing',
+    description: 'Catch behaviour drift in LLM outputs: golden-trace regression, semantic deltas, prompt-change diffs.',
+    scope: 'bundled',
+    path: 'bundled:ai-regression-testing',
+    prompt: `You set up regression testing for LLM-driven code paths. Goal:
+catch when a prompt or model change degrades output quality.
+
+Steps:
+1. Identify the LLM calls in scope: \`grep\` for the project's chat /
+   completion call sites. Cluster by purpose (summariser, classifier,
+   retriever, etc.).
+2. For each cluster, build a small golden set:
+   - 5–20 representative inputs covering happy path, edge cases, and
+     adversarial cases.
+   - For each input, the *expected shape* of the output, not the exact
+     string. LLM outputs aren't deterministic word-for-word; assert on
+     structure, fields, key claims, length range.
+3. Build the test harness:
+   - One test per (input, expected-shape) tuple.
+   - Compare via either: structural assertions (JSON shape, keys
+     present, ranges), embedding-similarity vs a reference output, or
+     LLM-as-judge with an explicit rubric.
+   - Save a results-by-run JSON so you can diff one run against
+     another (the "golden trace").
+4. Wire into CI as a separate job (these tests are slower + flakier
+   than unit tests). Allow the team to set acceptance thresholds per
+   metric so CI can fail on real regression but tolerate normal noise.
+5. When a prompt changes, the user runs the harness and compares: pass
+   rate · per-input deltas · which inputs flipped from pass to fail.
+
+Don't assert exact-string equality on LLM outputs. That's flake guaranteed.`,
+  },
+  {
+    name: 'eval-harness',
+    description: 'Score LLM outputs against a rubric — graded eval, not just regression.',
+    scope: 'bundled',
+    path: 'bundled:eval-harness',
+    prompt: `You build an evaluation harness that scores LLM outputs against
+a rubric. Different from ai-regression-testing: regression catches drift
+between runs; eval scores absolute quality.
+
+Steps:
+1. Define the rubric. Each criterion: name · description · scale (1-5
+   typical) · weight · what 1/3/5 looks like (concrete examples). The
+   rubric is the contract — if the user can't write one, the system
+   isn't ready to be evaluated.
+2. Build the eval set: 20-100 representative inputs. The variety
+   matters more than the volume.
+3. Pick the judge:
+   - Programmatic (preferred): structural checks, presence of required
+     fields, length / format.
+   - LLM-as-judge: cheaper but biased and noisy. If you go this route,
+     use a stronger model than the one being evaluated, run each input
+     2-3x with the judge, and average.
+   - Human-in-the-loop: highest signal, lowest throughput; reserve for
+     calibration runs.
+4. Run + score: per-input score, per-criterion average, weighted total.
+   Save with a run id so you can compare runs over time.
+5. Output:
+   - Headline: overall score and per-criterion breakdown.
+   - Outliers: the 5 lowest-scoring inputs, with the judge's reasoning.
+   - Trend: vs the previous run, where did things move?
+
+Don't trust a single eval run as ground truth. Always look at outliers
+manually before declaring "this version is better".`,
+  },
+  {
+    name: 'mcp-server-patterns',
+    description: 'Build an MCP server with @modelcontextprotocol/sdk — tools, resources, prompts, transport.',
+    scope: 'bundled',
+    path: 'bundled:mcp-server-patterns',
+    prompt: `You build (or audit) a Model Context Protocol server. Asterisk
+ships @modelcontextprotocol/sdk in deps already.
+
+Workflow:
+1. Pick the transport. stdio (default — spawned by the client, simplest)
+   for desktop integrations; Streamable HTTP for hosted services. Avoid
+   SSE — deprecated in newer MCP versions.
+2. Define what the server exposes:
+   - **Tools** (the most common): name, description, inputSchema (JSON
+     Schema), and the function. Keep tool descriptions punchy — that's
+     what the model reads to decide whether to call.
+   - **Resources** (URI-addressed read-only data): list endpoint +
+     read-by-uri endpoint. Use for files, query results, etc.
+   - **Prompts** (templated user prompts): list + get-with-args.
+3. Implement against the SDK:
+   - Server constructor with name + version.
+   - Register handlers via \`server.setRequestHandler(<schema>, fn)\`.
+   - For stdio: \`StdioServerTransport\`, then \`server.connect(transport)\`.
+   - For HTTP: \`StreamableHTTPServerTransport\` mounted on an HTTP
+     framework of choice.
+4. Test:
+   - Run the MCP Inspector (\`bunx @modelcontextprotocol/inspector\`) —
+     a UI that talks to your server, listing tools / calling them /
+     showing the JSON wire format.
+   - Add it to Asterisk's config.json mcpServers[] and verify
+     /mcp list shows it connected.
+5. Common pitfalls:
+   - Tool descriptions too vague → model never calls them.
+   - inputSchema mismatch with what the function actually expects →
+     runtime errors instead of validation errors.
+   - Long-running tools without progress reporting → client times out.
+
+Cite the spec when in doubt: https://modelcontextprotocol.io/specification`,
+  },
+  {
+    name: 'regex-vs-llm-structured-text',
+    description: 'Tactical guide — when to reach for regex / parser vs ask the model to extract structure.',
+    scope: 'bundled',
+    path: 'bundled:regex-vs-llm-structured-text',
+    prompt: `You're choosing between a regex / parser and an LLM call for
+structured text extraction. The right answer changes by case.
+
+**Reach for regex / a real parser when:**
+- The format is well-defined and stable (logs with a known schema, ISO
+  timestamps, semver, file paths, JSON / XML / CSV).
+- The volume is high (millions of lines) — LLM calls are slow and
+  expensive at that scale.
+- Latency matters (<10ms budget).
+- You need 100% deterministic output.
+- A parser already exists for the format (use it, don't re-derive in
+  regex).
+
+**Reach for an LLM call when:**
+- The input is natural language with variation (user emails, support
+  tickets, product reviews).
+- The schema is fuzzy ("extract any mention of a price, even when
+  written as 'around fifty bucks'").
+- The cost-per-extraction is low and the volume is manageable
+  (hundreds, not millions).
+- You want graceful failure on novel inputs (regex throws, LLM degrades).
+
+**The tricky middle:**
+- HTML / markup with quirks → use the parser (cheerio, BeautifulSoup),
+  not regex; LLM is overkill but works as a last resort.
+- Mostly-structured logs with occasional free-text fields → regex
+  for the structured parts, LLM for the free-text fields.
+- Code parsing → use a real parser (tree-sitter, AST libs). Regex
+  on code is a smell. LLM only when the structure is so non-standard
+  no parser exists.
+
+**Hybrid pattern:** regex pre-filter → LLM only on the survivors.
+Cuts cost by 90%+ when most inputs are uninteresting.
+
+Tell the user the recommendation, the reasoning, and the rough
+cost/throughput tradeoff in one paragraph.`,
+  },
+  {
+    name: 'prompt-optimizer',
+    description: 'Iterate on a prompt — run, score, refine. Hill-climb until quality plateaus.',
+    scope: 'bundled',
+    path: 'bundled:prompt-optimizer',
+    prompt: `You optimize a prompt by running it, scoring outputs, and
+refining. The goal is measurable quality lift, not "feels nicer".
+
+Steps:
+1. Get the starting prompt + the eval set (5-20 representative inputs)
+   + the success criterion (rubric). Use the eval-harness skill if
+   none of these exist yet.
+2. Run baseline: execute the prompt on every input, score each,
+   compute the headline metric. Record this as round 0.
+3. Diagnose: look at the lowest-scoring 3 inputs. What's the failure
+   mode? Cluster: ambiguity in instructions · missing context ·
+   format violations · tone mismatch · refusal / over-caution.
+4. Propose ONE change per round, targeting the most-frequent failure
+   mode:
+   - Make implicit constraints explicit ("respond in JSON" → "respond
+     in JSON with these exact keys: …").
+   - Add 1-2 few-shot examples for the failure cluster.
+   - Trim wordy preambles that aren't earning their tokens.
+   - Adjust voice / persona if the tone is off.
+5. Run round 1 on the same eval set. Compare per-input scores. Did
+   the targeted failures improve without regression elsewhere?
+   - If yes: keep the change, repeat from step 3.
+   - If mixed: roll back, try a different angle.
+   - Stop when 2 consecutive rounds show no meaningful lift (within
+     noise).
+6. Output: round-by-round metric trace, the final prompt, the prompt
+   diff vs. baseline, and the one or two examples per round that
+   moved the needle.
+
+Don't change two things at once — you won't know which helped.
+Don't fall in love with a "more complete" prompt; longer isn't better.`,
+  },
+  {
+    name: 'data-scraper-agent',
+    description: 'Build a one-shot or recurring scraper using BrowserNavigate + Snapshot. Robust to JS-heavy sites.',
+    scope: 'bundled',
+    path: 'bundled:data-scraper-agent',
+    prompt: `You build a scraper for a target site. Asterisk's browser tools
+(BrowserNavigate / Snapshot / Click / Type) handle JS-heavy pages plain
+HTTP can't.
+
+Steps:
+1. Get the target URL and the data shape from the user. AskUserQuestion
+   if the data shape is fuzzy.
+2. **Recon (read-only).** BrowserNavigate to the URL → BrowserSnapshot.
+   Read the snapshot: numbered interactive elements, visible text. Find
+   the selectors that anchor the data you want (CSS, role=, text=).
+3. **Decide static vs dynamic.** Try WebFetch first — if the data is in
+   the initial HTML you don't need a browser. If WebFetch returns a
+   shell page (SPA / dynamic content), use the browser.
+4. **Pagination / interaction.** If the data spans pages or requires
+   clicks (cookie banner, "load more", login), script the interaction
+   with BrowserClick + BrowserWait. Cap iterations explicitly.
+5. **Robustness.**
+   - Use stable selectors (role/text > CSS class > nth-child).
+   - Wrap each extraction in a try and surface what's missing rather
+     than crashing the whole run.
+   - Don't hammer — sleep 500-2000ms between pages. Respect robots.txt.
+6. **Output.** Save to JSONL / CSV via Write — one record per row, with
+   a "scraped_at" timestamp and the source URL.
+7. **Recurring?** If the user wants this on a schedule, hand off to the
+   \`schedule\` skill so the daemon runs it via Cron.
+
+Two non-negotiables: rate-limit politely, and never bypass authentication
+the user doesn't have rights to.`,
+  },
+  {
+    name: 'security-scan',
+    description: 'Active vulnerability scanning — gitleaks, trivy, npm audit, gosec, etc. Different from review.',
+    scope: 'bundled',
+    path: 'bundled:security-scan',
+    prompt: `You actively scan the project for security issues using
+external tools. Different from the security-reviewer agent: that's a
+human-style review of the diff. This is automated tooling that catches
+things review misses (committed secrets, vulnerable dependencies,
+container CVEs).
+
+Steps:
+1. Detect what tools to run based on the project:
+   - Always: \`gitleaks detect --no-banner -v\` (committed secrets in
+     git history) if gitleaks is on PATH.
+   - Containers: \`trivy fs .\` (vulnerable system + lang deps in
+     manifest files) if trivy is on PATH; otherwise lang-specific deps
+     scanner (see dep-audit skill).
+   - Go: \`gosec ./...\` (Go-specific code patterns).
+   - Python: \`bandit -r src\` (Python-specific code patterns).
+   - JS / TS: \`semgrep --config=auto src\` if semgrep is installed.
+   - IaC: \`tfsec\` / \`checkov\` for Terraform.
+2. Run them in parallel where safe (independent tools).
+3. Classify findings: CRITICAL · HIGH · MEDIUM · LOW. Drop
+   well-known false positives the project has already accepted (find
+   the .gitleaksignore / .trivyignore / etc. and respect it).
+4. For each CRITICAL + HIGH:
+   - File:line · the rule that flagged it · the fix as a concrete diff
+     (rotate this secret · upgrade this package · sanitise this input).
+   - If the finding is a leaked credential in git history, surface it
+     with TOP urgency — that secret is compromised even after the file
+     is deleted; rotation is mandatory.
+5. If a tool isn't installed, surface the install command as a
+   suggestion — don't silently skip the category.
+
+Output: a single grouped report with a one-line verdict at the top
+(red / yellow / green) and the prioritised action list.`,
+  },
+  {
     name: 'cloud-infrastructure-security',
     description: 'Cloud-focused security review — IAM, secrets, network, supply chain. AWS / GCP / Azure / K8s / Terraform.',
     scope: 'bundled',

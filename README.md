@@ -17,7 +17,7 @@ same assistant to Telegram and WhatsApp.
 - **Apache 2.0** licensed.
 
 Status `0.1.0` — early but real. ~30 built-in tools, 19 slash commands,
-14 daemon-managed scheduling/lifecycle features, **15 bundled skills**,
+14 daemon-managed scheduling/lifecycle features, **29 bundled skills**,
 **27 specialised sub-agent types** the agent can dispatch on demand,
 layered multi-language rules, switchable output styles
 (default / concise / explanatory / learning), and a SOUL.md persona
@@ -178,7 +178,7 @@ Plus any tools exposed by configured MCP servers, namespaced as
 
 ## Skills, rules, hooks, souls
 
-**Skills** — reusable workflows. 15 bundled out of the box:
+**Skills** — reusable workflows. 29 bundled out of the box:
 
 *Core workflow:*
 - `simplify` — review your recent changes for reuse / quality / efficiency
@@ -199,15 +199,42 @@ Plus any tools exposed by configured MCP servers, namespaced as
 - `prp-pr` — open a real GitHub PR with summary + test plan via `gh`
 - `prp-commit` — write a coherent commit with a real WHY message
 
-*Other:*
+*Loops + scheduling:*
+- `loop` — recurring task with explicit stop conditions
+- `schedule` — friendly wrapper over `ScheduleWakeup` / `CronCreate`
 - `santa-loop` — adversarial dual-review: dispatches `code-reviewer`
   and `security-reviewer` sub-agents in parallel, iterates until both
   approve or hits a 5-round cap
+
+*Quality / security tooling:*
+- `dep-audit` — `npm audit` / `cargo audit` / `pip-audit` / `govulncheck`,
+  classify by severity, propose upgrades
+- `security-scan` — active scanning (gitleaks for secrets, trivy / gosec /
+  bandit / semgrep / tfsec depending on stack)
+- `cloud-infrastructure-security` — IaC review for Terraform / Pulumi /
+  CDK / Helm / K8s / CloudFormation: IAM wildcards, exposed ports,
+  plaintext secrets, supply-chain
+- `pr-review` — review an open GitHub PR end-to-end via \`gh\`
+
+*LLM / agent ops:*
+- `ai-regression-testing` — golden-trace harness for LLM outputs
+- `eval-harness` — score outputs against a rubric (graded eval)
+- `prompt-optimizer` — iterate on a prompt with measurable lift
+- `mcp-server-patterns` — build an MCP server with the public SDK
+- `data-scraper-agent` — robust scraper using `BrowserNavigate` + `Snapshot`
+- `regex-vs-llm-structured-text` — tactical guide on when to reach for
+  each (and the hybrid pre-filter pattern)
+
+*Auditing your setup:*
+- `audit-memory` — inventory rules / souls / hooks; flag stale entries
+- `skill-stocktake` — inventory user-installed skills + agents; surface
+  dead weight
+
+*Other:*
+- `release-notes` — generate notes from `git log <prev>..HEAD`, grouped
+  by type, with breaking changes promoted
 - `youtube-summarizer` — summarise a YouTube video (uses `yt-dlp` if
   available for the transcript, falls back to WebFetch on description)
-- `cloud-infrastructure-security` — focused security audit for
-  Terraform / Pulumi / CDK / Helm / K8s / CloudFormation: IAM wildcards,
-  exposed ports, plaintext secrets, supply-chain
 
 Add your own at `~/.asterisk/skills/<name>/SKILL.md` (user-global) or
 `<repo>/.asterisk/skills/<name>/SKILL.md` (project-local). User/project
