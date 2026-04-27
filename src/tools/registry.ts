@@ -3,6 +3,7 @@
 // alongside the built-ins without a special code path.
 
 import { bashTool } from './bash.ts';
+import { BROWSER_TOOLS } from './browser/tools.ts';
 import { editTool } from './edit.ts';
 import { globTool } from './glob.ts';
 import { grepTool } from './grep.ts';
@@ -17,6 +18,7 @@ export const BUILTIN_TOOLS: Tool[] = [
   editTool,
   grepTool,
   globTool,
+  ...BROWSER_TOOLS,
 ];
 
 let extraTools: Tool[] = [];

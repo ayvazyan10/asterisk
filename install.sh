@@ -83,6 +83,22 @@ step "Building..."
   || fail "bun run build failed"
 ok "built dist/"
 
+# ── Playwright browser binary ──────────────
+# Browser tools (BrowserNavigate, BrowserClick, …) need a Chromium binary on
+# disk. Skip with ASTERISK_SKIP_BROWSERS=1 if the host doesn't need them
+# (CI, headless servers, slow connections — Chromium is ~150 MB).
+if [[ "${ASTERISK_SKIP_BROWSERS:-0}" != "1" ]]; then
+  step "Installing Chromium for Playwright (set ASTERISK_SKIP_BROWSERS=1 to skip)..."
+  if ( cd "$INSTALL_DIR" && bun playwright install chromium >/dev/null 2>&1 ); then
+    ok "Chromium ready"
+  else
+    warn "playwright install chromium failed — browser tools won't work until you run:"
+    echo "        cd $INSTALL_DIR && bun playwright install chromium"
+  fi
+else
+  warn "Skipping Chromium install (ASTERISK_SKIP_BROWSERS=1)"
+fi
+
 # ── Symlink onto PATH ──────────────────────
 step "Linking ${BIN_DIR}/asterisk → ${INSTALL_DIR}/bin/asterisk"
 mkdir -p "$BIN_DIR"

@@ -1,0 +1,327 @@
+// Browser tools — Playwright-backed primitives the agent uses to drive a
+// real Chromium instance the way a human would: navigate, click, type, read
+// the page, screenshot, wait for elements.
+//
+// Selector grammar follows Playwright's locator API
+// (https://playwright.dev/docs/locators):
+//   - "#id" / ".class" / "tag[attr]"  → CSS
+//   - "text=Sign in"                  → text match
+//   - "role=button[name='Submit']"    → ARIA role + accessible name
+//   - "xpath=//button"                → XPath
+
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+
+import { type Tool, ok, err } from '../types.ts';
+import { closeBrowser, getPage, hookProcessExit, isOpen } from './session.ts';
+
+const DEFAULT_TIMEOUT_MS = 15_000;
+const SNAPSHOT_TEXT_LIMIT = 3000;
+
+hookProcessExit();
+
+export const browserNavigateTool: Tool = {
+  name: 'BrowserNavigate',
+  description:
+    'Open a URL in the shared browser (launches Chromium on first call). Returns the final URL and page title after navigation completes.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'Absolute URL to load.' },
+      waitUntil: {
+        type: 'string',
+        description: '"load", "domcontentloaded", "networkidle", or "commit" (default networkidle).',
+      },
+    },
+    required: ['url'],
+    additionalProperties: false,
+  },
+  async execute(input, opts) {
+    const url = typeof input['url'] === 'string' ? input['url'] : '';
+    if (!url) return err('url is required');
+    const waitUntil = (
+      ['load', 'domcontentloaded', 'networkidle', 'commit'] as const
+    ).includes((input['waitUntil'] as string) as (typeof ALLOWED_WAIT)[number])
+      ? ((input['waitUntil'] as string) as (typeof ALLOWED_WAIT)[number])
+      : 'networkidle';
+    try {
+      const page = await getPage();
+      if (opts?.signal?.aborted) return err('aborted');
+      await page.goto(url, { waitUntil, timeout: DEFAULT_TIMEOUT_MS });
+      const title = await page.title();
+      return ok(`navigated · ${page.url()}\ntitle: ${title}`);
+    } catch (e) {
+      return err(`BrowserNavigate failed: ${(e as Error).message}`);
+    }
+  },
+};
+
+const ALLOWED_WAIT = ['load', 'domcontentloaded', 'networkidle', 'commit'] as const;
+
+export const browserClickTool: Tool = {
+  name: 'BrowserClick',
+  description:
+    'Click an element on the current page. Selector accepts CSS, "text=…", "role=…", or "xpath=…".',
+  input_schema: {
+    type: 'object',
+    properties: {
+      selector: { type: 'string', description: 'Locator string.' },
+      timeoutMs: { type: 'number', description: 'Optional override (default 15000).' },
+    },
+    required: ['selector'],
+    additionalProperties: false,
+  },
+  async execute(input, opts) {
+    const selector = typeof input['selector'] === 'string' ? input['selector'] : '';
+    if (!selector) return err('selector is required');
+    const timeout =
+      typeof input['timeoutMs'] === 'number' ? input['timeoutMs'] : DEFAULT_TIMEOUT_MS;
+    try {
+      const page = await getPage();
+      if (opts?.signal?.aborted) return err('aborted');
+      await page.locator(selector).first().click({ timeout });
+      return ok(`clicked · ${selector}`);
+    } catch (e) {
+      return err(`BrowserClick failed: ${(e as Error).message}`);
+    }
+  },
+};
+
+export const browserTypeTool: Tool = {
+  name: 'BrowserType',
+  description:
+    'Type text into an input/textarea on the current page. Set submit=true to press Enter after.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      selector: { type: 'string' },
+      text: { type: 'string' },
+      submit: { type: 'boolean' },
+      clear: { type: 'boolean', description: 'Clear existing value first (default true).' },
+    },
+    required: ['selector', 'text'],
+    additionalProperties: false,
+  },
+  async execute(input, opts) {
+    const selector = typeof input['selector'] === 'string' ? input['selector'] : '';
+    const text = typeof input['text'] === 'string' ? input['text'] : '';
+    if (!selector) return err('selector is required');
+    const clear = input['clear'] !== false;
+    const submit = input['submit'] === true;
+    try {
+      const page = await getPage();
+      if (opts?.signal?.aborted) return err('aborted');
+      const locator = page.locator(selector).first();
+      if (clear) await locator.fill('', { timeout: DEFAULT_TIMEOUT_MS });
+      await locator.type(text, { timeout: DEFAULT_TIMEOUT_MS });
+      if (submit) await page.keyboard.press('Enter');
+      return ok(`typed ${text.length} chars${submit ? ' + Enter' : ''} · ${selector}`);
+    } catch (e) {
+      return err(`BrowserType failed: ${(e as Error).message}`);
+    }
+  },
+};
+
+export const browserPressTool: Tool = {
+  name: 'BrowserPress',
+  description:
+    'Send a keyboard key to the current page (e.g. Enter, Tab, Escape, ArrowDown, Control+a).',
+  input_schema: {
+    type: 'object',
+    properties: { key: { type: 'string' } },
+    required: ['key'],
+    additionalProperties: false,
+  },
+  async execute(input) {
+    const key = typeof input['key'] === 'string' ? input['key'] : '';
+    if (!key) return err('key is required');
+    try {
+      const page = await getPage();
+      await page.keyboard.press(key);
+      return ok(`pressed · ${key}`);
+    } catch (e) {
+      return err(`BrowserPress failed: ${(e as Error).message}`);
+    }
+  },
+};
+
+export const browserSnapshotTool: Tool = {
+  name: 'BrowserSnapshot',
+  description:
+    'Read the current page: title, URL, visible text (truncated), and a numbered list of interactive elements (buttons, links, form fields) with their accessible labels and selectors.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      maxText: { type: 'number', description: 'Char cap on visible text (default 3000).' },
+      maxElements: { type: 'number', description: 'Cap on interactive elements (default 60).' },
+    },
+    additionalProperties: false,
+  },
+  async execute(input) {
+    const maxText =
+      typeof input['maxText'] === 'number' ? input['maxText'] : SNAPSHOT_TEXT_LIMIT;
+    const maxElements =
+      typeof input['maxElements'] === 'number' ? input['maxElements'] : 60;
+    try {
+      const page = await getPage();
+      const title = await page.title();
+      const url = page.url();
+      const visible = await page.evaluate((cap: number) => {
+        const text = (document.body?.innerText ?? '').replace(/\n{3,}/g, '\n\n');
+        return text.length > cap ? `${text.slice(0, cap)}\n…[truncated]` : text;
+      }, maxText);
+
+      const interactive = await page.evaluate((cap: number) => {
+        const sel =
+          'a[href], button, [role="button"], [role="link"], input:not([type="hidden"]), textarea, select, [contenteditable="true"]';
+        const list = Array.from(document.querySelectorAll<HTMLElement>(sel)).slice(0, cap);
+        return list.map((el) => {
+          const tag = el.tagName.toLowerCase();
+          const role = el.getAttribute('role') ?? tag;
+          const label =
+            el.getAttribute('aria-label') ??
+            el.getAttribute('placeholder') ??
+            (el as HTMLInputElement).value ??
+            (el.textContent ?? '').trim().slice(0, 80) ??
+            '';
+          const id = el.id ? `#${el.id}` : '';
+          const name = el.getAttribute('name');
+          const nameSel = name ? `[name="${name}"]` : '';
+          const hint = id || nameSel || `${tag}:nth-of-type(${siblingIndex(el)})`;
+          return { role, label: label.replace(/\s+/g, ' ').trim(), selector: hint };
+        });
+
+        function siblingIndex(el: Element): number {
+          let i = 1;
+          let sib = el.previousElementSibling;
+          while (sib) {
+            if (sib.tagName === el.tagName) i++;
+            sib = sib.previousElementSibling;
+          }
+          return i;
+        }
+      }, maxElements);
+
+      const elementLines = interactive.map(
+        (e: { role: string; label: string; selector: string }, i: number) =>
+          `  [${i + 1}] ${e.role.padEnd(8)} ${e.label || '(unlabeled)'}  ${e.selector}`,
+      );
+
+      const lines = [
+        `URL    ${url}`,
+        `Title  ${title}`,
+        '',
+        `--- visible text (${visible.length} chars) ---`,
+        visible,
+        '',
+        `--- interactive elements (${interactive.length}) ---`,
+        ...elementLines,
+      ];
+      return ok(lines.join('\n'));
+    } catch (e) {
+      return err(`BrowserSnapshot failed: ${(e as Error).message}`);
+    }
+  },
+};
+
+export const browserScreenshotTool: Tool = {
+  name: 'BrowserScreenshot',
+  description: 'Save a PNG screenshot of the current page. Returns the absolute path.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      path: {
+        type: 'string',
+        description: 'Optional output path (default ~/.asterisk/screenshots/<timestamp>.png).',
+      },
+      fullPage: { type: 'boolean', description: 'Capture the full scrollable page (default true).' },
+    },
+    additionalProperties: false,
+  },
+  async execute(input) {
+    const fullPage = input['fullPage'] !== false;
+    const target =
+      typeof input['path'] === 'string' && input['path']
+        ? input['path']
+        : join(
+            process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'),
+            'screenshots',
+            `${new Date().toISOString().replace(/[:.]/g, '-')}.png`,
+          );
+    try {
+      const page = await getPage();
+      const { mkdir } = await import('node:fs/promises');
+      const { dirname } = await import('node:path');
+      await mkdir(dirname(target), { recursive: true });
+      await page.screenshot({ path: target, fullPage });
+      return ok(`screenshot saved · ${target}`);
+    } catch (e) {
+      return err(`BrowserScreenshot failed: ${(e as Error).message}`);
+    }
+  },
+};
+
+export const browserWaitTool: Tool = {
+  name: 'BrowserWait',
+  description:
+    'Wait for an element to appear, the network to go idle, or a fixed delay. Specify exactly one of: selector, networkIdle, or timeoutMs.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      selector: { type: 'string' },
+      networkIdle: { type: 'boolean' },
+      timeoutMs: { type: 'number' },
+    },
+    additionalProperties: false,
+  },
+  async execute(input) {
+    const selector = typeof input['selector'] === 'string' ? input['selector'] : '';
+    const networkIdle = input['networkIdle'] === true;
+    const timeoutMs = typeof input['timeoutMs'] === 'number' ? input['timeoutMs'] : 0;
+    try {
+      const page = await getPage();
+      if (selector) {
+        await page.locator(selector).first().waitFor({ timeout: DEFAULT_TIMEOUT_MS });
+        return ok(`appeared · ${selector}`);
+      }
+      if (networkIdle) {
+        await page.waitForLoadState('networkidle', { timeout: DEFAULT_TIMEOUT_MS });
+        return ok('network idle');
+      }
+      if (timeoutMs > 0) {
+        await new Promise((r) => setTimeout(r, Math.min(timeoutMs, 60_000)));
+        return ok(`waited ${timeoutMs}ms`);
+      }
+      return err('specify selector, networkIdle, or timeoutMs');
+    } catch (e) {
+      return err(`BrowserWait failed: ${(e as Error).message}`);
+    }
+  },
+};
+
+export const browserCloseTool: Tool = {
+  name: 'BrowserClose',
+  description:
+    'Close the shared browser session. Useful when the user is done with browsing or to free memory.',
+  input_schema: {
+    type: 'object',
+    properties: {},
+    additionalProperties: false,
+  },
+  async execute() {
+    if (!isOpen()) return ok('browser not open');
+    await closeBrowser();
+    return ok('browser closed');
+  },
+};
+
+export const BROWSER_TOOLS = [
+  browserNavigateTool,
+  browserClickTool,
+  browserTypeTool,
+  browserPressTool,
+  browserSnapshotTool,
+  browserScreenshotTool,
+  browserWaitTool,
+  browserCloseTool,
+];

@@ -10,9 +10,26 @@ import { BUILTIN_TOOLS, getTool, listTools, setExtraTools, toolDefinitions } fro
 import { writeTool } from '../src/tools/write.ts';
 
 describe('tool registry', () => {
-  it('exposes the six expected starter tools', () => {
+  it('exposes filesystem, shell, and browser tools', () => {
     const names = BUILTIN_TOOLS.map((t) => t.name).sort();
-    expect(names).toEqual(['Bash', 'Edit', 'Glob', 'Grep', 'Read', 'Write']);
+    expect(names).toEqual(
+      [
+        'Bash',
+        'BrowserClick',
+        'BrowserClose',
+        'BrowserNavigate',
+        'BrowserPress',
+        'BrowserScreenshot',
+        'BrowserSnapshot',
+        'BrowserType',
+        'BrowserWait',
+        'Edit',
+        'Glob',
+        'Grep',
+        'Read',
+        'Write',
+      ].sort(),
+    );
   });
 
   it('toolDefinitions includes input_schema for every tool', () => {

@@ -11,6 +11,7 @@ import { createMcpManager } from '../mcp/manager.ts';
 import { createAnthropicProvider } from '../providers/anthropic.ts';
 import { createOllamaProvider } from '../providers/ollama.ts';
 import { loadRules } from '../rules/loader.ts';
+import { closeBrowser } from '../tools/browser/session.ts';
 import { setExtraTools } from '../tools/registry.ts';
 import type { Provider } from '../types/messages.ts';
 import type { AgentState } from '../agent/loop.ts';
@@ -104,6 +105,7 @@ async function shutdown(signal: string): Promise<void> {
   clearInterval(keepAlive);
   await manager.stop().catch(() => {});
   await mcp.shutdown().catch(() => {});
+  await closeBrowser().catch(() => {});
   setTimeout(() => process.exit(0), 100);
 }
 

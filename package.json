@@ -27,6 +27,7 @@
     "ink": "^5.0.0",
     "ink-text-input": "^6.0.0",
     "pino": "^9.5.0",
+    "playwright": "^1.59.1",
     "react": "^18.3.0",
     "tinyglobby": "^0.2.16",
     "undici": "^7.3.0",
