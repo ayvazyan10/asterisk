@@ -43,25 +43,13 @@ describe('WebSearch', () => {
   });
 });
 
-describe('parseDuckDuckGoHtml', () => {
-  it('returns [] for empty html', () => {
+describe('parseDuckDuckGoHtml (legacy stub)', () => {
+  // DDG's HTML endpoint now serves a CAPTCHA challenge instead of results,
+  // so the scraper has been retired. The export remains as a stub returning
+  // [] so older callers keep linking; live search now goes through Brave /
+  // Tavily / SearXNG / DDG-instant in priority order. See websearch.ts.
+  it('returns [] for any input', () => {
     expect(parseDuckDuckGoHtml('')).toEqual([]);
-  });
-
-  it('extracts title / url / snippet from a result block', () => {
-    const html = `
-<div class="result">
-  <h2 class="result__title">
-    <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpage">Example Page</a>
-  </h2>
-  <a class="result__snippet" href="x">A short snippet about the page.</a>
-</div>
-</div>
-`;
-    const out = parseDuckDuckGoHtml(html);
-    expect(out).toHaveLength(1);
-    expect(out[0]?.title).toBe('Example Page');
-    expect(out[0]?.url).toBe('https://example.com/page');
-    expect(out[0]?.snippet).toBe('A short snippet about the page.');
+    expect(parseDuckDuckGoHtml('<div class="result">…</div>')).toEqual([]);
   });
 });

@@ -17,6 +17,7 @@ import { expandHome } from '../../utils/path.ts';
 import { closeBrowser, getPage, hookProcessExit, isOpen } from './session.ts';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+const NAV_TIMEOUT_MS = 30_000;
 const SNAPSHOT_TEXT_LIMIT = 3000;
 
 hookProcessExit();
@@ -24,14 +25,15 @@ hookProcessExit();
 export const browserNavigateTool: Tool = {
   name: 'BrowserNavigate',
   description:
-    'Open a URL in the shared browser (launches Chromium on first call). Returns the final URL and page title after navigation completes.',
+    'Open a URL in the shared browser (launches Chromium on first call). Default waits for DOMContentLoaded (page rendered, JS may still load) — fast and works on ad-laden sites. Pass waitUntil="networkidle" only for SPA pages where you need every fetch to settle. 30s timeout.',
   input_schema: {
     type: 'object',
     properties: {
       url: { type: 'string', description: 'Absolute URL to load.' },
       waitUntil: {
         type: 'string',
-        description: '"load", "domcontentloaded", "networkidle", or "commit" (default networkidle).',
+        description:
+          '"load" | "domcontentloaded" | "networkidle" | "commit". Default "domcontentloaded".',
       },
     },
     required: ['url'],
@@ -40,15 +42,27 @@ export const browserNavigateTool: Tool = {
   async execute(input, opts) {
     const url = typeof input['url'] === 'string' ? input['url'] : '';
     if (!url) return err('url is required');
-    const waitUntil = (
-      ['load', 'domcontentloaded', 'networkidle', 'commit'] as const
-    ).includes((input['waitUntil'] as string) as (typeof ALLOWED_WAIT)[number])
-      ? ((input['waitUntil'] as string) as (typeof ALLOWED_WAIT)[number])
-      : 'networkidle';
+    const requested = input['waitUntil'] as string | undefined;
+    const waitUntil: (typeof ALLOWED_WAIT)[number] =
+      requested && (ALLOWED_WAIT as readonly string[]).includes(requested)
+        ? (requested as (typeof ALLOWED_WAIT)[number])
+        : 'domcontentloaded';
     try {
       const page = await getPage();
       if (opts?.signal?.aborted) return err('aborted');
-      await page.goto(url, { waitUntil, timeout: DEFAULT_TIMEOUT_MS });
+      try {
+        await page.goto(url, { waitUntil, timeout: NAV_TIMEOUT_MS });
+      } catch (gotoError) {
+        // Heavy ad/analytics sites often miss `domcontentloaded` cleanly; retry
+        // with the most permissive readiness signal so we don't fail just
+        // because some third-party tracker is slow.
+        const msg = (gotoError as Error).message;
+        if (waitUntil !== 'commit' && /(Timeout|net::ERR)/i.test(msg)) {
+          await page.goto(url, { waitUntil: 'commit', timeout: NAV_TIMEOUT_MS });
+        } else {
+          throw gotoError;
+        }
+      }
       const title = await page.title();
       return ok(`navigated · ${page.url()}\ntitle: ${title}`);
     } catch (e) {

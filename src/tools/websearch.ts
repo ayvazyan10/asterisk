@@ -1,21 +1,30 @@
-// Web search — DuckDuckGo HTML scrape (no API key required). Returns the
-// top results' title, URL, and snippet so the agent can pick which ones to
-// WebFetch.
+// Web search — tries multiple backends in priority order so the agent
+// gets results regardless of any one provider's rate limiting / bot blocks.
 //
-// Reference: https://html.duckduckgo.com/html/
+// Order:
+//   1. Brave Search API   ($ASTERISK_BRAVE_API_KEY)    — best quality
+//   2. Tavily             ($ASTERISK_TAVILY_API_KEY)   — designed for agents
+//   3. SearXNG            ($ASTERISK_SEARXNG_URL)      — user-supplied instance
+//   4. DDG instant-answer (no key)                     — limited, "factoid" queries
+//
+// Pair with WebFetch to read individual pages from the result list.
 
 import { request } from 'undici';
 
 import { type Tool, ok, err } from './types.ts';
 
-const ENDPOINT = 'https://html.duckduckgo.com/html/';
-const DEFAULT_MAX = 8;
-const TIMEOUT_MS = 15_000;
+const TIMEOUT_MS = 12_000;
+
+interface SearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
 
 export const webSearchTool: Tool = {
   name: 'WebSearch',
   description:
-    'Search the web (DuckDuckGo HTML; no key needed). Returns title + URL + snippet for the top results. Pair with WebFetch to read individual pages.',
+    'Search the web. Tries Brave / Tavily / SearXNG / DDG instant-answer in priority order based on configured API keys / URLs. Returns title + URL + snippet for each result. Pair with WebFetch to read individual pages.',
   input_schema: {
     type: 'object',
     properties: {
@@ -24,108 +33,207 @@ export const webSearchTool: Tool = {
         type: 'number',
         description: 'Cap on returned results (default 8, max 20).',
       },
-      region: {
-        type: 'string',
-        description: 'DDG region code, e.g. "us-en" (default "wt-wt").',
-      },
     },
     required: ['query'],
     additionalProperties: false,
   },
-  async execute(input, opts) {
+  async execute(input) {
     const query = typeof input['query'] === 'string' ? input['query'].trim() : '';
     if (!query) return err('query is required');
     const maxResults = Math.min(
-      Math.max(typeof input['maxResults'] === 'number' ? input['maxResults'] : DEFAULT_MAX, 1),
+      Math.max(typeof input['maxResults'] === 'number' ? input['maxResults'] : 8, 1),
       20,
     );
-    const region = typeof input['region'] === 'string' ? input['region'] : 'wt-wt';
 
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(new Error('timeout')), TIMEOUT_MS);
-    if (opts?.signal) {
-      if (opts.signal.aborted) {
-        clearTimeout(timer);
-        return err('aborted');
+    const backends: Array<() => Promise<{ results: SearchResult[]; backend: string } | null>> = [
+      () => braveBackend(query, maxResults),
+      () => tavilyBackend(query, maxResults),
+      () => searxngBackend(query, maxResults),
+      () => ddgInstantBackend(query, maxResults),
+    ];
+
+    const tried: string[] = [];
+    for (const backend of backends) {
+      try {
+        const result = await backend();
+        if (!result) continue;
+        tried.push(result.backend);
+        if (result.results.length === 0) continue;
+        return ok(formatResults(query, result.backend, result.results));
+      } catch (e) {
+        tried.push(`error: ${(e as Error).message.slice(0, 80)}`);
       }
-      opts.signal.addEventListener('abort', () => ctrl.abort(opts.signal?.reason), { once: true });
     }
 
-    try {
-      const body = new URLSearchParams({ q: query, kl: region }).toString();
-      const res = await request(ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/x-www-form-urlencoded',
-          'user-agent': 'Mozilla/5.0 (compatible; asterisk-search/0.1)',
-        },
-        body,
-        signal: ctrl.signal,
-      });
-      if (res.statusCode >= 400) {
-        const text = await res.body.text();
-        return err(`DuckDuckGo HTTP ${res.statusCode}: ${text.slice(0, 200)}`);
-      }
-      const html = await res.body.text();
-      const results = parseDuckDuckGoHtml(html).slice(0, maxResults);
-      if (results.length === 0) return ok('(no results)');
-      const lines = [`Search: "${query}"`, `Results: ${results.length}`, ''];
-      for (let i = 0; i < results.length; i++) {
-        const r = results[i];
-        if (!r) continue;
-        lines.push(`${i + 1}. ${r.title}`);
-        lines.push(`   ${r.url}`);
-        if (r.snippet) lines.push(`   ${r.snippet}`);
-        lines.push('');
-      }
-      return ok(lines.join('\n').trim());
-    } catch (e) {
-      return err(`WebSearch failed: ${(e as Error).message}`);
-    } finally {
-      clearTimeout(timer);
-    }
+    const hint =
+      'No backend returned results. Configure one of:\n' +
+      '  ASTERISK_BRAVE_API_KEY   — https://api.search.brave.com (free 2k/month)\n' +
+      '  ASTERISK_TAVILY_API_KEY  — https://tavily.com (free tier)\n' +
+      '  ASTERISK_SEARXNG_URL     — your own SearXNG instance';
+    return ok(`(no results)\n\nTried: ${tried.join(', ') || '(none)'}\n\n${hint}`);
   },
 };
 
-interface SearchResult {
-  title: string;
-  url: string;
-  snippet: string;
+function formatResults(query: string, backend: string, results: SearchResult[]): string {
+  const lines = [`Search: "${query}"  ·  via ${backend}`, `Results: ${results.length}`, ''];
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (!r) continue;
+    lines.push(`${i + 1}. ${r.title}`);
+    lines.push(`   ${r.url}`);
+    if (r.snippet) lines.push(`   ${r.snippet}`);
+    lines.push('');
+  }
+  return lines.join('\n').trim();
 }
 
-export function parseDuckDuckGoHtml(html: string): SearchResult[] {
+// ─────────────────────────────────────────────────────────────────────────
+//  Brave Search API
+//  https://api.search.brave.com/app/documentation/web-search/get-started
+
+async function braveBackend(
+  query: string,
+  max: number,
+): Promise<{ results: SearchResult[]; backend: string } | null> {
+  const key = process.env['ASTERISK_BRAVE_API_KEY'];
+  if (!key) return null;
+  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${max}`;
+  const res = await request(url, {
+    headers: {
+      accept: 'application/json',
+      'accept-encoding': 'gzip',
+      'x-subscription-token': key,
+    },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (res.statusCode >= 400) {
+    const t = await res.body.text();
+    throw new Error(`Brave HTTP ${res.statusCode}: ${t.slice(0, 120)}`);
+  }
+  const data = (await res.body.json()) as {
+    web?: { results?: Array<{ title?: string; url?: string; description?: string }> };
+  };
+  const items = (data.web?.results ?? []).map((r) => ({
+    title: stripTags(r.title ?? ''),
+    url: r.url ?? '',
+    snippet: stripTags(r.description ?? ''),
+  }));
+  return { results: items.filter((r) => r.url && r.title), backend: 'Brave' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Tavily
+//  https://docs.tavily.com/
+
+async function tavilyBackend(
+  query: string,
+  max: number,
+): Promise<{ results: SearchResult[]; backend: string } | null> {
+  const key = process.env['ASTERISK_TAVILY_API_KEY'];
+  if (!key) return null;
+  const res = await request('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+    },
+    body: JSON.stringify({
+      api_key: key,
+      query,
+      max_results: max,
+      search_depth: 'basic',
+    }),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (res.statusCode >= 400) {
+    const t = await res.body.text();
+    throw new Error(`Tavily HTTP ${res.statusCode}: ${t.slice(0, 120)}`);
+  }
+  const data = (await res.body.json()) as {
+    results?: Array<{ title?: string; url?: string; content?: string }>;
+  };
+  const items = (data.results ?? []).map((r) => ({
+    title: r.title ?? '',
+    url: r.url ?? '',
+    snippet: (r.content ?? '').slice(0, 280),
+  }));
+  return { results: items.filter((r) => r.url && r.title), backend: 'Tavily' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  SearXNG (user-supplied instance)
+
+async function searxngBackend(
+  query: string,
+  max: number,
+): Promise<{ results: SearchResult[]; backend: string } | null> {
+  const base = process.env['ASTERISK_SEARXNG_URL'];
+  if (!base) return null;
+  const url = `${base.replace(/\/$/, '')}/search?q=${encodeURIComponent(query)}&format=json&safesearch=0`;
+  const res = await request(url, {
+    headers: { accept: 'application/json' },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (res.statusCode >= 400) {
+    const t = await res.body.text();
+    throw new Error(`SearXNG HTTP ${res.statusCode}: ${t.slice(0, 120)}`);
+  }
+  const data = (await res.body.json()) as {
+    results?: Array<{ title?: string; url?: string; content?: string }>;
+  };
+  const items = (data.results ?? []).slice(0, max).map((r) => ({
+    title: r.title ?? '',
+    url: r.url ?? '',
+    snippet: r.content ?? '',
+  }));
+  return { results: items.filter((r) => r.url && r.title), backend: 'SearXNG' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  DDG Instant-Answer (always-on fallback, no key)
+//  Returns "factoid" answers — Wikipedia summaries, definitions — not real
+//  web search. Often empty for ambiguous queries, but it never hits the
+//  bot block that DDG's HTML page does.
+
+async function ddgInstantBackend(
+  query: string,
+  max: number,
+): Promise<{ results: SearchResult[]; backend: string } | null> {
+  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+  const res = await request(url, {
+    headers: { accept: 'application/json' },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (res.statusCode >= 400) return null;
+  const data = (await res.body.json()) as {
+    Heading?: string;
+    AbstractText?: string;
+    AbstractURL?: string;
+    RelatedTopics?: Array<{ Text?: string; FirstURL?: string }>;
+    Results?: Array<{ Text?: string; FirstURL?: string }>;
+  };
+
   const out: SearchResult[] = [];
-  // DDG HTML lite renders each result as a <div class="result">…</div> block
-  // containing an anchor with class "result__a" and a snippet
-  // <a class="result__snippet">. We extract those triples.
-  const blockRe = /<div class="result"[\s\S]*?<\/div>\s*<\/div>/g;
-  for (const block of html.match(blockRe) ?? []) {
-    const titleMatch = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(
-      block,
-    );
-    const snippetMatch = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
-    if (!titleMatch) continue;
-    const rawHref = titleMatch[1] ?? '';
-    const url = decodeRedirectUrl(rawHref);
-    const title = stripTags(titleMatch[2] ?? '').trim();
-    const snippet = stripTags(snippetMatch?.[1] ?? '').trim();
-    if (!title || !url) continue;
-    out.push({ title, url, snippet });
+  if (data.AbstractText && data.AbstractURL) {
+    out.push({
+      title: data.Heading ?? data.AbstractText.slice(0, 80),
+      url: data.AbstractURL,
+      snippet: data.AbstractText,
+    });
   }
-  return out;
-}
-
-function decodeRedirectUrl(href: string): string {
-  // DDG wraps result links in /l/?uddg=ENCODED&… — pull the real URL out.
-  if (!href) return '';
-  if (!href.includes('/l/')) return href.startsWith('//') ? `https:${href}` : href;
-  try {
-    const u = new URL(href.startsWith('//') ? `https:${href}` : href, 'https://duckduckgo.com');
-    const real = u.searchParams.get('uddg');
-    return real ? decodeURIComponent(real) : href;
-  } catch {
-    return href;
+  for (const r of data.Results ?? []) {
+    if (out.length >= max) break;
+    if (r.FirstURL && r.Text) {
+      out.push({ title: r.Text.slice(0, 100), url: r.FirstURL, snippet: r.Text });
+    }
   }
+  for (const r of data.RelatedTopics ?? []) {
+    if (out.length >= max) break;
+    if (r.FirstURL && r.Text) {
+      out.push({ title: r.Text.slice(0, 100), url: r.FirstURL, snippet: r.Text });
+    }
+  }
+  return { results: out, backend: 'DDG-InstantAnswer' };
 }
 
 function stripTags(s: string): string {
@@ -140,4 +248,10 @@ function stripTags(s: string): string {
     .replace(/&#(\d+);/g, (_, c) => String.fromCharCode(Number(c)))
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// Kept as a stable export so legacy tests still link. We no longer scrape
+// DDG HTML (they serve a CAPTCHA challenge instead of results); this returns [].
+export function parseDuckDuckGoHtml(_html: string): SearchResult[] {
+  return [];
 }
