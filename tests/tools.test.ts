@@ -10,10 +10,11 @@ import { BUILTIN_TOOLS, getTool, listTools, setExtraTools, toolDefinitions } fro
 import { writeTool } from '../src/tools/write.ts';
 
 describe('tool registry', () => {
-  it('exposes filesystem, shell, and browser tools', () => {
+  it('exposes filesystem, shell, browser, web, task, and agent tools', () => {
     const names = BUILTIN_TOOLS.map((t) => t.name).sort();
     expect(names).toEqual(
       [
+        'Agent',
         'Bash',
         'BrowserClick',
         'BrowserClose',
@@ -27,6 +28,13 @@ describe('tool registry', () => {
         'Glob',
         'Grep',
         'Read',
+        'TaskCreate',
+        'TaskGet',
+        'TaskList',
+        'TaskStop',
+        'TaskUpdate',
+        'WebFetch',
+        'WebSearch',
         'Write',
       ].sort(),
     );

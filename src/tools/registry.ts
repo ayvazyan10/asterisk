@@ -8,7 +8,11 @@ import { editTool } from './edit.ts';
 import { globTool } from './glob.ts';
 import { grepTool } from './grep.ts';
 import { readTool } from './read.ts';
+import { subAgentTool } from './subagent.ts';
+import { TASK_TOOLS } from './tasks.ts';
 import type { Tool } from './types.ts';
+import { webFetchTool } from './webfetch.ts';
+import { webSearchTool } from './websearch.ts';
 import { writeTool } from './write.ts';
 
 export const BUILTIN_TOOLS: Tool[] = [
@@ -19,6 +23,10 @@ export const BUILTIN_TOOLS: Tool[] = [
   grepTool,
   globTool,
   ...BROWSER_TOOLS,
+  webFetchTool,
+  webSearchTool,
+  ...TASK_TOOLS,
+  subAgentTool,
 ];
 
 let extraTools: Tool[] = [];
