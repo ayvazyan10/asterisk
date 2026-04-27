@@ -103,10 +103,29 @@ function toOllamaTools(tools: ToolDefinition[]): unknown[] {
   }));
 }
 
+// Some Ollama models (qwen3-thinking, deepseek-r1, …) interleave their
+// chain-of-thought as <think>…</think> in the content stream. The user only
+// wants the final answer, so strip:
+//   - well-formed blocks  →  remove the whole <think>…</think>
+//   - orphan </think>     →  drop everything before it (opening tag truncated
+//                            during streaming or by the model template)
+//   - orphan <think>      →  drop the tag, keep the rest as visible text
+export function stripThinkTags(text: string): string {
+  if (!text) return text;
+  let out = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  const lastClose = out.toLowerCase().lastIndexOf('</think>');
+  if (lastClose !== -1) {
+    out = out.slice(lastClose + '</think>'.length);
+  }
+  out = out.replace(/<think>/gi, '');
+  return out.trim();
+}
+
 function blocksFromOllama(msg: OllamaMessage): ContentBlock[] {
   const blocks: ContentBlock[] = [];
-  if (msg.content && msg.content.length > 0) {
-    blocks.push({ type: 'text', text: msg.content });
+  const cleaned = stripThinkTags(msg.content ?? '');
+  if (cleaned.length > 0) {
+    blocks.push({ type: 'text', text: cleaned });
   }
   if (msg.tool_calls) {
     for (let i = 0; i < msg.tool_calls.length; i++) {
