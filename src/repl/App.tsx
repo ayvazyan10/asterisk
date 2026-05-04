@@ -397,7 +397,7 @@ export function App({ initialProvider, state, mcp }: Props) {
           append('assistant', turn.finalText.trim());
         }
         if (turn.reason === 'max-turns') {
-          append('error', 'reached the per-turn safety cap (12 turns); stopping');
+          append('error', 'reached the per-turn safety cap; stopping');
         } else if (turn.reason === 'context-overflow') {
           append('error', 'the conversation exceeded the model context window — try /clear to reset');
         } else if (turn.reason === 'auth-error') {

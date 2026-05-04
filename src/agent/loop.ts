@@ -71,6 +71,12 @@ tool reports it's unavailable (missing API key, offline backend), that
 tool is unavailable for this turn — pick a different one rather than
 telling the user the task is impossible.
 
+Background servers: when you start a server with Bash (e.g.
+\`php artisan serve &\`, \`python -m http.server &\`), it takes a moment to
+bind the port. Don't curl/fetch immediately — use a short retry loop:
+\`for i in $(seq 1 20); do curl -sf http://localhost:PORT/ && break || sleep 0.5; done\`
+or chain with \`sleep 1 &&\` before the first request.
+
 Working in parallel: when several tool calls don't depend on each other,
 emit them all in the same turn — they execute in order but cost just one
 model round-trip. Examples: editing several distinct strings in the same
@@ -428,6 +434,7 @@ async function runAgentTurnInner(
 
       if (turn === maxTurns - 1) {
         reason = 'max-turns';
+        break;
       }
     }
   } catch (error) {
