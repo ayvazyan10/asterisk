@@ -16,7 +16,7 @@ import { loadRules } from '../rules/loader.ts';
 import { type Tool, ok, err } from './types.ts';
 import type { Provider } from '../types/messages.ts';
 
-const DEFAULT_SUB_MAX_TURNS = 8;
+const DEFAULT_SUB_MAX_TURNS = 32;
 const DEFAULT_SUB_MAX_RETRIES = 3;
 
 interface SubAgentDeps {

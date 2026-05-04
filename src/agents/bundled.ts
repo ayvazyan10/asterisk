@@ -66,7 +66,7 @@ How to work:
 - Don't dump full files. Quote the smallest fragment that proves the point.
 
 Return a short, scannable report. No prose paragraphs — bullets and headings.`,
-    maxTurns: 12,
+    maxTurns: 48,
   },
   {
     name: 'docs-lookup',
@@ -89,7 +89,7 @@ Workflow:
    language, plus a one-line link to the canonical doc page.
 
 Do not invent API surface. If the docs don't show it, say so.`,
-    maxTurns: 8,
+    maxTurns: 32,
   },
 
   // ─────────────────────── planning / architecture ────────────────────
@@ -113,7 +113,7 @@ Workflow:
    need to be added.
 6. Stop. Don't apply changes. Return the plan to the parent as scannable
    bullets, no prose.`,
-    maxTurns: 12,
+    maxTurns: 48,
   },
   {
     name: 'architect',
@@ -137,7 +137,7 @@ Workflow:
 5. Don't draw boxes. Don't speculate beyond what the user actually asked.
 
 Return: option matrix · recommendation · constraints to monitor.`,
-    maxTurns: 10,
+    maxTurns: 40,
   },
 
   // ─────────────────────── code review ────────────────────────────────
@@ -165,7 +165,7 @@ Workflow:
    MEDIUM/LOW as suggestions.
 
 Return: numbered list of findings · severity · file:line · cause · fix.`,
-    maxTurns: 10,
+    maxTurns: 40,
   },
   {
     name: 'security-reviewer',
@@ -193,7 +193,7 @@ category, file:line, the exact attack vector in one sentence, and the fix.
 
 If you find ZERO issues, say so plainly — don't manufacture findings to
 seem useful.`,
-    maxTurns: 10,
+    maxTurns: 40,
   },
   {
     name: 'database-reviewer',
@@ -220,7 +220,7 @@ Cite real cardinalities when you can — read related migration files /
 seed data to estimate row counts.
 
 Return: findings list with severity, file:line, cause, proposed fix.`,
-    maxTurns: 10,
+    maxTurns: 40,
   },
   {
     name: 'performance-optimizer',
@@ -247,7 +247,7 @@ Workflow:
 4. If the parent asked you to apply, Edit the change and re-measure.
 
 Avoid premature optimization. If the code is fine, say so.`,
-    maxTurns: 10,
+    maxTurns: 40,
   },
   {
     name: 'refactor-cleaner',
@@ -273,7 +273,7 @@ Workflow:
 
 Don't refactor working code into a "cleaner" shape on your own initiative.
 The job is removal, not redesign.`,
-    maxTurns: 12,
+    maxTurns: 48,
   },
   {
     name: 'doc-updater',
@@ -299,7 +299,7 @@ Workflow:
 
 Output: list of files updated · one-line summary per file · any docs
 you flagged as needing human attention.`,
-    maxTurns: 10,
+    maxTurns: 40,
   },
 
   // ─────────────────────── language-specific reviewers ────────────────
@@ -326,7 +326,7 @@ TS-specific things to check:
   unhandled stream errors.
 
 Cite each finding with file:line and propose the fix in one sentence.`,
-    maxTurns: 10,
+    maxTurns: 40,
   },
   {
     name: 'python-reviewer',
@@ -349,7 +349,7 @@ Python-specific things:
 - Pydantic / dataclasses: validators that don't actually validate.
 
 Cite findings with file:line and propose fixes.`,
-    maxTurns: 10,
+    maxTurns: 40,
   },
   {
     name: 'go-reviewer',
@@ -376,7 +376,7 @@ Go-specific things:
 - Linter parity: \`go vet ./...\` and \`staticcheck\` should be clean.
 
 Cite findings with file:line and propose fixes.`,
-    maxTurns: 10,
+    maxTurns: 40,
   },
   {
     name: 'rust-reviewer',
@@ -402,7 +402,7 @@ Rust-specific things:
 - Cargo.toml hygiene: pinned vs lax versions, dev-deps in deps.
 
 Cite findings with file:line and propose fixes.`,
-    maxTurns: 10,
+    maxTurns: 40,
   },
 
   // ─────────────────────── build / TDD / e2e ──────────────────────────
@@ -429,7 +429,7 @@ Workflow:
 Don't refactor "while you're in there". Don't change public APIs to make
 the type-checker happy. If the right fix is non-trivial, surface it as a
 finding and ask the parent how to proceed.`,
-    maxTurns: 12,
+    maxTurns: 48,
   },
   {
     name: 'tdd-guide',
@@ -454,7 +454,7 @@ Workflow:
 Honesty rule: if the test you wrote in step 2 passed without writing any
 production code, the test isn't actually testing the new behaviour — fix
 the test before writing the implementation.`,
-    maxTurns: 14,
+    maxTurns: 48,
   },
   {
     name: 'e2e-runner',
@@ -480,7 +480,7 @@ Workflow:
 
 Use BrowserNavigate / BrowserSnapshot to inspect the actual page if you're
 not sure what selectors exist.`,
-    maxTurns: 12,
+    maxTurns: 48,
   },
 
   // ─────────────────────── domain / multi-channel ─────────────────────
@@ -508,7 +508,7 @@ Workflow:
    tier · subject · 1-line summary · proposed action.
 
 Don't actually send. Surface the drafts for the user to approve.`,
-    maxTurns: 10,
+    maxTurns: 40,
   },
   {
     name: 'healthcare-reviewer',
@@ -538,7 +538,7 @@ Look for:
 
 Cite findings with severity, file:line, the safety/compliance category,
 and the fix.`,
-    maxTurns: 12,
+    maxTurns: 48,
   },
   {
     name: 'opensource-forker',
@@ -567,7 +567,7 @@ Workflow:
    internal commit messages.
 7. Output: full file list of what was copied/skipped, every replacement
    you made, and a checklist of remaining manual review items.`,
-    maxTurns: 14,
+    maxTurns: 48,
   },
   {
     name: 'opensource-sanitizer',
@@ -597,7 +597,7 @@ Verdict: PASS · PASS-WITH-WARNINGS · FAIL.
 - FAIL: any high-risk match. Refuse to bless the release. List the
   specific files + line numbers + category.`,
     allowedTools: READ_ONLY_TOOLS,
-    maxTurns: 8,
+    maxTurns: 32,
   },
   {
     name: 'opensource-packager',
@@ -626,7 +626,7 @@ Generate (or update if present):
 
 Don't generate boilerplate that the project doesn't need (e.g. no SECURITY.md
 on a toy demo). Ask the user before assuming.`,
-    maxTurns: 12,
+    maxTurns: 48,
   },
 
   // ─────────────────────── meta / loops ───────────────────────────────
@@ -655,7 +655,7 @@ Workflow:
 
 Don't loop forever in the absence of an explicit stop condition. If the
 parent didn't give one, ask via AskUserQuestion before starting.`,
-    maxTurns: 20,
+    maxTurns: 48,
   },
   {
     name: 'gan-planner',
@@ -681,7 +681,7 @@ Generate:
 
 Keep it scannable. Avoid prose paragraphs in the spec body — bullets and
 nested lists.`,
-    maxTurns: 10,
+    maxTurns: 40,
   },
   {
     name: 'gan-generator',
@@ -709,7 +709,7 @@ Workflow:
 Don't argue with the evaluator's last round. Either fix what they flagged
 or note explicitly why you disagree (with reasoning) so the next round
 has the context.`,
-    maxTurns: 16,
+    maxTurns: 48,
   },
   {
     name: 'gan-evaluator',
@@ -735,6 +735,6 @@ Workflow:
 Be honest. A 3 is a real 3 — don't grade-inflate to be encouraging.
 The harness only converges if the scores are calibrated.`,
     allowedTools: READ_ONLY_TOOLS,
-    maxTurns: 12,
+    maxTurns: 48,
   },
 ];

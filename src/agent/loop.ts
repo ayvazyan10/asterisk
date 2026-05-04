@@ -94,11 +94,10 @@ would do. After running tools, reply with one or two sentences saying
 what changed — the user can see the tool trace, you don't need to
 enumerate every edit. "done" is fine for trivial work.`;
 
-// 30 fits most agentic tasks: 12 was empirically too tight for things like
-// "rewrite every color in a 700-line CSS file" once the model split work
-// across many sequential Edit calls. Override via opts.maxTurns when you
-// want a tighter or looser bound (sub-agents typically pass a smaller cap).
-const DEFAULT_MAX_TURNS = 30;
+// 48 gives agents room for multi-step agentic tasks without hitting the
+// safety cap prematurely. Override via opts.maxTurns when you want a
+// tighter or looser bound (sub-agents typically pass a smaller cap).
+const DEFAULT_MAX_TURNS = 48;
 const DEFAULT_MAX_RETRIES = 5;
 const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
 
