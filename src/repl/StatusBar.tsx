@@ -18,7 +18,7 @@ export function StatusBar({ providerName, historyCount, cwd, busy }: Props) {
         {'  ·  '}
         {providerName}
         {'  ·  '}
-        {historyCount} {historyCount === 1 ? 'turn' : 'turns'}
+        {historyCount} msgs
         {'  ·  '}
         {shortenPath(cwd)}
       </Text>

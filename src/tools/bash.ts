@@ -3,6 +3,7 @@
 
 import { execa } from 'execa';
 import { type Tool, ok, err } from './types.ts';
+import { checkBashSafety } from './bash-safety.ts';
 
 export const bashTool: Tool = {
   name: 'Bash',
@@ -24,27 +25,35 @@ export const bashTool: Tool = {
     const command = typeof input['command'] === 'string' ? input['command'] : '';
     if (!command) return err('command is required');
 
+    const safety = checkBashSafety(command);
+    if (!safety.safe) {
+      return err(`command blocked by safety check:\n${safety.warnings.join('\n')}`);
+    }
+
     const rawTimeout =
       typeof input['timeoutSeconds'] === 'number' ? input['timeoutSeconds'] : 60;
     const timeoutMs = Math.min(Math.max(rawTimeout, 1), 600) * 1000;
 
     try {
-      const baseOpts = {
+      const result = await execa('bash', ['-lc', command], {
         timeout: timeoutMs,
-        reject: false as const,
+        reject: false,
         all: true,
         encoding: 'utf8' as const,
-      };
-      const execOpts = opts?.signal
-        ? { ...baseOpts, cancelSignal: opts.signal }
-        : baseOpts;
-      const { stdout, stderr, exitCode } = await execa('bash', ['-lc', command], execOpts);
-      const combined = [stdout, stderr].filter((s) => s && s.length > 0).join('\n');
+        forceKillAfterDelay: 3000,
+        ...(opts?.signal ? { cancelSignal: opts.signal } : {}),
+      });
+      if (result.isCanceled || result.isTerminated) {
+        const reason = result.isCanceled ? 'cancelled' : `killed by ${result.signal}`;
+        const partial = [result.stdout, result.stderr].filter((s) => s && s.length > 0).join('\n');
+        return err(`command ${reason} after ${Math.round(timeoutMs / 1000)}s${partial ? `\n${partial.slice(0, 2000)}` : ''}`);
+      }
+      const combined = [result.stdout, result.stderr].filter((s) => s && s.length > 0).join('\n');
       const truncated =
         combined.length > 30000
           ? `${combined.slice(0, 30000)}\n[truncated ${combined.length - 30000} chars]`
           : combined;
-      const prefix = `exit=${exitCode}\n`;
+      const prefix = `exit=${result.exitCode}\n`;
       return ok(prefix + truncated);
     } catch (e) {
       return err(`Bash failed: ${(e as Error).message}`);

@@ -5,6 +5,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { type Tool, ok, err } from './types.ts';
 import { checkWorkspaceWritable } from './workspace.ts';
+import { recordFileChange } from '../agent/file-history.ts';
 
 export const editTool: Tool = {
   name: 'Edit',
@@ -37,6 +38,7 @@ export const editTool: Tool = {
       if (replaceAll) {
         const next = original.split(oldString).join(newString);
         if (next === original) return err('oldString not found in file');
+        recordFileChange(abs, 'Edit');
         await writeFile(abs, next, 'utf8');
         const count = original.split(oldString).length - 1;
         return ok(`replaced ${count} occurrence(s) in ${abs}`);
@@ -48,6 +50,7 @@ export const editTool: Tool = {
         return err('oldString is not unique; pass replaceAll=true to replace every occurrence');
       }
       const next = original.slice(0, idx) + newString + original.slice(idx + oldString.length);
+      recordFileChange(abs, 'Edit');
       await writeFile(abs, next, 'utf8');
       return ok(`replaced 1 occurrence in ${abs}`);
     } catch (e) {

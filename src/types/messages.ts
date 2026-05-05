@@ -55,9 +55,17 @@ export interface ProviderRequest {
   onThinking?: (delta: string) => void;
 }
 
+export interface TokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+}
+
 export interface ProviderResponse {
   content: ContentBlock[];
   stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' | 'unknown';
+  usage?: TokenUsage;
 }
 
 export interface Provider {

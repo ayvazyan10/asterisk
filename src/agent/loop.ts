@@ -23,6 +23,9 @@ import { outputStyleToPromptSection, type OutputStyle } from '../output-styles/s
 import { getTool, toolDefinitions } from '../tools/registry.ts';
 import { retry } from '../utils/retry.ts';
 import { type AgentSession, runWithSession } from './context.ts';
+import { shouldPersistOutput, persistOutput } from './output-store.ts';
+import { compactHistory } from './compaction.ts';
+import { isConcurrencySafe } from '../tools/concurrency.ts';
 
 const SYSTEM_PROMPT = `You are Asterisk, a personal AI assistant running on the user's machine.
 
@@ -246,6 +249,9 @@ async function runAgentTurnInner(
         break;
       }
 
+      // Compact old tool results when history gets too long.
+      state.history = compactHistory(state.history);
+
       let response;
       try {
         response = await retry(
@@ -319,8 +325,8 @@ async function runAgentTurnInner(
 
       const toolUses = response.content.filter((b): b is ToolUseBlock => b.type === 'tool_use');
 
-      if (toolUses.length === 0 || response.stopReason === 'end_turn') {
-        // Model says it's done. Three sub-cases:
+      if (toolUses.length === 0) {
+        // No tool calls this turn — model is done. Three sub-cases:
         //   a) text was emitted → use it (happy path)
         //   b) empty AND no tools have ever run this turn → use stub
         //   c) empty BUT we've run tools earlier → force a summary turn.
@@ -360,73 +366,96 @@ async function runAgentTurnInner(
         break;
       }
 
-      // Run all tool calls (sequentially, in the order the model emitted them)
-      // and collect results into a single user message — mirrors the standard
-      // tool-use loop documented at docs.anthropic.com.
+      // Run tool calls in batches — consecutive concurrency-safe tools run
+      // in parallel via Promise.all; everything else runs sequentially.
       const toolResults: ContentBlock[] = [];
-      for (const use of toolUses) {
+      const batches = partitionTools(toolUses);
+
+      for (const batch of batches) {
         if (signal?.aborted) {
           reason = 'aborted';
           break;
         }
-        toolTally[use.name] = (toolTally[use.name] ?? 0) + 1;
-        opts.onToolUse?.(use.name, use.input);
-        if (hooks.length > 0) {
-          const before = await fireHooks(
-            hooks,
-            { event: 'before_tool', tool: use.name, toolInput: use.input },
-            signal,
-          );
-          for (const r of before) opts.onHook?.(r);
-        }
-        const tool = getTool(use.name);
-        let output: string;
-        let isError: boolean;
-        if (!tool) {
-          output = `tool not found: ${use.name}`;
-          isError = true;
-        } else {
-          const exec = await runToolWithTimeout(
-            tool,
-            use.input,
-            toolTimeoutMs,
-            signal,
-          );
-          output = exec.output;
-          isError = exec.isError;
-          if (exec.attachments && opts.onAttachment) {
-            for (const a of exec.attachments) {
-              const forwarded: { kind: string; path: string; caption?: string } = {
-                kind: a.kind,
-                path: a.path,
-              };
-              if (a.caption !== undefined) forwarded.caption = a.caption;
-              opts.onAttachment(forwarded);
+
+        const executeSingle = async (use: ToolUseBlock): Promise<ToolResultBlock> => {
+          toolTally[use.name] = (toolTally[use.name] ?? 0) + 1;
+          opts.onToolUse?.(use.name, use.input);
+          if (hooks.length > 0) {
+            const before = await fireHooks(
+              hooks,
+              { event: 'before_tool', tool: use.name, toolInput: use.input },
+              signal,
+            );
+            for (const r of before) opts.onHook?.(r);
+          }
+          const tool = getTool(use.name);
+          let output: string;
+          let isError: boolean;
+          if (!tool) {
+            output = `tool not found: ${use.name}`;
+            isError = true;
+          } else {
+            const exec = await runToolWithTimeout(
+              tool,
+              use.input,
+              toolTimeoutMs,
+              signal,
+            );
+            output = exec.output;
+            isError = exec.isError;
+            if (exec.attachments && opts.onAttachment) {
+              for (const a of exec.attachments) {
+                const forwarded: { kind: string; path: string; caption?: string } = {
+                  kind: a.kind,
+                  path: a.path,
+                };
+                if (a.caption !== undefined) forwarded.caption = a.caption;
+                opts.onAttachment(forwarded);
+              }
             }
           }
-        }
-        opts.onToolResult?.(use.name, output, isError);
-        if (hooks.length > 0) {
-          const after = await fireHooks(
-            hooks,
-            {
-              event: 'after_tool',
-              tool: use.name,
-              toolInput: use.input,
-              toolOutput: output,
-              toolError: isError,
-            },
-            signal,
-          );
-          for (const r of after) opts.onHook?.(r);
-        }
-        const tr: ToolResultBlock = {
-          type: 'tool_result',
-          tool_use_id: use.id,
-          content: output,
-          is_error: isError,
+          // Callback receives the ORIGINAL output, not the persisted version.
+          opts.onToolResult?.(use.name, output, isError);
+          if (hooks.length > 0) {
+            const after = await fireHooks(
+              hooks,
+              {
+                event: 'after_tool',
+                tool: use.name,
+                toolInput: use.input,
+                toolOutput: output,
+                toolError: isError,
+              },
+              signal,
+            );
+            for (const r of after) opts.onHook?.(r);
+          }
+          // Persist large non-error outputs to disk and replace content
+          // with a summary + preview for the model's context window.
+          const persistedOutput = !isError && shouldPersistOutput(output)
+            ? persistOutput(use.name, output)
+            : output;
+          return {
+            type: 'tool_result',
+            tool_use_id: use.id,
+            content: persistedOutput,
+            is_error: isError,
+          };
         };
-        toolResults.push(tr);
+
+        if (batch.parallel && batch.uses.length > 1) {
+          const results = await Promise.all(batch.uses.map(executeSingle));
+          toolResults.push(...results);
+        } else {
+          for (const use of batch.uses) {
+            if (signal?.aborted) {
+              reason = 'aborted';
+              break;
+            }
+            const result = await executeSingle(use);
+            toolResults.push(result);
+          }
+        }
       }
 
       if ((reason as TerminalReason) === 'aborted') break;
@@ -470,6 +499,35 @@ async function runAgentTurnInner(
   return { finalText, reason };
 }
 
+// Partition tool_use blocks into sequential/parallel batches.
+// Consecutive concurrency-safe tools form a parallel batch; any
+// non-safe tool breaks the sequence and runs alone.
+interface ToolBatch {
+  uses: ToolUseBlock[];
+  parallel: boolean;
+}
+
+function partitionTools(uses: ToolUseBlock[]): ToolBatch[] {
+  const batches: ToolBatch[] = [];
+  let currentParallel: ToolUseBlock[] = [];
+
+  for (const use of uses) {
+    if (isConcurrencySafe(use.name)) {
+      currentParallel.push(use);
+    } else {
+      if (currentParallel.length > 0) {
+        batches.push({ uses: currentParallel, parallel: true });
+        currentParallel = [];
+      }
+      batches.push({ uses: [use], parallel: false });
+    }
+  }
+  if (currentParallel.length > 0) {
+    batches.push({ uses: currentParallel, parallel: true });
+  }
+  return batches;
+}
+
 interface ToolExecResult {
   output: string;
   isError: boolean;
@@ -493,19 +551,29 @@ async function runToolWithTimeout(
     if (parent.aborted) ctrl.abort(parent.reason);
     else parent.addEventListener('abort', onParentAbort, { once: true });
   }
-  const timer = setTimeout(
-    () => ctrl.abort(new Error(`tool timeout after ${Math.round(timeoutMs / 1000)}s`)),
-    timeoutMs,
-  );
+  // Hard deadline via Promise.race — guarantees we return within timeoutMs
+  // even if the tool ignores the AbortSignal (e.g. execa + Bun edge cases
+  // where cancelSignal doesn't kill the child process tree).
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<ToolExecResult>((resolve) => {
+    timer = setTimeout(() => {
+      ctrl.abort(new Error(`tool timeout after ${Math.round(timeoutMs / 1000)}s`));
+      resolve({
+        output: `tool timed out after ${Math.round(timeoutMs / 1000)}s`,
+        isError: true,
+      });
+    }, timeoutMs);
+  });
   try {
-    return await tool.execute(input, { signal: ctrl.signal });
-  } catch (e) {
-    return {
-      output: `tool execution error: ${(e as Error).message}`,
-      isError: true,
-    };
+    return await Promise.race([
+      tool.execute(input, { signal: ctrl.signal }).catch((e) => ({
+        output: `tool execution error: ${(e as Error).message}`,
+        isError: true,
+      })),
+      deadline,
+    ]);
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer!);
     if (parent) parent.removeEventListener('abort', onParentAbort);
   }
 }

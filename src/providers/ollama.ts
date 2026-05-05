@@ -291,6 +291,21 @@ async function readStreamingChat(
       // ignore
     }
   }
+  // Process any remaining data in buf — the final Ollama frame may lack a
+  // trailing newline, leaving its JSON (including tool_calls) unprocessed.
+  const remainder = buf.trim();
+  if (remainder) {
+    try {
+      const ev = JSON.parse(remainder) as OllamaChatResponse;
+      const delta = ev.message?.content ?? '';
+      if (delta) aggregatedContent += delta;
+      if (ev.message?.tool_calls && ev.message.tool_calls.length > 0) {
+        toolCalls = ev.message.tool_calls;
+      }
+    } catch {
+      // ignore malformed trailing data
+    }
+  }
   // Flush any held-back tail through the think filter so onText sees the
   // tail of the final answer that arrived without a trailing newline.
   const tail = filter.flush();

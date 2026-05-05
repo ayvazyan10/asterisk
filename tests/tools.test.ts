@@ -46,6 +46,7 @@ describe('tool registry', () => {
         'TaskList',
         'TaskStop',
         'TaskUpdate',
+        'ToolSearch',
         'WebFetch',
         'WebSearch',
         'Write',

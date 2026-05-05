@@ -77,6 +77,7 @@ export function App({ initialProvider, state, mcp }: Props) {
   // Drained automatically when the current turn ends.
   const queueRef = useRef<string[]>([]);
   const [queueLen, setQueueLen] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
   const cwd = useMemo(() => process.cwd(), []);
 
   // Subscribe to AskUserQuestion events from any in-flight tool. When one
@@ -200,6 +201,22 @@ export function App({ initialProvider, state, mcp }: Props) {
     [append, applyResult],
   );
 
+  // ESC while the agent is busy → abort the current turn and flush the queue.
+  useInput(
+    (_char, key) => {
+      if (!key.escape || !busy) return;
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
+      if (queueRef.current.length > 0) {
+        queueRef.current.length = 0;
+        setQueueLen(0);
+      }
+    },
+    { isActive: busy },
+  );
+
   // Picker key handling. ink-text-input ignores up/down arrows and tab, so we
   // can safely intercept those without conflicting with the text editor.
   useInput(
@@ -259,6 +276,9 @@ export function App({ initialProvider, state, mcp }: Props) {
       // synthesises a stub. Without this fallback the REPL would drop it.
       let renderedAnyText = false;
 
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+
       try {
         const rules = loadRules();
         const session = { id: 'repl', scope: 'repl' as const };
@@ -267,6 +287,7 @@ export function App({ initialProvider, state, mcp }: Props) {
         const hooks = cfg.hooks;
         const outputStyle = findOutputStyle(cfg.outputStyle);
         const turn = await runAgentTurn(provider, state, text, {
+          signal: ctrl.signal,
           session,
           rules,
           souls,
@@ -408,6 +429,7 @@ export function App({ initialProvider, state, mcp }: Props) {
       } catch (e) {
         append('error', `agent error: ${(e as Error).message}`);
       } finally {
+        abortRef.current = null;
         setBusy(false);
         setWorkingSince(null);
         setWorkingStatus('thinking');

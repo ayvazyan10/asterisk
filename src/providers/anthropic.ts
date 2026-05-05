@@ -7,6 +7,7 @@ import type {
   Provider,
   ProviderRequest,
   ProviderResponse,
+  TokenUsage,
 } from '../types/messages.ts';
 import { ProviderError, classifyHttpError } from './errors.ts';
 
@@ -34,7 +35,15 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
         const params: Anthropic.Messages.MessageCreateParamsNonStreaming = {
           model,
           max_tokens: req.maxTokens ?? 4096,
-          system: req.system,
+          // cache_control is supported by the API but not yet in the stable SDK
+          // types — cast through unknown to enable prompt caching.
+          system: [
+            {
+              type: 'text' as const,
+              text: req.system,
+              cache_control: { type: 'ephemeral' as const },
+            },
+          ] as unknown as Anthropic.Messages.TextBlockParam[],
           // The SDK's input message shape matches our internal Message shape
           // closely enough; cast through unknown to bridge the structural gap.
           messages: req.messages.map((m) => ({
@@ -92,7 +101,14 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
                 ? 'stop_sequence'
                 : 'unknown';
 
-      return { content, stopReason };
+      const usage: TokenUsage | undefined = response.usage ? {
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+        cacheCreationInputTokens: (response.usage as any).cache_creation_input_tokens,
+        cacheReadInputTokens: (response.usage as any).cache_read_input_tokens,
+      } : undefined;
+
+      return { content, stopReason, ...(usage ? { usage } : {}) };
     },
   };
 }

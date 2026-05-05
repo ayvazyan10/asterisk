@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { type Tool, ok, err } from './types.ts';
 import { checkWorkspaceWritable } from './workspace.ts';
+import { recordFileChange } from '../agent/file-history.ts';
 
 export const writeTool: Tool = {
   name: 'Write',
@@ -28,6 +29,7 @@ export const writeTool: Tool = {
     try {
       const abs = resolve(path);
       await mkdir(dirname(abs), { recursive: true });
+      recordFileChange(abs, 'Write');
       await writeFile(abs, content, 'utf8');
       return ok(`wrote ${content.length} bytes to ${abs}`);
     } catch (e) {

@@ -192,6 +192,29 @@ describe('agent loop', () => {
     expect(result.reason).toBe('aborted');
   });
 
+  it('returns reason=aborted when signal fires mid-turn during tool execution', async () => {
+    const ctrl = new AbortController();
+    const provider = fakeProvider([
+      {
+        content: [
+          { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'sleep 10' } },
+        ],
+        stopReason: 'tool_use',
+      },
+      {
+        content: [{ type: 'text', text: 'never reached' }],
+        stopReason: 'end_turn',
+      },
+    ]);
+    const state = createAgentState();
+    setTimeout(() => ctrl.abort(), 50);
+    const result = await runAgentTurn(provider, state, 'wait', {
+      signal: ctrl.signal,
+      toolTimeoutMs: 30_000,
+    });
+    expect(result.reason).toBe('aborted');
+  });
+
   it('caps the loop at maxTurns and returns max-turns', async () => {
     // Provider always asks for a tool call → infinite loop without a cap.
     const provider: Provider = {

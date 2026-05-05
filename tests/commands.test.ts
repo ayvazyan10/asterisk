@@ -63,6 +63,7 @@ describe('command registry', () => {
         '/agents',
         '/clear',
         '/config',
+        '/doctor',
         '/help',
         '/hooks',
         '/mcp',

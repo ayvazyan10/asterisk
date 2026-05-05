@@ -16,6 +16,7 @@ import { closeBrowser } from '../tools/browser/session.ts';
 import { setExtraTools } from '../tools/registry.ts';
 import type { Provider } from '../types/messages.ts';
 import type { AgentState } from '../agent/loop.ts';
+import { saveConversation, loadConversation } from '../agent/persistence.ts';
 
 const paths = asteriskPaths();
 ensurePaths(paths);
@@ -76,6 +77,11 @@ function stateFor(chatId: string): AgentState {
   let state = conversations.get(chatId);
   if (!state) {
     state = createAgentState();
+    const restored = loadConversation(chatId);
+    if (restored.length > 0) {
+      state.history = restored;
+      log.info({ chatId, messages: restored.length }, 'restored conversation');
+    }
     conversations.set(chatId, state);
   }
   return state;
@@ -199,6 +205,7 @@ manager
         attachments.push(a),
     });
     clearInterval(heartbeat);
+    saveConversation(msg.chatId, state.history);
     sink?.({ type: 'final' });
     if (turn.reason !== 'end-turn')
       log.warn({ chatId: msg.chatId, reason: turn.reason }, 'turn ended early');

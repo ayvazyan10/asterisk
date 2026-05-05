@@ -100,7 +100,7 @@ export function WorkingIndicator({ since, status }: Props) {
         {SPINNER_FRAMES[frame]}
       </Text>
       <Text color="yellow">{` ${displayStatus}`}</Text>
-      <Text dimColor>{`  · ${elapsedLabel}`}</Text>
+      <Text dimColor>{`  · ${elapsedLabel}  · ESC to cancel`}</Text>
     </Box>
   );
 }

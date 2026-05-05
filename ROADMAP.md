@@ -65,16 +65,16 @@ Tokens land in a single self-updating assistant entry. Working
 indicator surfaces character counts when no tools have fired yet so
 long generations don't look like a hang.
 
+### ~~Token / cost tracking~~ ✓ partially shipped
+`TokenUsage` type and Anthropic prompt caching wired. Provider responses
+carry `usage` with input/output/cache breakdown. Remaining: per-session
+aggregation, `/cost` command, `/usage` command, persistence to usage.jsonl.
+
 ## Tier 2 — Worth doing once Tier 1 settles
 
-### `/doctor` diagnostics command
-Health-check command. Probes:
-- Provider reachability (Ollama up? Anthropic key valid?)
-- Daemon status, log size, recent errors
-- MCP server connection state, tool counts
-- Disk: `~/.asterisk/` size, log rotation, old backup files
-- Tools on PATH: `gh`, `git`, `bun`, `playwright`, `yt-dlp`, `gitleaks`,
-  `trivy`, `cargo`, `go`, …
+### ~~`/doctor` diagnostics command~~ ✓ shipped
+Checks Ollama/Anthropic connectivity, system tools (git, rg, bun, node,
+playwright), MCP servers, config files, daemon status.
 
 ### Image content blocks for the model
 Today the agent calls `BrowserScreenshot` and only sees the file path.
@@ -82,16 +82,14 @@ Pipe the actual image bytes back through Anthropic's vision-capable
 content blocks (and Ollama's vision models when present) so the agent
 can *read* its own screenshots.
 
-### Model-side context compaction
-The agent loop has a slot for it (history surgery before send). Not
-implemented. Strategy: when input tokens cross a threshold, summarise
-the oldest N tool-results into a single "summary" message and replace
-them. Keeps long sessions usable.
+### ~~Model-side context compaction~~ ✓ shipped
+`compactHistory()` runs at the top of each turn. When estimated tokens
+exceed 80k, compacts old tool results and long text blocks while
+keeping the 6 most recent messages intact.
 
-### Ctrl+C abort in the REPL
-`AbortSignal` plumbing already runs end-to-end (provider, retry, tools).
-Hook a key handler in `src/repl/App.tsx` so Ctrl+C cancels the in-flight
-turn cleanly instead of killing the whole process.
+### ~~Ctrl+C / ESC abort in the REPL~~ ✓ shipped
+ESC key aborts in-flight turns, clears the message queue. AbortSignal
+plumbing was already end-to-end; wired via `useInput` in App.tsx.
 
 ### Multi-agent coordinator mode
 Today `Agent` is single-shot per call. Coordinator mode would let the
@@ -117,10 +115,9 @@ hook into the system prompt at compose time — e.g. "include current
 calendar events" or "include the last 5 commits". Tradeoff: more
 power, more sources of drift. Probably needs sandboxing.
 
-### Conversation persistence
-In-memory per-chat history is wiped on daemon restart. SQLite-backed
-history with per-chat retention policies would survive restarts but adds
-a real persistence dependency. Mostly worth it for serious bot use.
+### ~~Conversation persistence~~ ✓ shipped
+JSON-file based persistence in `~/.asterisk/conversations/`. Daemon
+auto-saves after each turn, restores on chat reconnect. 7-day expiry.
 
 ### Plugin lifecycle hooks
 `before_turn` / `after_turn` etc. exist as shell-command hooks. A

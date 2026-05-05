@@ -21,6 +21,7 @@ import { webFetchTool } from './webfetch.ts';
 import { webSearchTool } from './websearch.ts';
 import { WORKTREE_TOOLS } from './worktree.ts';
 import { writeTool } from './write.ts';
+import { toolSearchTool } from './tool-search.ts';
 
 export const BUILTIN_TOOLS: Tool[] = [
   bashTool,
@@ -41,6 +42,7 @@ export const BUILTIN_TOOLS: Tool[] = [
   ...ASK_TOOLS,
   ...SCHEDULE_TOOLS,
   attachTool,
+  toolSearchTool,
 ];
 
 let extraTools: Tool[] = [];

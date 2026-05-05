@@ -16,12 +16,14 @@ same assistant to Telegram and WhatsApp.
   API, [Model Context Protocol](https://modelcontextprotocol.io), Playwright.
 - **Apache 2.0** licensed.
 
-Status `0.1.0` — early but real. ~30 built-in tools, 19 slash commands,
+Status `0.1.0` — early but real. ~36 built-in tools, 20 slash commands,
 14 daemon-managed scheduling/lifecycle features, **29 bundled skills**,
 **27 specialised sub-agent types** the agent can dispatch on demand,
 layered multi-language rules, switchable output styles
-(default / concise / explanatory / learning), and a SOUL.md persona
-system that bot users can manage per-chat.
+(default / concise / explanatory / learning), a SOUL.md persona
+system that bot users can manage per-chat, and an agent loop
+hardened with tool concurrency, context compaction, prompt caching,
+bash safety guards, file history, and conversation persistence.
 
 ## Install
 
@@ -125,6 +127,7 @@ asterisk help
 | `/plan`            | Toggle Plan Mode (read-only research mode)                  |
 | `/tasks`           | List the agent's in-flight tasks for this session           |
 | `/hooks`           | Manage agent-loop lifecycle hooks (visual)                  |
+| `/doctor`          | Diagnostics — checks Ollama, Anthropic, system tools, MCP   |
 | `/quit`            | Exit the REPL                                               |
 
 ## Built-in tools
@@ -172,6 +175,10 @@ free-text or a list-picker; user's answer resolves the tool.
 `ScheduleWakeup` (one-shot delay) · `CronCreate` / `CronDelete` / `CronList`
 (5-field cron expressions). The daemon polls every 30s and dispatches due
 items as fresh agent turns.
+
+**Tool discovery**
+`ToolSearch` — keyword search across all registered tools. Enables
+deferred tool loading so the full tool list doesn't bloat every prompt.
 
 Plus any tools exposed by configured MCP servers, namespaced as
 `<servername>__<toolname>`.
@@ -420,12 +427,16 @@ src/
 ├── repl/            # Ink REPL — App, CommandMenu, MarkdownText,
 │                    # WorkingIndicator, forms/, inline-image
 ├── agent/loop.ts    # tool-use loop with retry, abort, terminal-reason,
-│                    # rules, hooks, sub-agents, per-tool timeout
+│                    # rules, hooks, sub-agents, per-tool timeout,
+│                    # tool concurrency, context compaction
+├── agent/           # compaction.ts · file-history.ts · output-store.ts
+│                    # persistence.ts — conversation save/restore
 ├── providers/       # ollama (default) · anthropic · errors (ProviderError)
 ├── tools/           # bash · read · write · edit · grep · glob ·
 │                    # browser/ (Playwright) · webfetch · websearch ·
 │                    # tasks · subagent · planmode · worktree · notify ·
-│                    # monitor · ask · schedule
+│                    # monitor · ask · schedule · tool-search ·
+│                    # bash-safety · concurrency
 ├── commands/        # slash command registry (visual flows)
 ├── config/          # zod schema · loader · interactive wizard
 ├── daemon/          # pidfile · logger · lifecycle · scheduler
@@ -505,21 +516,40 @@ sleep, and any running tool.
 
 Every tool call is timeboxed (default 120s) by an inner `AbortController`
 that ANDs the parent signal with the timeout — runaway shell commands
-can't lock the loop.
+can't lock the loop. Press **ESC** in the REPL to abort the current turn
+and clear the message queue.
+
+**Agent loop hardening:**
+
+- **Tool concurrency** — concurrency-safe tools (Read, Grep, Glob,
+  WebFetch, WebSearch, …) run in parallel via `Promise.all` when the
+  model emits multiple in one turn.
+- **Context compaction** — when estimated tokens exceed 80k, old tool
+  results and long text blocks are truncated while keeping the 6 most
+  recent messages intact.
+- **Large result persistence** — tool outputs > 8 KB are saved to
+  `~/.asterisk/outputs/` with a 500-char preview kept in context.
+- **Prompt caching** — Anthropic provider sends the system prompt with
+  `cache_control: { type: 'ephemeral' }` for cross-turn caching.
+- **Bash safety** — dangerous command patterns (rm -rf /, fork bombs,
+  curl|bash, secrets in args) are blocked before execution.
+- **File history** — Write/Edit tools snapshot files before overwriting;
+  stored in `~/.asterisk/file-history/`.
+- **Conversation persistence** — daemon saves per-chat history to
+  `~/.asterisk/conversations/` as JSON, restores on reconnect, 7-day
+  expiry.
 
 ## Roadmap
 
 See [ROADMAP.md](./ROADMAP.md) for the prioritised list of upcoming work
-— skill marketplace, token/cost tracking, REPL streaming, Ctrl+C abort,
-image content blocks, context compaction, and others.
+— skill marketplace, token/cost tracking, image content blocks, multi-agent
+coordinator, and others.
 
 ## Limitations
 
-- Conversation history, tasks, plan-mode, and worktree state live in
-  memory; daemon restart wipes them. SOUL.md personas survive (they're
-  files under `~/.asterisk/`), but task lists do not.
-- No streaming responses yet — the loop awaits each turn fully.
-- No model-side compaction when context is near full (tracked).
+- Tasks, plan-mode, and worktree state live in memory; daemon restart
+  wipes them. Conversation history now persists across daemon restarts
+  (7-day expiry), but task lists do not.
 - No image content blocks back to the model, so it can't *see* the
   screenshots it captures (tracked).
 
