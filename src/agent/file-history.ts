@@ -10,6 +10,7 @@ interface FileSnapshot {
 }
 
 const snapshots: FileSnapshot[] = [];
+let seqCounter = 0;
 
 function historyDir(): string {
   const dir = join(
@@ -25,7 +26,7 @@ export function recordFileChange(filePath: string, tool: string): void {
   const dir = historyDir();
   const ts = Date.now();
   const safe = basename(filePath).replace(/[^a-zA-Z0-9._-]/g, '_');
-  const backupPath = join(dir, `${ts}-${safe}`);
+  const backupPath = join(dir, `${ts}-${seqCounter++}-${safe}`);
   try {
     copyFileSync(filePath, backupPath);
     snapshots.push({ path: filePath, timestamp: ts, tool, backupPath });
