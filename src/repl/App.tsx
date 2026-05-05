@@ -305,7 +305,9 @@ export function App({ initialProvider, state, mcp }: Props) {
             // Update the LIVE state (rendered outside <Static>). Static
             // refuses to update items it has already rendered, so we
             // can't mutate an entry there mid-stream.
-            setLiveAssistant(streamingText);
+            // trimStart: thinking models (qwen3.5, deepseek-r1) emit
+            // newlines between </think> and the visible answer.
+            setLiveAssistant(streamingText.trimStart());
             setWorkingStatus(`writing · ${streamingChars} chars`);
           },
           onAssistantText: (t) => {
@@ -313,7 +315,7 @@ export function App({ initialProvider, state, mcp }: Props) {
             // text event is a duplicate — commit the streamed text into
             // the static log, clear the live state, and skip the duplicate.
             if (streamingText) {
-              const finalText = streamingText;
+              const finalText = streamingText.trimStart();
               setEntries((prev) => [
                 ...prev,
                 {
@@ -334,7 +336,7 @@ export function App({ initialProvider, state, mcp }: Props) {
             // Non-streaming provider (or empty stream): fall back to the
             // append-once behaviour so the user still sees the reply.
             setWorkingStatus('writing response');
-            append('assistant', t);
+            append('assistant', t.trimStart());
             renderedAnyText = true;
           },
           onToolUse: (name, toolInput) => {
@@ -396,7 +398,7 @@ export function App({ initialProvider, state, mcp }: Props) {
         // turn-shapes don't trigger the post-turn whole-text event),
         // commit the live buffer into the static log so it isn't lost.
         if (streamingText) {
-          const stillLive = streamingText;
+          const stillLive = streamingText.trimStart();
           setEntries((prev) => [
             ...prev,
             {
@@ -565,12 +567,12 @@ export function App({ initialProvider, state, mcp }: Props) {
           return renderEntry(entry);
         }}
       </Static>
-      {liveAssistant ? (
+      {liveAssistant.trimStart() ? (
         <Box marginLeft={2} marginTop={1}>
           <Text color="cyan" bold>
             {'⏺  '}
           </Text>
-          <Text>{liveAssistant}</Text>
+          <Text>{liveAssistant.trimStart()}</Text>
         </Box>
       ) : null}
       <Box flexDirection="column" marginTop={1}>
