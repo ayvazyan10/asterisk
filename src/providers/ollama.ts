@@ -50,7 +50,7 @@ interface OllamaChatResponse {
 const DEFAULTS: OllamaConfig = {
   baseUrl: process.env['OLLAMA_BASE_URL'] ?? 'http://127.0.0.1:11434',
   model: process.env['OLLAMA_MODEL'] ?? 'carstenuhlig/omnicoder-9b:q8_0',
-  contextWindow: Number(process.env['OLLAMA_CONTEXT_WINDOW'] ?? 32768),
+  contextWindow: Number(process.env['OLLAMA_CONTEXT_WINDOW'] ?? 65536),
   think: process.env['OLLAMA_THINK'] === '1' || process.env['OLLAMA_THINK'] === 'true',
   modelTimeoutMs: Number(process.env['OLLAMA_MODEL_TIMEOUT_MS'] ?? 300_000),
   modelIdleTimeoutMs: Number(process.env['OLLAMA_MODEL_IDLE_TIMEOUT_MS'] ?? 90_000),
