@@ -46,8 +46,8 @@ interface OllamaChatResponse {
 
 const DEFAULTS: OllamaConfig = {
   baseUrl: process.env['OLLAMA_BASE_URL'] ?? 'http://127.0.0.1:11434',
-  model: process.env['OLLAMA_MODEL'] ?? 'qwen3.5:9b-q8-max',
-  contextWindow: Number(process.env['OLLAMA_CONTEXT_WINDOW'] ?? 131072),
+  model: process.env['OLLAMA_MODEL'] ?? 'qwen3.6:27b-gpu95',
+  contextWindow: Number(process.env['OLLAMA_CONTEXT_WINDOW'] ?? 65536),
 };
 
 function flattenForOllama(messages: Message[]): OllamaMessage[] {

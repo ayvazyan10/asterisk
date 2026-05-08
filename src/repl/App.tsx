@@ -29,10 +29,11 @@ import { detectInlineProtocol, renderInlineImage } from './inline-image.ts';
 import { MarkdownText } from './MarkdownText.tsx';
 import { StatusBar } from './StatusBar.tsx';
 import { WorkingIndicator } from './WorkingIndicator.tsx';
+import { getVersion } from '../version.ts';
 
 type Modal = FormSpec | ListSpec | null;
 
-const VERSION = '0.1.0';
+const VERSION = getVersion();
 
 type EntryKind =
   | 'user'

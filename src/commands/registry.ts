@@ -22,6 +22,7 @@ import { runWithSession } from '../agent/context.ts';
 import { listTools, setExtraTools } from '../tools/registry.ts';
 import type { Provider } from '../types/messages.ts';
 import { asteriskPaths } from '../daemon/paths.ts';
+import { getVersion } from '../version.ts';
 import { statusFromPidFile } from '../daemon/pidfile.ts';
 import type { CommandResult, FormSpec, ListSpec } from '../repl/forms/types.ts';
 
@@ -725,6 +726,96 @@ export const COMMANDS: SlashCommand[] = [
       // History
       lines.push(`History      ${ctx.state.history.length} messages`);
 
+      return lines.join('\n');
+    },
+  },
+  {
+    name: '/update',
+    description: 'Check for updates or self-update to the latest version',
+    usage: '/update [check]',
+    async execute(_ctx, args) {
+      const verb = args.trim().toLowerCase();
+      const installDir = process.env['ASTERISK_INSTALL_DIR']
+        ?? `${process.env['HOME'] ?? '~'}/.local/share/asterisk`;
+      const branch = process.env['ASTERISK_BRANCH'] ?? 'master';
+
+      const { execSync } = await import('node:child_process');
+      const run = (cmd: string): string =>
+        execSync(cmd, { cwd: installDir, encoding: 'utf8', timeout: 30_000 }).trim();
+
+      try {
+        run('git rev-parse --git-dir');
+      } catch {
+        return `✗ ${installDir} is not a git repository. Run install.sh first.`;
+      }
+
+      const currentVersion = getVersion();
+      const localHead = run('git rev-parse HEAD').slice(0, 10);
+
+      try {
+        run(`git fetch --tags origin ${branch}`);
+      } catch {
+        return '✗ git fetch failed — check your network connection.';
+      }
+
+      const remoteHead = run(`git rev-parse origin/${branch}`).slice(0, 10);
+
+      if (localHead === remoteHead) {
+        return `✓ Already up to date — v${currentVersion} (${localHead})`;
+      }
+
+      const commitCount = run(`git rev-list HEAD..origin/${branch} --count`);
+      const changelog = run(`git log HEAD..origin/${branch} --oneline --no-decorate -15`);
+
+      if (verb === 'check') {
+        const lines = [
+          `Update available: ${commitCount} new commit${commitCount === '1' ? '' : 's'}`,
+          `  current: v${currentVersion} (${localHead})`,
+          `  latest:  ${remoteHead}`,
+          '',
+          'Changelog:',
+          ...changelog.split('\n').filter(Boolean).map((l) => `  ${l}`),
+          '',
+          'Run /update to apply, or `asterisk update` from the terminal.',
+        ];
+        return lines.join('\n');
+      }
+
+      try {
+        run(`git checkout -q ${branch}`);
+        run(`git reset --hard origin/${branch}`);
+      } catch {
+        return '✗ git reset failed.';
+      }
+
+      try {
+        run('bun install --silent');
+      } catch {
+        return '✗ bun install failed after source update.';
+      }
+
+      try {
+        run('bun run build');
+      } catch {
+        return '✗ bun run build failed after source update.';
+      }
+
+      const { readFileSync } = await import('node:fs');
+      let newVersion = currentVersion;
+      try {
+        const pkg = JSON.parse(readFileSync(`${installDir}/package.json`, 'utf8'));
+        newVersion = pkg.version ?? currentVersion;
+      } catch { /* keep current */ }
+
+      const lines = [
+        `✓ Updated: v${currentVersion} → v${newVersion} (${remoteHead})`,
+        `  ${commitCount} commit${commitCount === '1' ? '' : 's'} applied`,
+        '',
+        'Changelog:',
+        ...changelog.split('\n').filter(Boolean).map((l) => `  ${l}`),
+        '',
+        'Restart the REPL (/quit + asterisk) to use the new version.',
+      ];
       return lines.join('\n');
     },
   },

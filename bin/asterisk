@@ -21,14 +21,16 @@ DIST_CLI="$ROOT/dist/cli.js"
 DIST_DAEMON="$ROOT/dist/daemon.js"
 DIST_CONTROL="$ROOT/dist/control.js"
 DIST_CONFIGURE="$ROOT/dist/configure.js"
+DIST_UPDATE="$ROOT/dist/update.js"
 SRC_CLI="$ROOT/src/entrypoints/cli.tsx"
 SRC_CONTROL="$ROOT/src/entrypoints/control.ts"
 SRC_CONFIGURE="$ROOT/src/entrypoints/configure.tsx"
+SRC_UPDATE="$ROOT/src/entrypoints/update.ts"
 
 # Sensible defaults — local Ollama, telemetry off.
 export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
-export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3.5:9b-q8-max}"
-export OLLAMA_CONTEXT_WINDOW="${OLLAMA_CONTEXT_WINDOW:-131072}"
+export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3.6:27b-gpu95}"
+export OLLAMA_CONTEXT_WINDOW="${OLLAMA_CONTEXT_WINDOW:-65536}"
 
 cmd="${1:-repl}"
 [[ $# -gt 0 ]] && shift || true
@@ -56,6 +58,13 @@ run_configure() {
   exec bun "$SRC_CONFIGURE" "$@"
 }
 
+run_update() {
+  if [[ -f "$DIST_UPDATE" ]]; then
+    exec bun "$DIST_UPDATE" "$@"
+  fi
+  exec bun "$SRC_UPDATE" "$@"
+}
+
 case "$cmd" in
   repl|"")
     run_cli "$@"
@@ -65,6 +74,9 @@ case "$cmd" in
     ;;
   configure)
     run_configure "$@"
+    ;;
+  update)
+    run_update "$@"
     ;;
   --help|-h|help)
     cat <<'USAGE'
@@ -78,6 +90,7 @@ Usage:
   asterisk status         Show daemon status
   asterisk logs [N]       Tail last N daemon log lines (default 50)
   asterisk configure      Interactive config wizard
+  asterisk update         Self-update to the latest version
 
 Environment:
   OLLAMA_BASE_URL         Ollama HTTP base URL (default http://127.0.0.1:11434)

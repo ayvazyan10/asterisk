@@ -80,6 +80,7 @@ describe('command registry', () => {
         '/status',
         '/tasks',
         '/tools',
+        '/update',
       ].sort(),
     );
   });

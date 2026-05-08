@@ -42,6 +42,7 @@ const result = await Bun.build({
     resolve(root, 'src/entrypoints/daemon.ts'),
     resolve(root, 'src/entrypoints/control.ts'),
     resolve(root, 'src/entrypoints/configure.tsx'),
+    resolve(root, 'src/entrypoints/update.ts'),
   ],
   outdir,
   target: 'bun',
