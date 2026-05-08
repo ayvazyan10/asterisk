@@ -48,7 +48,7 @@ interface OllamaChatResponse {
 const DEFAULTS: OllamaConfig = {
   baseUrl: process.env['OLLAMA_BASE_URL'] ?? 'http://127.0.0.1:11434',
   model: process.env['OLLAMA_MODEL'] ?? 'qwen3.6:27b-gpu95',
-  contextWindow: Number(process.env['OLLAMA_CONTEXT_WINDOW'] ?? 65536),
+  contextWindow: Number(process.env['OLLAMA_CONTEXT_WINDOW'] ?? 32768),
   think: process.env['OLLAMA_THINK'] === '1' || process.env['OLLAMA_THINK'] === 'true',
 };
 
