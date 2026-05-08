@@ -7,7 +7,7 @@ const ProviderSchema = z.enum(['ollama', 'anthropic']);
 
 const OllamaSchema = z.object({
   baseUrl: z.string().url().default('http://127.0.0.1:11434'),
-  model: z.string().default('qwen3.6:27b-gpu95'),
+  model: z.string().default('carstenuhlig/omnicoder-9b:q8_0'),
   contextWindow: z.number().int().positive().default(32768),
   think: z.boolean().default(false),
   modelTimeoutMs: z.number().int().min(10000).max(1800000).default(300_000),

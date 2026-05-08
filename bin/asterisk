@@ -29,7 +29,7 @@ SRC_UPDATE="$ROOT/src/entrypoints/update.ts"
 
 # Sensible defaults — local Ollama, telemetry off.
 export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
-export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3.6:27b-gpu95}"
+export OLLAMA_MODEL="${OLLAMA_MODEL:-carstenuhlig/omnicoder-9b:q8_0}"
 export OLLAMA_CONTEXT_WINDOW="${OLLAMA_CONTEXT_WINDOW:-32768}"
 
 cmd="${1:-repl}"
