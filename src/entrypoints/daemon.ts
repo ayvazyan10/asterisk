@@ -40,6 +40,7 @@ function pickProvider(): Provider {
     baseUrl: loaded.config.ollama.baseUrl,
     model: loaded.config.ollama.model,
     contextWindow: loaded.config.ollama.contextWindow,
+    think: loaded.config.ollama.think,
   });
 }
 

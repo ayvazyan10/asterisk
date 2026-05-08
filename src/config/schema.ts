@@ -9,6 +9,7 @@ const OllamaSchema = z.object({
   baseUrl: z.string().url().default('http://127.0.0.1:11434'),
   model: z.string().default('qwen3.6:27b-gpu95'),
   contextWindow: z.number().int().positive().default(65536),
+  think: z.boolean().default(false),
 });
 
 const AnthropicSchema = z.object({

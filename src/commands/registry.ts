@@ -351,6 +351,7 @@ export const COMMANDS: SlashCommand[] = [
             baseUrl: cfg.config.ollama.baseUrl,
             model: cfg.config.ollama.model,
             contextWindow: cfg.config.ollama.contextWindow,
+            think: cfg.config.ollama.think,
           }),
         );
       }

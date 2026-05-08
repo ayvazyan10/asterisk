@@ -16,6 +16,7 @@ interface OllamaConfig {
   baseUrl: string;
   model: string;
   contextWindow: number;
+  think: boolean;
 }
 
 interface OllamaToolCall {
@@ -48,6 +49,7 @@ const DEFAULTS: OllamaConfig = {
   baseUrl: process.env['OLLAMA_BASE_URL'] ?? 'http://127.0.0.1:11434',
   model: process.env['OLLAMA_MODEL'] ?? 'qwen3.6:27b-gpu95',
   contextWindow: Number(process.env['OLLAMA_CONTEXT_WINDOW'] ?? 65536),
+  think: process.env['OLLAMA_THINK'] === '1' || process.env['OLLAMA_THINK'] === 'true',
 };
 
 function flattenForOllama(messages: Message[]): OllamaMessage[] {
@@ -157,9 +159,10 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
     name: `ollama:${cfg.model}`,
     async send(req: ProviderRequest): Promise<ProviderResponse> {
       const streaming = !!req.onText;
-      const body = {
+      const body: Record<string, unknown> = {
         model: cfg.model,
         stream: streaming,
+        think: cfg.think,
         options: { num_ctx: cfg.contextWindow },
         messages: [
           { role: 'system', content: req.system } satisfies OllamaMessage,
