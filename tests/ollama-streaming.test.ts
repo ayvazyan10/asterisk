@@ -161,6 +161,67 @@ describe('Ollama streaming', () => {
     expect(r.stopReason).toBe('tool_use');
   });
 
+  it('strips orphan </think> without a preceding <think> (omnicoder-style)', async () => {
+    // Models like omnicoder have the <think> tag injected by their template
+    // outside the content stream. The content starts with reasoning text and
+    // eventually emits </think> followed by the real answer.
+    globalThis.fetch = (async () => {
+      const stream = ndjsonStream([
+        // Reasoning + close tag in same chunk — filter catches it.
+        JSON.stringify({ message: { role: 'assistant', content: 'reasoning about task</think>' }, done: false }),
+        JSON.stringify({ message: { role: 'assistant', content: 'The answer is 42.' }, done: false }),
+        JSON.stringify({ message: { role: 'assistant', content: '' }, done: true }),
+      ]);
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const provider = createOllamaProvider({ baseUrl: 'http://x', model: 'm' });
+    const visible: string[] = [];
+    const thinking: string[] = [];
+    await provider.send({
+      system: 's',
+      messages: [],
+      tools: [],
+      onText: (d) => visible.push(d),
+      onThinking: (d) => thinking.push(d),
+    });
+
+    const visibleText = visible.join('');
+    expect(visibleText).not.toContain('</think>');
+    expect(visibleText).not.toContain('reasoning');
+    expect(visibleText).toContain('The answer is 42.');
+
+    const thoughtText = thinking.join('');
+    expect(thoughtText).toContain('reasoning');
+  });
+
+  it('strips bare </think> tag arriving as a separate chunk', async () => {
+    globalThis.fetch = (async () => {
+      const stream = ndjsonStream([
+        // Pre-emitted reasoning leaks in streaming (unavoidable), but the
+        // </think> tag itself must never appear in visible output.
+        JSON.stringify({ message: { role: 'assistant', content: 'preamble' }, done: false }),
+        JSON.stringify({ message: { role: 'assistant', content: '</think>' }, done: false }),
+        JSON.stringify({ message: { role: 'assistant', content: 'answer' }, done: false }),
+        JSON.stringify({ message: { role: 'assistant', content: '' }, done: true }),
+      ]);
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const provider = createOllamaProvider({ baseUrl: 'http://x', model: 'm' });
+    const visible: string[] = [];
+    await provider.send({
+      system: 's',
+      messages: [],
+      tools: [],
+      onText: (d) => visible.push(d),
+    });
+
+    const visibleText = visible.join('');
+    expect(visibleText).not.toContain('</think>');
+    expect(visibleText).toContain('answer');
+  });
+
   it('aborts on idle timeout when no chunks arrive', async () => {
     globalThis.fetch = (async () => {
       // Stream that sends one chunk then stalls forever.

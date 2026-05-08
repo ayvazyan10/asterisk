@@ -406,15 +406,26 @@ function createThinkFilter(): {
       // eslint-disable-next-line no-constant-condition
       while (true) {
         if (!inside) {
-          const open = buf.toLowerCase().indexOf('<think>');
+          const lower = buf.toLowerCase();
+          const open = lower.indexOf('<think>');
+          // Orphan </think> without a preceding <think> — the model's
+          // template injected the open tag outside the content stream
+          // (e.g. omnicoder, some qwen3 templates). Drop everything up
+          // to and including the close tag as hidden thinking.
+          const orphanClose = lower.indexOf('</think>');
+          if (orphanClose !== -1 && (open === -1 || orphanClose < open)) {
+            thinking += buf.slice(0, orphanClose);
+            buf = buf.slice(orphanClose + '</think>'.length);
+            continue;
+          }
           if (open !== -1) {
             visible += buf.slice(0, open);
             buf = buf.slice(open + '<think>'.length);
             inside = true;
             continue;
           }
-          // No complete open tag yet. Hold back from the LAST '<' onward —
-          // those bytes might still complete into '<think>'.
+          // No complete tag yet. Hold back from the LAST '<' onward —
+          // those bytes might still complete into '<think>' or '</think>'.
           const lt = buf.lastIndexOf('<');
           if (lt === -1) {
             visible += buf;
