@@ -352,6 +352,8 @@ export const COMMANDS: SlashCommand[] = [
             model: cfg.config.ollama.model,
             contextWindow: cfg.config.ollama.contextWindow,
             think: cfg.config.ollama.think,
+            modelTimeoutMs: cfg.config.ollama.modelTimeoutMs,
+            modelIdleTimeoutMs: cfg.config.ollama.modelIdleTimeoutMs,
           }),
         );
       }
@@ -1058,6 +1060,8 @@ function switchModel(ctx: CommandContext, model: string): string {
         baseUrl: cfg.config.ollama.baseUrl,
         model: trimmed,
         contextWindow: cfg.config.ollama.contextWindow,
+        modelTimeoutMs: cfg.config.ollama.modelTimeoutMs,
+        modelIdleTimeoutMs: cfg.config.ollama.modelIdleTimeoutMs,
       }),
     );
   } else {
@@ -1076,6 +1080,8 @@ function switchProvider(ctx: CommandContext, target: string): string {
         baseUrl: cfg.config.ollama.baseUrl,
         model: cfg.config.ollama.model,
         contextWindow: cfg.config.ollama.contextWindow,
+        modelTimeoutMs: cfg.config.ollama.modelTimeoutMs,
+        modelIdleTimeoutMs: cfg.config.ollama.modelIdleTimeoutMs,
       }),
     );
     return `✓ switched to ollama:${cfg.config.ollama.model}`;

@@ -43,6 +43,8 @@ function pickProviderForSub(): Provider {
     baseUrl: cfg.config.ollama.baseUrl,
     model: cfg.config.ollama.model,
     contextWindow: cfg.config.ollama.contextWindow,
+    modelTimeoutMs: cfg.config.ollama.modelTimeoutMs,
+    modelIdleTimeoutMs: cfg.config.ollama.modelIdleTimeoutMs,
   });
 }
 

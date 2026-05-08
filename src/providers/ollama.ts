@@ -17,6 +17,8 @@ interface OllamaConfig {
   model: string;
   contextWindow: number;
   think: boolean;
+  modelTimeoutMs: number;
+  modelIdleTimeoutMs: number;
 }
 
 interface OllamaToolCall {
@@ -50,6 +52,8 @@ const DEFAULTS: OllamaConfig = {
   model: process.env['OLLAMA_MODEL'] ?? 'qwen3.6:27b-gpu95',
   contextWindow: Number(process.env['OLLAMA_CONTEXT_WINDOW'] ?? 32768),
   think: process.env['OLLAMA_THINK'] === '1' || process.env['OLLAMA_THINK'] === 'true',
+  modelTimeoutMs: Number(process.env['OLLAMA_MODEL_TIMEOUT_MS'] ?? 300_000),
+  modelIdleTimeoutMs: Number(process.env['OLLAMA_MODEL_IDLE_TIMEOUT_MS'] ?? 90_000),
 };
 
 function flattenForOllama(messages: Message[]): OllamaMessage[] {
@@ -172,41 +176,60 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
       };
 
       const url = `${cfg.baseUrl.replace(/\/$/, '')}/api/chat`;
+
+      // Layer a total-timeout AbortController on top of the caller's signal.
+      const ctrl = new AbortController();
+      const onParentAbort = () => ctrl.abort(req.signal?.reason);
+      if (req.signal) {
+        if (req.signal.aborted) ctrl.abort(req.signal.reason);
+        else req.signal.addEventListener('abort', onParentAbort, { once: true });
+      }
+      const totalTimer = setTimeout(() => {
+        ctrl.abort(new Error(`model response timed out after ${Math.round(cfg.modelTimeoutMs / 1000)}s`));
+      }, cfg.modelTimeoutMs);
+
       const fetchInit: RequestInit = {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
+        signal: ctrl.signal,
       };
-      if (req.signal) fetchInit.signal = req.signal;
-      let res: Response;
       try {
-        res = await fetch(url, fetchInit);
-      } catch (e) {
-        if ((e as Error).name === 'AbortError') {
-          throw new ProviderError('aborted', 'request aborted', { cause: e });
+        let res: Response;
+        try {
+          res = await fetch(url, fetchInit);
+        } catch (e) {
+          if ((e as Error).name === 'AbortError' || ctrl.signal.aborted) {
+            const reason = ctrl.signal.reason;
+            const msg = reason instanceof Error ? reason.message : 'request aborted';
+            throw new ProviderError('aborted', msg, { cause: e });
+          }
+          throw new ProviderError('network', `network error reaching ${url}: ${(e as Error).message}`, {
+            cause: e,
+          });
         }
-        throw new ProviderError('network', `network error reaching ${url}: ${(e as Error).message}`, {
-          cause: e,
-        });
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          const retryAfterSeconds = parseRetryAfter(res.headers.get('retry-after'));
+          throw classifyHttpError(res.status, text, retryAfterSeconds);
+        }
+
+        const finalMessage = streaming
+          ? await readStreamingChat(res, req.onText!, req.onThinking, cfg.modelIdleTimeoutMs, ctrl)
+          : (await res.json() as OllamaChatResponse).message;
+
+        const content = blocksFromOllama(finalMessage);
+        const stopReason: ProviderResponse['stopReason'] = content.some(
+          (b) => b.type === 'tool_use',
+        )
+          ? 'tool_use'
+          : 'end_turn';
+        return { content, stopReason };
+      } finally {
+        clearTimeout(totalTimer);
+        if (req.signal) req.signal.removeEventListener('abort', onParentAbort);
       }
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        const retryAfterSeconds = parseRetryAfter(res.headers.get('retry-after'));
-        throw classifyHttpError(res.status, text, retryAfterSeconds);
-      }
-
-      const finalMessage = streaming
-        ? await readStreamingChat(res, req.onText!, req.onThinking)
-        : (await res.json() as OllamaChatResponse).message;
-
-      const content = blocksFromOllama(finalMessage);
-      const stopReason: ProviderResponse['stopReason'] = content.some(
-        (b) => b.type === 'tool_use',
-      )
-        ? 'tool_use'
-        : 'end_turn';
-      return { content, stopReason };
     },
   };
 }
@@ -221,9 +244,10 @@ async function readStreamingChat(
   res: Response,
   onText: (delta: string) => void,
   onThinking?: (delta: string) => void,
+  idleTimeoutMs?: number,
+  ctrl?: AbortController,
 ): Promise<OllamaMessage> {
   if (!res.body) {
-    // No streaming body — fall back to a single read.
     const data = (await res.json()) as OllamaChatResponse;
     return data.message;
   }
@@ -234,10 +258,32 @@ async function readStreamingChat(
   let toolCalls: OllamaToolCall[] | undefined;
   const filter = createThinkFilter();
 
+  // Idle timeout: abort if no chunk arrives for idleTimeoutMs.
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const resetIdleTimer = () => {
+    if (idleTimer !== undefined) clearTimeout(idleTimer);
+    if (idleTimeoutMs && ctrl) {
+      idleTimer = setTimeout(() => {
+        ctrl.abort(new Error(`model idle timeout — no data for ${Math.round(idleTimeoutMs / 1000)}s`));
+      }, idleTimeoutMs);
+    }
+  };
+  resetIdleTimer();
+
+  // Cancel the reader when the AbortController fires so reader.read()
+  // rejects instead of blocking forever on a stalled stream.
+  const onAbort = () => { reader.cancel().catch(() => {}); };
+  if (ctrl) {
+    if (ctrl.signal.aborted) reader.cancel().catch(() => {});
+    else ctrl.signal.addEventListener('abort', onAbort, { once: true });
+  }
+
   try {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+      if (ctrl?.signal.aborted) break;
+      resetIdleTimer();
       buf += decoder.decode(value, { stream: true });
       let nl: number;
       while ((nl = buf.indexOf('\n')) !== -1) {
@@ -288,6 +334,8 @@ async function readStreamingChat(
       }
     }
   } finally {
+    if (idleTimer !== undefined) clearTimeout(idleTimer);
+    if (ctrl) ctrl.signal.removeEventListener('abort', onAbort);
     try {
       reader.releaseLock();
     } catch {
@@ -318,6 +366,14 @@ async function readStreamingChat(
     } catch {
       // ignore
     }
+  }
+
+  // If the controller was aborted (total or idle timeout), throw so the
+  // caller sees the timeout rather than a truncated response.
+  if (ctrl?.signal.aborted) {
+    const reason = ctrl.signal.reason;
+    const msg = reason instanceof Error ? reason.message : 'model response aborted';
+    throw new ProviderError('aborted', msg, { cause: reason });
   }
 
   const out: OllamaMessage = { role: 'assistant', content: aggregatedContent };

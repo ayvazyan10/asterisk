@@ -161,6 +161,67 @@ describe('Ollama streaming', () => {
     expect(r.stopReason).toBe('tool_use');
   });
 
+  it('aborts on idle timeout when no chunks arrive', async () => {
+    globalThis.fetch = (async () => {
+      // Stream that sends one chunk then stalls forever.
+      const stream = new ReadableStream<Uint8Array>({
+        start(ctrl) {
+          const enc = new TextEncoder();
+          ctrl.enqueue(enc.encode(
+            JSON.stringify({ message: { role: 'assistant', content: 'start' }, done: false }) + '\n',
+          ));
+          // Never sends more data — triggers idle timeout.
+        },
+      });
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const provider = createOllamaProvider({
+      baseUrl: 'http://x',
+      model: 'm',
+      modelIdleTimeoutMs: 200,
+      modelTimeoutMs: 10_000,
+    });
+    await expect(
+      provider.send({ system: 's', messages: [], tools: [], onText: () => {} }),
+    ).rejects.toThrow(/aborted|idle timeout/i);
+  });
+
+  it('aborts on total model timeout', async () => {
+    globalThis.fetch = (async () => {
+      // Stream that drips data slowly — exceeds total timeout.
+      let interval: ReturnType<typeof setInterval>;
+      const stream = new ReadableStream<Uint8Array>({
+        start(ctrl) {
+          const enc = new TextEncoder();
+          interval = setInterval(() => {
+            try {
+              ctrl.enqueue(enc.encode(
+                JSON.stringify({ message: { role: 'assistant', content: '.' }, done: false }) + '\n',
+              ));
+            } catch {
+              clearInterval(interval);
+            }
+          }, 50);
+        },
+        cancel() {
+          clearInterval(interval!);
+        },
+      });
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const provider = createOllamaProvider({
+      baseUrl: 'http://x',
+      model: 'm',
+      modelIdleTimeoutMs: 60_000,
+      modelTimeoutMs: 300,
+    });
+    await expect(
+      provider.send({ system: 's', messages: [], tools: [], onText: () => {} }),
+    ).rejects.toThrow(/aborted|timed out/i);
+  });
+
   it('falls back to non-streaming when no onText is provided', async () => {
     globalThis.fetch = (async (_url: string, init?: RequestInit) => {
       lastBody = String(init?.body ?? '');

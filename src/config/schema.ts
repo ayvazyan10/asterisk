@@ -10,6 +10,8 @@ const OllamaSchema = z.object({
   model: z.string().default('qwen3.6:27b-gpu95'),
   contextWindow: z.number().int().positive().default(32768),
   think: z.boolean().default(false),
+  modelTimeoutMs: z.number().int().min(10000).max(1800000).default(300_000),
+  modelIdleTimeoutMs: z.number().int().min(5000).max(300000).default(90_000),
 });
 
 const AnthropicSchema = z.object({

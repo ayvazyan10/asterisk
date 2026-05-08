@@ -41,6 +41,8 @@ function pickProvider(): Provider {
     model: loaded.config.ollama.model,
     contextWindow: loaded.config.ollama.contextWindow,
     think: loaded.config.ollama.think,
+    modelTimeoutMs: loaded.config.ollama.modelTimeoutMs,
+    modelIdleTimeoutMs: loaded.config.ollama.modelIdleTimeoutMs,
   });
 }
 
