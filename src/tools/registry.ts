@@ -6,6 +6,8 @@ import { ASK_TOOLS } from './ask.ts';
 import { attachTool } from './attach.ts';
 import { bashTool } from './bash.ts';
 import { BROWSER_TOOLS } from './browser/tools.ts';
+import { codeIntelTool } from './code-intel.ts';
+import { diffReviewTool } from './diff-review.ts';
 import { editTool } from './edit.ts';
 import { globTool } from './glob.ts';
 import { grepTool } from './grep.ts';
@@ -22,6 +24,7 @@ import { webSearchTool } from './websearch.ts';
 import { WORKTREE_TOOLS } from './worktree.ts';
 import { writeTool } from './write.ts';
 import { toolSearchTool } from './tool-search.ts';
+import { MCP_RESOURCE_TOOLS } from '../mcp/resources.ts';
 
 export const BUILTIN_TOOLS: Tool[] = [
   bashTool,
@@ -43,6 +46,9 @@ export const BUILTIN_TOOLS: Tool[] = [
   ...SCHEDULE_TOOLS,
   attachTool,
   toolSearchTool,
+  codeIntelTool,
+  diffReviewTool,
+  ...MCP_RESOURCE_TOOLS,
 ];
 
 let extraTools: Tool[] = [];

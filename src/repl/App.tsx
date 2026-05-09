@@ -7,6 +7,7 @@ import TextInput from 'ink-text-input';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { type AgentState, runAgentTurn } from '../agent/loop.ts';
+import { saveConversation } from '../agent/persistence.ts';
 import { lookupCommand } from '../commands/registry.ts';
 import { loadConfig } from '../config/load.ts';
 import type { McpManager } from '../mcp/manager.ts';
@@ -432,6 +433,7 @@ export function App({ initialProvider, state, mcp }: Props) {
       } catch (e) {
         append('error', `agent error: ${(e as Error).message}`);
       } finally {
+        saveConversation('repl', state.history);
         abortRef.current = null;
         setBusy(false);
         setWorkingSince(null);
@@ -469,6 +471,7 @@ export function App({ initialProvider, state, mcp }: Props) {
           cmd.args,
         );
         applyResult(out);
+        saveConversation('repl', state.history);
       } catch (e) {
         append('error', `command error: ${(e as Error).message}`);
       }

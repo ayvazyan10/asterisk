@@ -5,6 +5,7 @@ import type { McpServerConfig } from '../config/schema.ts';
 import { loadConfig } from '../config/load.ts';
 import type { Tool } from '../tools/types.ts';
 import { type ConnectedMcpServer, asLocalTool, connectMcpServer } from './client.ts';
+import { setMcpServerProvider } from './resources.ts';
 
 export interface McpManager {
   servers: ConnectedMcpServer[];
@@ -18,6 +19,7 @@ export function createMcpManager(): McpManager {
     servers: [],
     tools: [],
   };
+  setMcpServerProvider(() => state.servers);
 
   async function disconnectAll(): Promise<void> {
     for (const s of state.servers) await s.close().catch(() => {});

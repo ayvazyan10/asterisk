@@ -379,14 +379,31 @@ async function runAgentTurnInner(
 
         const executeSingle = async (use: ToolUseBlock): Promise<ToolResultBlock> => {
           toolTally[use.name] = (toolTally[use.name] ?? 0) + 1;
-          opts.onToolUse?.(use.name, use.input);
+          let toolInput = { ...use.input };
+          opts.onToolUse?.(use.name, toolInput);
           if (hooks.length > 0) {
             const before = await fireHooks(
               hooks,
-              { event: 'before_tool', tool: use.name, toolInput: use.input },
+              { event: 'before_tool', tool: use.name, toolInput },
               signal,
             );
-            for (const r of before) opts.onHook?.(r);
+            for (const r of before) {
+              opts.onHook?.(r);
+              if (r.exitCode !== 0) continue;
+              if (r.decision?.action === 'block') {
+                const reason = r.decision.reason || 'blocked by hook';
+                opts.onToolResult?.(use.name, reason, true);
+                return {
+                  type: 'tool_result',
+                  tool_use_id: use.id,
+                  content: `tool blocked by hook "${r.hook}": ${reason}`,
+                  is_error: true,
+                };
+              }
+              if (r.decision?.action === 'rewrite') {
+                toolInput = { ...r.decision.input };
+              }
+            }
           }
           const tool = getTool(use.name);
           let output: string;
@@ -397,7 +414,7 @@ async function runAgentTurnInner(
           } else {
             const exec = await runToolWithTimeout(
               tool,
-              use.input,
+              toolInput,
               toolTimeoutMs,
               signal,
             );
@@ -422,7 +439,7 @@ async function runAgentTurnInner(
               {
                 event: 'after_tool',
                 tool: use.name,
-                toolInput: use.input,
+                toolInput,
                 toolOutput: output,
                 toolError: isError,
               },

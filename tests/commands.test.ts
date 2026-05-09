@@ -62,8 +62,11 @@ describe('command registry', () => {
       [
         '/agents',
         '/clear',
+        '/code',
         '/config',
+        '/diff',
         '/doctor',
+        '/forget',
         '/help',
         '/hooks',
         '/mcp',
@@ -73,7 +76,10 @@ describe('command registry', () => {
         '/provider',
         '/quit',
         '/reset',
+        '/resume',
+        '/review',
         '/rules',
+        '/sessions',
         '/skill',
         '/skills',
         '/soul',
@@ -144,7 +150,7 @@ describe('command registry', () => {
     expect(out && typeof out === 'object' && (out as { kind?: string }).kind).toBe('list');
     if (out && typeof out === 'object' && 'items' in out) {
       const items = (out as { items: { value: string }[] }).items.map((i) => i.value);
-      expect(items).toEqual(['list', 'add', 'edit', 'remove', 'reload']);
+      expect(items).toEqual(['list', 'resources', 'add', 'edit', 'remove', 'reload']);
     }
   });
 

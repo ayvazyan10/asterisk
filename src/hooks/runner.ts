@@ -1,11 +1,9 @@
 // Hook runner — fires user-defined shell commands at agent lifecycle events.
 // The event payload is piped to the hook on stdin as JSON; stdout is captured
-// and surfaced as a system note. Hooks are side-effect only in v1: their
-// output is informational, not authoritative (no blocking, no input
-// rewriting). Adding those is straightforward — wire returned JSON back into
-// the loop's decision points — but the value is mostly captured here.
-
-import { execa } from 'execa';
+// and surfaced as a system note. before_tool hooks may return a JSON decision:
+//   {"action":"block","reason":"..."}
+//   {"action":"rewrite","input":{...}}
+// Any other stdout remains informational.
 
 import type { HookConfig, HookEvent } from '../config/schema.ts';
 
@@ -33,7 +31,12 @@ export interface HookResult {
   stdout: string;
   stderr: string;
   durationMs: number;
+  decision?: HookDecision;
 }
+
+export type HookDecision =
+  | { action: 'block'; reason: string }
+  | { action: 'rewrite'; input: Record<string, unknown>; reason?: string };
 
 export async function fireHooks(
   hooks: readonly HookConfig[],
@@ -47,21 +50,17 @@ export async function fireHooks(
     const start = Date.now();
     const stdin = JSON.stringify(ctx);
     try {
-      const baseOpts = {
-        timeout: (hook.timeoutSeconds ?? 30) * 1000,
-        input: stdin,
-        reject: false as const,
-        encoding: 'utf8' as const,
-      };
-      const execOpts = signal ? { ...baseOpts, cancelSignal: signal } : baseOpts;
-      const r = await execa('bash', ['-lc', hook.command], execOpts);
-      results.push({
+      const r = await runShellHook(hook.command, stdin, (hook.timeoutSeconds ?? 30) * 1000, signal);
+      const result: HookResult = {
         hook: hook.name,
-        exitCode: typeof r.exitCode === 'number' ? r.exitCode : 0,
-        stdout: typeof r.stdout === 'string' ? r.stdout : '',
-        stderr: typeof r.stderr === 'string' ? r.stderr : '',
+        exitCode: r.exitCode,
+        stdout: r.stdout,
+        stderr: r.stderr,
         durationMs: Date.now() - start,
-      });
+      };
+      const decision = parseDecision(r.stdout, ctx);
+      if (decision) result.decision = decision;
+      results.push(result);
     } catch (e) {
       results.push({
         hook: hook.name,
@@ -73,6 +72,96 @@ export async function fireHooks(
     }
   }
   return results;
+}
+
+function parseDecision(stdout: string, ctx: HookContext): HookDecision | undefined {
+  if (ctx.event !== 'before_tool') return undefined;
+  const trimmed = stdout.trim();
+  if (!trimmed) return undefined;
+  const firstJson = trimmed
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.startsWith('{') && line.endsWith('}'));
+  if (!firstJson) return undefined;
+  try {
+    const parsed = JSON.parse(firstJson) as {
+      action?: unknown;
+      reason?: unknown;
+      input?: unknown;
+    };
+    if (parsed.action === 'block') {
+      return {
+        action: 'block',
+        reason: typeof parsed.reason === 'string' && parsed.reason.trim()
+          ? parsed.reason.trim()
+          : 'blocked by hook',
+      };
+    }
+    if (
+      parsed.action === 'rewrite'
+      && typeof parsed.input === 'object'
+      && parsed.input !== null
+      && !Array.isArray(parsed.input)
+    ) {
+      const decision: HookDecision = {
+        action: 'rewrite',
+        input: parsed.input as Record<string, unknown>,
+      };
+      if (typeof parsed.reason === 'string' && parsed.reason.trim()) {
+        decision.reason = parsed.reason.trim();
+      }
+      return decision;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function runShellHook(
+  command: string,
+  stdin: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const proc = Bun.spawn(['bash', '-lc', command], {
+      stdin: new Response(stdin),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    let settled = false;
+    const finish = (result: { exitCode: number; stdout: string; stderr: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve(result);
+    };
+    const onAbort = () => {
+      proc.kill('SIGTERM');
+      finish({ exitCode: 1, stdout: '', stderr: 'hook aborted' });
+    };
+    const timer = setTimeout(() => {
+      proc.kill('SIGTERM');
+      finish({
+        exitCode: 1,
+        stdout: '',
+        stderr: `hook timed out after ${Math.round(timeoutMs / 1000)}s`,
+      });
+    }, timeoutMs);
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    }
+    void Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+      .then(([stdout, stderr, exitCode]) => finish({ exitCode, stdout, stderr }))
+      .catch((error) => finish({ exitCode: 1, stdout: '', stderr: (error as Error).message }));
+  });
 }
 
 function matches(hook: HookConfig, ctx: HookContext): boolean {

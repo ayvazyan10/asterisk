@@ -78,6 +78,72 @@ describe('agent loop', () => {
     expect(onToolResult).toHaveBeenCalledWith('NotATool', expect.stringContaining('not found'), true);
   });
 
+  it('lets before_tool hooks block tool execution', async () => {
+    const provider = fakeProvider([
+      {
+        content: [
+          { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'echo should-not-run' } },
+        ],
+        stopReason: 'tool_use',
+      },
+      {
+        content: [{ type: 'text', text: 'blocked' }],
+        stopReason: 'end_turn',
+      },
+    ]);
+    const state = createAgentState();
+    const onToolResult = vi.fn();
+    const result = await runAgentTurn(provider, state, 'run', {
+      hooks: [
+        {
+          name: 'block',
+          event: 'before_tool',
+          command: 'echo \'{"action":"block","reason":"policy"}\'',
+          timeoutSeconds: 5,
+          enabled: true,
+        },
+      ],
+      onToolResult,
+    });
+    expect(result.reason).toBe('end-turn');
+    expect(onToolResult).toHaveBeenCalledWith('Bash', 'policy', true);
+    const toolResult = state.history[2]?.content[0];
+    expect(toolResult?.type).toBe('tool_result');
+    if (toolResult?.type === 'tool_result') {
+      expect(toolResult.content).toContain('blocked by hook');
+    }
+  });
+
+  it('lets before_tool hooks rewrite tool input', async () => {
+    const provider = fakeProvider([
+      {
+        content: [
+          { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'echo original' } },
+        ],
+        stopReason: 'tool_use',
+      },
+      {
+        content: [{ type: 'text', text: 'rewritten' }],
+        stopReason: 'end_turn',
+      },
+    ]);
+    const state = createAgentState();
+    const onToolResult = vi.fn();
+    await runAgentTurn(provider, state, 'run', {
+      hooks: [
+        {
+          name: 'rewrite',
+          event: 'before_tool',
+          command: 'echo \'{"action":"rewrite","input":{"command":"echo rewritten"}}\'',
+          timeoutSeconds: 5,
+          enabled: true,
+        },
+      ],
+      onToolResult,
+    });
+    expect(onToolResult).toHaveBeenCalledWith('Bash', expect.stringContaining('rewritten'), false);
+  });
+
   it('falls back to the most recent non-empty text when even the forced summary turn is silent', async () => {
     // Simulates uncooperative qwen3.5: emits text + tool in turn 1, runs
     // tool, then emits empty in turn 2. The loop forces a summary prod →

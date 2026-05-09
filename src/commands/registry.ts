@@ -4,8 +4,15 @@
 // an interactive modal in the REPL.
 
 import { existsSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 
 import type { AgentState } from '../agent/loop.ts';
+import {
+  deleteConversation,
+  listConversations,
+  loadConversation,
+  saveConversation,
+} from '../agent/persistence.ts';
 import { loadConfig, saveConfig, saveSecrets } from '../config/load.ts';
 import type { HookConfig, McpServerConfig } from '../config/schema.ts';
 import type { McpManager } from '../mcp/manager.ts';
@@ -20,6 +27,7 @@ import { isPlanMode, setPlanMode } from '../tools/planmode.ts';
 import { _allTasks } from '../tools/tasks.ts';
 import { runWithSession } from '../agent/context.ts';
 import { listTools, setExtraTools } from '../tools/registry.ts';
+import { codeIntelTool } from '../tools/code-intel.ts';
 import type { Provider } from '../types/messages.ts';
 import { asteriskPaths } from '../daemon/paths.ts';
 import { getVersion } from '../version.ts';
@@ -363,13 +371,15 @@ export const COMMANDS: SlashCommand[] = [
   {
     name: '/mcp',
     description: 'Manage MCP servers',
-    usage: '/mcp [list|add|edit|remove|reload]',
+    usage: '/mcp [list|resources|read|add|edit|remove|reload]',
     async execute(ctx, args) {
       const trimmed = args.trim();
       if (!trimmed) return mcpActionPicker(ctx);
       const [verb, ...rest] = trimmed.split(/\s+/);
 
       if (verb === 'list') return formatMcpList(ctx);
+      if (verb === 'resources') return formatMcpResources(ctx, rest[0]);
+      if (verb === 'read') return readMcpResource(ctx, rest[0], rest.slice(1).join(' '));
       if (verb === 'reload') return mcpReload(ctx);
       if (verb === 'remove') {
         const name = rest[0];
@@ -627,6 +637,57 @@ export const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: '/sessions',
+    description: 'List saved conversations',
+    execute() {
+      return formatSessions();
+    },
+  },
+  {
+    name: '/resume',
+    description: 'Resume a saved conversation',
+    usage: '/resume [id]',
+    execute(ctx, args) {
+      const id = args.trim();
+      if (!id) return resumePicker(ctx);
+      return resumeConversation(ctx, id);
+    },
+  },
+  {
+    name: '/forget',
+    description: 'Delete a saved conversation',
+    usage: '/forget [id]',
+    execute(_ctx, args) {
+      const id = args.trim();
+      if (!id) return forgetPicker();
+      return forgetConversation(id);
+    },
+  },
+  {
+    name: '/diff',
+    description: 'Show a structured git diff summary',
+    usage: '/diff [staged|all|path]',
+    execute(_ctx, args) {
+      return formatDiffCommand(args.trim());
+    },
+  },
+  {
+    name: '/review',
+    description: 'Review current git changes for risk patterns',
+    usage: '/review [staged|all|path]',
+    execute(_ctx, args) {
+      return formatDiffCommand(args.trim(), true);
+    },
+  },
+  {
+    name: '/code',
+    description: 'Code intelligence: symbols, definitions, references, diagnostics',
+    usage: '/code [symbols|def|refs|diagnostics] [query|file line character]',
+    async execute(_ctx, args) {
+      return runCodeCommand(args.trim());
+    },
+  },
+  {
     name: '/doctor',
     description: 'Run diagnostics on Asterisk environment',
     async execute(ctx) {
@@ -850,6 +911,200 @@ function runSkill(ctx: CommandContext, skill: Skill): string {
     return `✓ skill "${skill.name}" loaded into the input — press Enter to run`;
   }
   return `Skill: ${skill.name}\n${skill.description ? skill.description + '\n\n' : ''}${skill.prompt}`;
+}
+
+function formatSessions(): string {
+  const sessions = listConversations();
+  if (sessions.length === 0) return '(no saved conversations)';
+  const lines = [`Saved conversations · ${sessions.length}`];
+  for (const s of sessions.slice(0, 40)) {
+    lines.push(
+      `  ${s.id.padEnd(28)} ${new Date(s.updatedAt).toLocaleString()} · ${s.messageCount} messages`,
+    );
+  }
+  if (sessions.length > 40) lines.push(`  ... ${sessions.length - 40} more`);
+  lines.push('');
+  lines.push('Use /resume <id> or /forget <id>. The REPL auto-saves as "repl".');
+  return lines.join('\n');
+}
+
+function resumePicker(ctx: CommandContext): ListSpec {
+  const sessions = listConversations();
+  return {
+    kind: 'list',
+    title: 'Resume which conversation?',
+    items: sessions.map((s) => ({
+      value: s.id,
+      label: s.id,
+      description: `${new Date(s.updatedAt).toLocaleString()} · ${s.messageCount} messages`,
+    })),
+    emptyMessage: 'No saved conversations.',
+    onPick: (id) => resumeConversation(ctx, id),
+    onCancel: () => null,
+  };
+}
+
+function resumeConversation(ctx: CommandContext, id: string): string {
+  const messages = loadConversation(id);
+  if (messages.length === 0) return `no saved conversation named "${id}"`;
+  ctx.state.history.length = 0;
+  ctx.state.history.push(...messages);
+  saveConversation('repl', ctx.state.history);
+  return `✓ resumed "${id}" · ${messages.length} messages loaded`;
+}
+
+function forgetPicker(): ListSpec {
+  const sessions = listConversations();
+  return {
+    kind: 'list',
+    title: 'Forget which conversation?',
+    items: sessions.map((s) => ({
+      value: s.id,
+      label: s.id,
+      description: `${new Date(s.updatedAt).toLocaleString()} · ${s.messageCount} messages`,
+    })),
+    emptyMessage: 'No saved conversations.',
+    onPick: (id) => forgetConversation(id),
+    onCancel: () => null,
+  };
+}
+
+function forgetConversation(id: string): string {
+  return deleteConversation(id)
+    ? `✓ deleted saved conversation "${id}"`
+    : `no saved conversation named "${id}"`;
+}
+
+function formatDiffCommand(raw: string, review = false): string {
+  const { mode, path } = parseDiffArgs(raw);
+  const args = ['diff', '--no-ext-diff', '--stat'];
+  if (mode === 'staged') args.push('--staged');
+  if (mode === 'all') args.push('HEAD');
+  if (path) args.push('--', path);
+
+  const patchArgs = ['diff', '--no-ext-diff', '--unified=80'];
+  if (mode === 'staged') patchArgs.push('--staged');
+  if (mode === 'all') patchArgs.push('HEAD');
+  if (path) patchArgs.push('--', path);
+
+  try {
+    const stat = execSync(`git ${shellJoin(args)}`, { encoding: 'utf8', timeout: 10000 }).trim();
+    const patch = execSync(`git ${shellJoin(patchArgs)}`, { encoding: 'utf8', timeout: 10000 });
+    if (!patch.trim()) return '(no changes)';
+    if (!review) return [stat || 'Diff', '', truncate(patch, 50000)].join('\n');
+    const added = patch.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).length;
+    const removed = patch.split('\n').filter((l) => l.startsWith('-') && !l.startsWith('---')).length;
+    const hints = reviewHints(patch);
+    return [
+      `Review · ${mode}${path ? ` · ${path}` : ''} · +${added} / -${removed}`,
+      '',
+      stat,
+      '',
+      'Risk hints:',
+      ...(hints.length ? hints.map((h) => `  ${h}`) : ['  No obvious high-signal risk patterns found.']),
+      '',
+      truncate(patch, 50000),
+    ].join('\n');
+  } catch (e) {
+    return `git diff failed: ${(e as Error).message}`;
+  }
+}
+
+function parseDiffArgs(raw: string): { mode: 'unstaged' | 'staged' | 'all'; path?: string } {
+  const arg = raw.trim();
+  if (!arg) return { mode: 'unstaged' };
+  if (arg === 'staged' || arg === '--staged') return { mode: 'staged' };
+  if (arg === 'all' || arg === 'head' || arg === 'HEAD') return { mode: 'all' };
+  return { mode: 'unstaged', path: arg };
+}
+
+async function runCodeCommand(raw: string): Promise<string> {
+  const [verb = '', ...rest] = raw.split(/\s+/).filter(Boolean);
+  const query = rest.join(' ');
+  try {
+    if (verb === 'diagnostics' || verb === 'diag') {
+      if (rest[0]) {
+        const result = await codeIntelTool.execute({ action: 'diagnostics', file: rest[0] });
+        return result.output;
+      }
+      return truncate(execSync('bun run typecheck', { encoding: 'utf8', timeout: 120000 }), 30000)
+        || 'diagnostics passed';
+    }
+    if ((verb === 'def' || verb === 'definition' || verb === 'refs' || verb === 'references') && rest.length >= 3) {
+      const [file, lineRaw, characterRaw] = rest;
+      const line = Number.parseInt(lineRaw ?? '', 10);
+      const character = Number.parseInt(characterRaw ?? '', 10);
+      if (file && Number.isFinite(line) && Number.isFinite(character)) {
+        const result = await codeIntelTool.execute({
+          action: verb === 'refs' || verb === 'references' ? 'references' : 'definition',
+          file,
+          line,
+          character,
+        });
+        return result.output;
+      }
+    }
+    if (verb === 'symbols' && rest.length === 1 && /\.(tsx?|jsx?)$/.test(rest[0] ?? '')) {
+      const result = await codeIntelTool.execute({ action: 'symbols', file: rest[0] });
+      return result.output;
+    }
+    if (!query && verb !== 'symbols') {
+      return 'usage: /code [symbols|def|refs|diagnostics] [query]';
+    }
+    if (verb === 'symbols') {
+      const pattern = query
+        ? definitionPattern(query)
+        : String.raw`^\s*(export\s+)?(async\s+)?(function|class|interface|type|const|let|var|enum)\s+[A-Za-z0-9_$]+`;
+      return rgCommand(pattern);
+    }
+    if (verb === 'def' || verb === 'definition') return rgCommand(definitionPattern(query));
+    if (verb === 'refs' || verb === 'references') return rgCommand(escapeRegex(query));
+    return 'usage: /code [symbols|def|refs|diagnostics] [query]';
+  } catch (e) {
+    const error = e as { stdout?: string; stderr?: string; message?: string };
+    return truncate([error.stdout, error.stderr, error.message].filter(Boolean).join('\n'), 30000);
+  }
+}
+
+function rgCommand(pattern: string): string {
+  const cmd = `rg --line-number --no-heading --color=never --glob '!node_modules' --glob '!dist' ${quote(pattern)} .`;
+  const out = execSync(cmd, { encoding: 'utf8', timeout: 30000 });
+  return truncate(out || '(no matches)', 30000);
+}
+
+function definitionPattern(query: string): string {
+  const q = escapeRegex(query);
+  return String.raw`^\s*(export\s+)?(async\s+)?(function|class|interface|type|const|let|var|enum)\s+${q}\b`;
+}
+
+function reviewHints(diff: string): string[] {
+  const addedLines = diff.split('\n').filter((line) => line.startsWith('+') && !line.startsWith('+++'));
+  const checks: Array<[RegExp, string]> = [
+    [/\bTODO\b|\bFIXME\b/i, 'New TODO/FIXME markers were added.'],
+    [/\bconsole\.log\b/, 'New console.log calls were added.'],
+    [/\bany\b/, 'New TypeScript any usage appears in added lines.'],
+    [/\beval\s*\(/, 'New eval usage appears in added lines.'],
+    [/\bexecSync\s*\(|\bspawn\s*\(|\bexeca\s*\(/, 'New process execution code was added.'],
+    [/\bprocess\.env\b/, 'New environment-variable reads were added.'],
+    [/\bwriteFileSync\b|\bunlinkSync\b|\brmSync\b/, 'New synchronous filesystem mutation code was added.'],
+  ];
+  return checks.filter(([pattern]) => addedLines.some((line) => pattern.test(line))).map(([, msg]) => msg);
+}
+
+function shellJoin(args: string[]): string {
+  return args.map(quote).join(' ');
+}
+
+function quote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function truncate(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max)}\n[truncated]` : value;
 }
 
 function hooksActionPicker(_ctx: CommandContext): ListSpec {
@@ -1105,6 +1360,7 @@ function mcpActionPicker(ctx: CommandContext): ListSpec {
     title: 'MCP servers — pick an action',
     items: [
       { value: 'list', label: 'List', description: 'show configured + connected servers' },
+      { value: 'resources', label: 'Resources', description: 'list connected MCP resources' },
       { value: 'add', label: 'Add', description: 'register a new MCP server' },
       { value: 'edit', label: 'Edit', description: 'change an existing server' },
       { value: 'remove', label: 'Remove', description: 'delete a server' },
@@ -1112,6 +1368,7 @@ function mcpActionPicker(ctx: CommandContext): ListSpec {
     ],
     onPick: async (v): Promise<CommandResult> => {
       if (v === 'list') return formatMcpList(ctx);
+      if (v === 'resources') return formatMcpResources(ctx);
       if (v === 'add') return mcpTransportPicker(ctx);
       if (v === 'edit') return mcpEditPicker(ctx);
       if (v === 'remove') return mcpRemovePicker(ctx);
@@ -1393,6 +1650,54 @@ function formatMcpList(ctx: CommandContext): string {
   if (tools.length > 0)
     lines.push(`(${tools.length} MCP tool${tools.length === 1 ? '' : 's'} available)`);
   return lines.join('\n');
+}
+
+async function formatMcpResources(ctx: CommandContext, serverName?: string): Promise<string> {
+  const servers = ctx.mcp.servers.filter((s) => !serverName || s.config.name === serverName);
+  if (servers.length === 0) {
+    return serverName
+      ? `MCP server not connected: ${serverName}`
+      : '(no MCP servers connected)';
+  }
+  const lines: string[] = ['MCP resources:'];
+  for (const server of servers) {
+    try {
+      const listed = await server.client.listResources();
+      lines.push(`  ${server.config.name} · ${listed.resources.length} resource(s)`);
+      for (const r of listed.resources) {
+        const label = r.name ? ` · ${r.name}` : '';
+        const mime = r.mimeType ? ` · ${r.mimeType}` : '';
+        lines.push(`    ${r.uri}${label}${mime}`);
+      }
+    } catch (e) {
+      lines.push(`  ${server.config.name} · unavailable: ${(e as Error).message}`);
+    }
+  }
+  lines.push('');
+  lines.push('Use /mcp read <server> <uri> to inspect one.');
+  return lines.join('\n');
+}
+
+async function readMcpResource(
+  ctx: CommandContext,
+  serverName: string | undefined,
+  uri: string,
+): Promise<string> {
+  if (!serverName || !uri.trim()) return 'usage: /mcp read <server> <uri>';
+  const server = ctx.mcp.servers.find((s) => s.config.name === serverName);
+  if (!server) return `MCP server not connected: ${serverName}`;
+  try {
+    const result = await server.client.readResource({ uri: uri.trim() });
+    const output = result.contents
+      .map((item) => {
+        if ('text' in item && typeof item.text === 'string') return item.text;
+        return JSON.stringify(item);
+      })
+      .join('\n');
+    return truncate(output, 50000);
+  } catch (e) {
+    return `MCP resource read failed: ${(e as Error).message}`;
+  }
 }
 
 function applyMcpToolsToRegistry(ctx: CommandContext): void {

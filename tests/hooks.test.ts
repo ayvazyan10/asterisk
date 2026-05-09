@@ -50,6 +50,41 @@ describe('fireHooks', () => {
     expect(payload.toolOutput).toBe('wrote 5 bytes');
   });
 
+  it('parses a before_tool block decision from stdout JSON', async () => {
+    const hook: HookConfig = {
+      name: 'block-rm',
+      event: 'before_tool',
+      command: 'echo \'{"action":"block","reason":"no rm"}\'',
+      timeoutSeconds: 5,
+      enabled: true,
+    };
+    const results = await fireHooks([hook], {
+      event: 'before_tool',
+      tool: 'Bash',
+      toolInput: { command: 'rm -rf tmp' },
+    });
+    expect(results[0]?.decision).toEqual({ action: 'block', reason: 'no rm' });
+  });
+
+  it('parses a before_tool rewrite decision from stdout JSON', async () => {
+    const hook: HookConfig = {
+      name: 'rewrite',
+      event: 'before_tool',
+      command: 'echo \'{"action":"rewrite","input":{"command":"echo rewritten"}}\'',
+      timeoutSeconds: 5,
+      enabled: true,
+    };
+    const results = await fireHooks([hook], {
+      event: 'before_tool',
+      tool: 'Bash',
+      toolInput: { command: 'echo original' },
+    });
+    expect(results[0]?.decision).toEqual({
+      action: 'rewrite',
+      input: { command: 'echo rewritten' },
+    });
+  });
+
   it('respects the matcher regex against tool name', async () => {
     const hookForWrite: HookConfig = {
       ...baseHook,

@@ -6,6 +6,7 @@ import { render } from 'ink';
 import React from 'react';
 
 import { createAgentState } from '../agent/loop.ts';
+import { loadConversation } from '../agent/persistence.ts';
 import { createMcpManager } from '../mcp/manager.ts';
 import { createAnthropicProvider } from '../providers/anthropic.ts';
 import { createOllamaProvider } from '../providers/ollama.ts';
@@ -28,6 +29,7 @@ function pickProvider(): Provider {
 
 const provider = pickProvider();
 const state = createAgentState();
+state.history = loadConversation('repl');
 const mcp = createMcpManager();
 
 // Connect any pre-configured MCP servers in the background. We don't block
