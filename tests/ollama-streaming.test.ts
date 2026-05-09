@@ -222,32 +222,6 @@ describe('Ollama streaming', () => {
     expect(visibleText).toContain('answer');
   });
 
-  it('hides leading untagged meta reasoning from omnicoder-style streams', async () => {
-    globalThis.fetch = (async () => {
-      const stream = ndjsonStream([
-        JSON.stringify({ message: { role: 'assistant', content: 'User greets me in Russian — ' }, done: false }),
-        JSON.stringify({ message: { role: 'assistant', content: 'I should respond in kind.' }, done: false }),
-        JSON.stringify({ message: { role: 'assistant', content: '\n\nПривет. Чем помочь?' }, done: true }),
-      ]);
-      return new Response(stream, { status: 200 });
-    }) as unknown as typeof fetch;
-
-    const provider = createOllamaProvider({ baseUrl: 'http://x', model: 'm' });
-    const visible: string[] = [];
-    const thinking: string[] = [];
-    const r = await provider.send({
-      system: 's',
-      messages: [],
-      tools: [],
-      onText: (d) => visible.push(d),
-      onThinking: (d) => thinking.push(d),
-    });
-
-    expect(visible.join('')).toBe('Привет. Чем помочь?');
-    expect(thinking.join('')).toContain('User greets me');
-    expect((r.content[0] as TextBlock).text).toBe('Привет. Чем помочь?');
-  });
-
   it('aborts on idle timeout when no chunks arrive', async () => {
     globalThis.fetch = (async () => {
       // Stream that sends one chunk then stalls forever.

@@ -42,12 +42,4 @@ describe('stripThinkTags', () => {
     expect(stripThinkTags('<THINK>x</THINK>after')).toBe('after');
   });
 
-  it('removes leading untagged meta reasoning before the answer', () => {
-    const raw = [
-      'User greets me in Russian — I should respond in kind.',
-      '',
-      'Привет. Чем помочь?',
-    ].join('\n');
-    expect(stripThinkTags(raw)).toBe('Привет. Чем помочь?');
-  });
 });

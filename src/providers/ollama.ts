@@ -51,7 +51,7 @@ const DEFAULTS: OllamaConfig = {
   baseUrl: process.env['OLLAMA_BASE_URL'] ?? 'http://127.0.0.1:11434',
   model: process.env['OLLAMA_MODEL'] ?? 'carstenuhlig/omnicoder-9b:q8_0',
   contextWindow: Number(process.env['OLLAMA_CONTEXT_WINDOW'] ?? 65536),
-  think: process.env['OLLAMA_THINK'] === '1' || process.env['OLLAMA_THINK'] === 'true',
+  think: process.env['OLLAMA_THINK'] !== '0' && process.env['OLLAMA_THINK'] !== 'false',
   modelTimeoutMs: Number(process.env['OLLAMA_MODEL_TIMEOUT_MS'] ?? 300_000),
   modelIdleTimeoutMs: Number(process.env['OLLAMA_MODEL_IDLE_TIMEOUT_MS'] ?? 90_000),
 };
@@ -131,7 +131,7 @@ export function stripThinkTags(text: string): string {
     out = out.slice(lastClose + '</think>'.length);
   }
   out = out.replace(/<think>/gi, '');
-  return stripLeadingMetaReasoning(out).trim();
+  return out.trim();
 }
 
 function blocksFromOllama(msg: OllamaMessage): ContentBlock[] {
@@ -397,8 +397,6 @@ function createThinkFilter(): {
 } {
   let buf = '';
   let inside = false;
-  let atStart = true;
-  let suppressLeadingMeta = false;
   return {
     feed(chunk: string): { visible: string; thinking: string } {
       buf += chunk;
@@ -407,28 +405,6 @@ function createThinkFilter(): {
       // Loop until no more *complete* tag can be resolved this turn.
       // eslint-disable-next-line no-constant-condition
       while (true) {
-        if (atStart && !inside) {
-          const meta = looksLikeLeadingMetaReasoning(buf);
-          if (meta || suppressLeadingMeta) {
-            suppressLeadingMeta = true;
-            const split = findParagraphBreak(buf);
-            if (split === -1) {
-              thinking += buf;
-              buf = '';
-              break;
-            }
-            thinking += buf.slice(0, split);
-            buf = buf.slice(split).replace(/^\s+/, '');
-            atStart = false;
-            suppressLeadingMeta = false;
-            continue;
-          }
-          if (!couldStillBecomeLeadingMeta(buf)) {
-            atStart = false;
-          } else {
-            break;
-          }
-        }
         if (!inside) {
           const lower = buf.toLowerCase();
           const open = lower.indexOf('<think>');
@@ -488,10 +464,6 @@ function createThinkFilter(): {
         buf = '';
         return '';
       }
-      if (suppressLeadingMeta) {
-        buf = '';
-        return '';
-      }
       const out = buf;
       buf = '';
       return out;
@@ -499,28 +471,3 @@ function createThinkFilter(): {
   };
 }
 
-function looksLikeLeadingMetaReasoning(text: string): boolean {
-  const first = text.trimStart().slice(0, 240);
-  if (!first) return false;
-  return /^(User|The user|Пользователь|Юзер)\b/i.test(first)
-    && /\b(greets|asks|wants|requested|says|should|respond|answer|нужно|просит|говорит|ответить)\b/i.test(first);
-}
-
-function couldStillBecomeLeadingMeta(text: string): boolean {
-  const first = text.trimStart();
-  if (!first) return true;
-  return /^(U|Us|Use|User|T|Th|The|The |The u|The us|The use|The user|П|По|Пол|Поль|Польз|Пользо|Пользов|Пользова|Пользоват|Пользовате|Пользовател|Пользователь|Ю|Юз|Юзе|Юзер)$/i.test(first)
-    && first.length < 32;
-}
-
-function findParagraphBreak(text: string): number {
-  const match = /\r?\n\s*\r?\n/.exec(text);
-  return match?.index ?? -1;
-}
-
-function stripLeadingMetaReasoning(text: string): string {
-  if (!looksLikeLeadingMetaReasoning(text)) return text;
-  const split = findParagraphBreak(text);
-  if (split === -1) return '';
-  return text.slice(split).replace(/^\s+/, '');
-}

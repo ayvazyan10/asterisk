@@ -5,6 +5,7 @@
 //   {"action":"rewrite","input":{...}}
 // Any other stdout remains informational.
 
+import { spawn } from 'node:child_process';
 import type { HookConfig, HookEvent } from '../config/schema.ts';
 
 export interface HookContext {
@@ -125,12 +126,11 @@ function runShellHook(
   signal?: AbortSignal,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const proc = Bun.spawn(['bash', '-lc', command], {
-      stdin: new Response(stdin),
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+    const proc = spawn('bash', ['-lc', command], { stdio: ['pipe', 'pipe', 'pipe'] });
     let settled = false;
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
     const finish = (result: { exitCode: number; stdout: string; stderr: string }) => {
       if (settled) return;
       settled = true;
@@ -154,13 +154,22 @@ function runShellHook(
       if (signal.aborted) onAbort();
       else signal.addEventListener('abort', onAbort, { once: true });
     }
-    void Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
-      .then(([stdout, stderr, exitCode]) => finish({ exitCode, stdout, stderr }))
-      .catch((error) => finish({ exitCode: 1, stdout: '', stderr: (error as Error).message }));
+
+    proc.stdout!.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+    proc.stderr!.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    proc.stdin!.write(stdin);
+    proc.stdin!.end();
+
+    proc.on('close', (code) => {
+      finish({
+        exitCode: code ?? 1,
+        stdout: Buffer.concat(stdoutChunks).toString(),
+        stderr: Buffer.concat(stderrChunks).toString(),
+      });
+    });
+    proc.on('error', (err) => {
+      finish({ exitCode: 1, stdout: '', stderr: err.message });
+    });
   });
 }
 
