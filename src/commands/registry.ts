@@ -14,6 +14,7 @@ import {
   saveConversation,
 } from '../agent/persistence.ts';
 import { loadConfig, saveConfig, saveSecrets } from '../config/load.ts';
+import { renderCost, renderUsage } from './usage-report.ts';
 import type { HookConfig, McpServerConfig } from '../config/schema.ts';
 import type { McpManager } from '../mcp/manager.ts';
 import { createAnthropicProvider } from '../providers/anthropic.ts';
@@ -70,17 +71,20 @@ async function listOllamaModels(baseUrl: string): Promise<string[]> {
 // Static fallback used when /v1/models can't be reached (no key, network
 // error, or the endpoint is throttled). Ordered newest-first so the visible
 // default lands on a current model.
+// Retired ids are omitted deliberately — offering one only produces a 404 at
+// the first request. Sonnet 3.5 retired 2025-10-28; Sonnet 3.7 and Haiku 3.5
+// retired 2026-02-19.
 const ANTHROPIC_FALLBACK_MODELS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: 'claude-fable-5', label: 'Claude Fable 5' },
+  { id: 'claude-opus-5', label: 'Claude Opus 5' },
+  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
   { id: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
+  { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
+  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
   { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
-  { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5 (2025-10-01)' },
+  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
   { id: 'claude-opus-4-5', label: 'Claude Opus 4.5' },
   { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
-  { id: 'claude-opus-4-0', label: 'Claude Opus 4.0' },
-  { id: 'claude-sonnet-4-0', label: 'Claude Sonnet 4.0' },
-  { id: 'claude-3-7-sonnet-latest', label: 'Claude Sonnet 3.7' },
-  { id: 'claude-3-5-sonnet-latest', label: 'Claude Sonnet 3.5' },
-  { id: 'claude-3-5-haiku-latest', label: 'Claude Haiku 3.5' },
 ];
 
 interface AnthropicModel {
@@ -249,6 +253,23 @@ export const COMMANDS: SlashCommand[] = [
         (t) => `  ${t.name.padEnd(24)} ${t.description.split('\n')[0]}`,
       );
       return ['Tools:', ...lines].join('\n');
+    },
+  },
+  {
+    name: '/cost',
+    description: 'Token spend for this session, today, and lifetime',
+    execute() {
+      return renderCost('repl', 'repl');
+    },
+  },
+  {
+    name: '/usage',
+    description: 'Token usage broken down by day, week, and month',
+    usage: '/usage [days]',
+    execute(_ctx, args) {
+      const requested = Number(args.trim());
+      const days = Number.isInteger(requested) && requested > 0 ? Math.min(requested, 90) : 14;
+      return renderUsage(days);
     },
   },
   {

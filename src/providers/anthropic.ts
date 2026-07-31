@@ -16,7 +16,8 @@ interface AnthropicConfig {
   model: string;
 }
 
-const DEFAULT_MODEL = process.env['ANTHROPIC_MODEL'] ?? 'claude-3-5-haiku-latest';
+// Haiku 3.5 retired 2026-02-19; `claude-haiku-4-5` is its replacement.
+const DEFAULT_MODEL = process.env['ANTHROPIC_MODEL'] ?? 'claude-haiku-4-5';
 
 export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}): Provider {
   const apiKey = overrides.apiKey ?? process.env['ANTHROPIC_API_KEY'] ?? '';

@@ -102,6 +102,8 @@ whole configuration surface in one place:
 - **MCP servers** and **hooks** — add, edit, enable, delete.
 - **Rules & skills** — a markdown editor for your rules, skills, sub-agent
   definitions and persona files.
+- **Usage & cost** — token spend per day and per model, with an editable
+  rate table seeded from Anthropic's published prices.
 - **Diagnostics, daemon control, log tail, audit trail** — the same ground
   as `/doctor`, `asterisk start|stop`, and `asterisk logs`.
 
@@ -144,6 +146,8 @@ authentication is refused outright.
 | `/provider [name]` | Switch between `ollama` and `anthropic` at runtime          |
 | `/tools`           | List registered tools (built-ins + MCP)                     |
 | `/status`          | Live runtime view: provider, bots, MCP, daemon              |
+| `/cost`            | Token spend: session, today, last 7d, lifetime, by model    |
+| `/usage [days]`    | Day / week / month rollups plus a daily chart               |
 | `/config`          | Interactive forms for each config section                   |
 | `/reset`           | Clear history and rebuild the provider from config          |
 | `/mcp`             | Manage MCP servers — list/add/edit/remove/reload (visual)   |
@@ -501,7 +505,7 @@ the panel's **Download JSON** button produces and **Upload JSON** accepts:
     "model": "qwen3.5:9b-q8-max",
     "contextWindow": 131072
   },
-  "anthropic": { "model": "claude-3-5-haiku-latest" },
+  "anthropic": { "model": "claude-haiku-4-5" },
   "bots": {
     "telegram": {
       "enabled": false,

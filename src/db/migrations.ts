@@ -89,6 +89,46 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX idx_audit_at ON audit_log (at DESC);
     `,
   },
+  {
+    version: 2,
+    name: 'usage-and-pricing',
+    sql: `
+      -- One row per agent turn. Token counts are summed across every model
+      -- call the turn made, so a turn that used tools still yields one row.
+      CREATE TABLE usage (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        at            INTEGER NOT NULL,
+        session_scope TEXT NOT NULL,
+        session_id    TEXT NOT NULL,
+        provider      TEXT NOT NULL,
+        model         TEXT NOT NULL,
+        input_tokens  INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+        model_calls   INTEGER NOT NULL DEFAULT 1,
+        -- NULL when no price is known for the model, which is different from
+        -- 0.0 (a local model that genuinely costs nothing).
+        cost_usd      REAL
+      );
+
+      CREATE INDEX idx_usage_at ON usage (at DESC);
+      CREATE INDEX idx_usage_session ON usage (session_scope, session_id);
+
+      -- Rates in USD per million tokens. Seeded with published Anthropic
+      -- pricing; editable, because published rates change and self-hosted or
+      -- proxied endpoints have their own.
+      CREATE TABLE model_pricing (
+        model                TEXT PRIMARY KEY,
+        input_per_mtok       REAL NOT NULL,
+        output_per_mtok      REAL NOT NULL,
+        cache_write_per_mtok REAL,
+        cache_read_per_mtok  REAL,
+        source               TEXT NOT NULL DEFAULT 'builtin',
+        updated_at           INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 interface MigrationRow {

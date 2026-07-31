@@ -161,8 +161,8 @@ function viewContent() {
   const pane = e.path
     ? '<div class="panel"><h3>' + esc(e.kind + ' / ' + e.path) +
         '<span>' + (changed ? 'unsaved' : 'saved') + '</span></h3>' +
-        '<div style="padding:1.15rem"><textarea id="editor-body" spellcheck="false">' + esc(e.content) + '</textarea>' +
-        '<div class="actions" style="margin-top:0.75rem">' +
+        '<div class="pad"><textarea id="editor-body" spellcheck="false">' + esc(e.content) + '</textarea>' +
+        '<div class="actions mt">' +
           '<button class="btn primary" data-action="content-save"' + (changed ? '' : ' disabled') + '>Save</button>' +
           '<button class="btn" data-action="content-revert"' + (changed ? '' : ' disabled') + '>Revert</button>' +
           '<button class="btn danger" data-action="content-delete">Delete file</button>' +
@@ -226,6 +226,107 @@ function viewTokens() {
     '</div></div>';
 }
 
+// --- usage & cost -------------------------------------------------------
+
+function tokens(n) {
+  if (!n) return '0';
+  if (n < 1000) return String(n);
+  if (n < 1e6) return (n / 1000).toFixed(1) + 'k';
+  return (n / 1e6).toFixed(2) + 'M';
+}
+
+function money(usd, unpriced) {
+  const base = usd === 0 ? '$0.00'
+    : usd < 0.01 ? '$' + usd.toFixed(5)
+    : usd < 1 ? '$' + usd.toFixed(4)
+    : '$' + usd.toFixed(2);
+  // A "+" marks a floor: some turns ran on models with no configured rate.
+  return unpriced > 0 ? base + '+' : base;
+}
+
+function viewUsage() {
+  const u = state.usage;
+  if (!u) return '<div class="empty">Loading…</div>';
+
+  const t = u.totals;
+  const peak = Math.max(1, ...u.byDay.map((d) => d.inputTokens + d.outputTokens));
+
+  const chart = u.byDay.map((d) => {
+    const total = d.inputTokens + d.outputTokens;
+    // Quantised to the 2% steps the stylesheet defines — the CSP forbids
+    // style attributes, so the width has to be a class.
+    const pct = total === 0 ? 0 : Math.max(2, Math.round((total / peak) * 50) * 2);
+    // Local MM-DD. toISOString() would render in UTC and label today's
+    // bucket with yesterday's date east of Greenwich.
+    const dt = new Date(d.day);
+    const label = String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+    return '<div class="item bar-row">' +
+      '<code class="detail bar-label">' + esc(label) + '</code>' +
+      '<div class="bar-track"><div class="bar-fill w' + pct + '"></div></div>' +
+      '<code class="detail bar-tokens">' + esc(tokens(total)) + '</code>' +
+      '<code class="detail bar-cost">' +
+        (d.turns ? esc(money(d.costUsd, d.unpricedTurns)) : '—') + '</code>' +
+    '</div>';
+  }).join('');
+
+  const models = u.byModel.length === 0
+    ? '<div class="empty">Nothing recorded yet.</div>'
+    : u.byModel.map((m) =>
+        '<div class="item"><div class="grow"><div class="name">' + esc(m.provider + ':' + m.model) + '</div>' +
+        '<div class="detail">' + esc(tokens(m.inputTokens)) + ' in · ' + esc(tokens(m.outputTokens)) + ' out · ' +
+        m.turns + ' turns' + (m.unpricedTurns > 0 ? ' · ' + m.unpricedTurns + ' unpriced' : '') + '</div></div>' +
+        '<code class="detail">' + esc(money(m.costUsd, m.unpricedTurns)) + '</code></div>'
+      ).join('');
+
+  const pricing = (state.pricing || []).map((p) =>
+    '<div class="item"><div class="grow"><div class="name">' + esc(p.model) +
+      ' <span class="detail">' + esc(p.source) + '</span></div>' +
+      '<div class="detail">$' + p.inputPerMTok + ' in · $' + p.outputPerMTok + ' out · $' +
+      p.cacheWritePerMTok.toFixed(3) + ' cache write · $' + p.cacheReadPerMTok.toFixed(3) +
+      ' cache read (per Mtok)</div></div>' +
+      '<button class="btn sm danger" data-price-delete="' + esc(p.model) + '">Delete</button></div>'
+  ).join('');
+
+  return '' +
+    '<header><h2>Usage &amp; cost</h2><p>One row is recorded per agent turn. Local models are counted at ' +
+      'zero cost; models with no configured rate are counted in tokens but excluded from the money total, ' +
+      'which is why some figures carry a “+”.</p></header>' +
+    '<div class="readouts">' +
+      readout('Today', money(t.today.costUsd, t.today.unpricedTurns), 'sm') +
+      readout('Last 7d', money(t.week.costUsd, t.week.unpricedTurns), 'sm') +
+      readout('Last 30d', money(t.month.costUsd, t.month.unpricedTurns), 'sm') +
+      readout('Lifetime', money(t.lifetime.costUsd, t.lifetime.unpricedTurns), 'sm') +
+      readout('Turns', String(t.lifetime.turns)) +
+    '</div>' +
+    '<div class="panel"><h3>Last ' + u.days + ' days</h3>' + chart + '</div>' +
+    '<div class="panel"><h3>By model</h3>' + models + '</div>' +
+    '<div class="panel"><h3>Pricing<span>USD per million tokens</span></h3>' + pricing +
+      '<div class="form-grid">' +
+        '<label for="price-model">Model</label><input type="text" id="price-model" placeholder="claude-opus-5">' +
+        '<label for="price-in">Input</label><input type="number" id="price-in" step="0.01" placeholder="5">' +
+        '<label for="price-out">Output</label><input type="number" id="price-out" step="0.01" placeholder="25">' +
+        '<div class="span actions"><button class="btn primary" data-action="price-save">Save rate</button>' +
+        '<span class="detail">Cache rates default to 1.25× input (write) and 0.1× input (read).</span></div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="actions"><button class="btn danger" data-action="usage-clear">Clear usage history</button></div>';
+}
+
+async function savePricing() {
+  const model = $('#price-model').value.trim();
+  const inputPerMTok = $('#price-in').value;
+  const outputPerMTok = $('#price-out').value;
+  if (!model || inputPerMTok === '' || outputPerMTok === '') {
+    toast('Model, input and output rates are required', 'bad');
+    return;
+  }
+  const ok = await guard(() => api('/pricing', {
+    method: 'PUT',
+    body: JSON.stringify({ model, inputPerMTok, outputPerMTok }),
+  }), 'Rate saved');
+  if (ok) { await loadUsage(); render(); }
+}
+
 // --- diagnostics, logs, audit -------------------------------------------
 
 function viewDoctor() {
@@ -246,7 +347,7 @@ function viewDoctor() {
 function viewLogs() {
   return '' +
     '<header><h2>Daemon log</h2><p>Tail of <code>~/.asterisk/logs/daemon.log</code>.</p></header>' +
-    '<div class="actions" style="margin-bottom:1rem">' +
+    '<div class="actions mb">' +
       '<button class="btn" data-action="logs-refresh">Refresh</button></div>' +
     '<div class="panel"><pre class="log">' + esc(state.logText || '(empty)') + '</pre></div>';
 }
@@ -276,17 +377,22 @@ async function loadTokens()   { const r = await guard(() => api('/tokens'));   s
 async function loadAudit()    { const r = await guard(() => api('/audit'));    state.audit = r ? r.entries : []; }
 async function loadLogs()     { const r = await guard(() => api('/logs'));     state.logText = r ? r.text : ''; }
 async function loadDoctor()   { state.doctor = await guard(() => api('/doctor')); }
+async function loadUsage() {
+  state.usage = await guard(() => api('/usage'));
+  const r = await guard(() => api('/pricing'));
+  state.pricing = r ? r.pricing : [];
+}
 
 const LOADERS = {
   overview: loadStatus, settings: loadSettings, mcp: loadMcp, hooks: loadHooks,
   secrets: loadSecrets, content: loadContent, tokens: loadTokens,
-  audit: loadAudit, logs: loadLogs, doctor: loadDoctor,
+  audit: loadAudit, logs: loadLogs, doctor: loadDoctor, usage: loadUsage,
 };
 
 const VIEWS = {
   overview: viewOverview, settings: viewSettings, mcp: viewMcp, hooks: viewHooks,
   secrets: viewSecrets, content: viewContent, tokens: viewTokens,
-  audit: viewAudit, logs: viewLogs, doctor: viewDoctor,
+  audit: viewAudit, logs: viewLogs, doctor: viewDoctor, usage: viewUsage,
 };
 
 function render() {
@@ -310,7 +416,7 @@ async function goto(tab) {
 document.addEventListener('click', async (ev) => {
   const t = ev.target.closest('[data-tab],[data-action],[data-daemon],[data-toggle],[data-reset],' +
     '[data-revert],[data-mcp-toggle],[data-mcp-delete],[data-hook-toggle],[data-hook-delete],' +
-    '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open]');
+    '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-price-delete]');
   if (!t) return;
   const d = t.dataset;
 
@@ -382,6 +488,13 @@ document.addEventListener('click', async (ev) => {
     return;
   }
 
+  if (d.priceDelete) {
+    if (!confirm('Delete the rate for "' + d.priceDelete + '"?')) return;
+    const ok = await guard(() => api('/pricing/' + encodeURIComponent(d.priceDelete), { method: 'DELETE' }), 'Deleted');
+    if (ok) { await loadUsage(); render(); }
+    return;
+  }
+
   if (d.tokenRevoke) {
     if (!confirm('Revoke this token? Sessions using it will be signed out.')) return;
     const ok = await guard(() => api('/tokens/' + d.tokenRevoke, { method: 'DELETE' }), 'Revoked');
@@ -402,6 +515,13 @@ document.addEventListener('click', async (ev) => {
     case 'discard': state.dirty.clear(); return render();
     case 'mcp-save': return saveMcp();
     case 'hook-save': return saveHook();
+    case 'price-save': return savePricing();
+    case 'usage-clear': {
+      if (!confirm('Delete all recorded usage history? Totals reset to zero.')) return;
+      const ok = await guard(() => api('/usage', { method: 'DELETE' }), 'Usage history cleared');
+      if (ok) { await loadUsage(); render(); }
+      return;
+    }
     case 'token-new': {
       const label = $('#token-label').value.trim() || 'panel';
       const out = await guard(() => api('/tokens', { method: 'POST', body: JSON.stringify({ label }) }));

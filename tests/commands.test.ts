@@ -64,6 +64,7 @@ describe('command registry', () => {
         '/clear',
         '/code',
         '/config',
+        '/cost',
         '/diff',
         '/doctor',
         '/forget',
@@ -87,6 +88,7 @@ describe('command registry', () => {
         '/tasks',
         '/tools',
         '/update',
+        '/usage',
       ].sort(),
     );
   });

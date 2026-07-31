@@ -9,6 +9,7 @@
 import type { AgentState } from '../agent/loop.ts';
 import { currentSession, currentSessionId } from '../agent/context.ts';
 import { loadConfig, saveConfig } from '../config/load.ts';
+import { renderCostCompact } from '../commands/usage-report.ts';
 import { findOutputStyle, OUTPUT_STYLES } from '../output-styles/styles.ts';
 import {
   clearSessionSoul,
@@ -37,6 +38,7 @@ export const BOT_COMMAND_LIST: BotCommandSpec[] = [
   { command: 'plan', description: 'Toggle plan mode (read-only research mode)' },
   { command: 'soul', description: 'Show / set / clear your personal persona' },
   { command: 'style', description: 'Switch reply style (default / concise / explanatory / learning)' },
+  { command: 'cost', description: 'Token spend for this chat, today, and lifetime' },
 ];
 
 const HELP_TEXT = `👋 I'm Asterisk, a personal AI assistant. Just message me anything — I can read files, run shell commands, browse the web, take screenshots, schedule tasks, and more.
@@ -49,6 +51,7 @@ Commands:
 /tasks   — list your tasks
 /plan    — toggle Plan Mode (read-only research mode)
 /soul    — show / set / clear your personal persona (try /soul help)
+/cost    — token spend for this chat, today, and lifetime
 
 Otherwise just type what you want me to do.`;
 
@@ -86,6 +89,13 @@ export function tryHandleBotCommand(
 
     case 'status':
       return { text: renderStatus(ctx) };
+
+    case 'cost': {
+      // Scoped to the calling chat via the ambient session, so one user can't
+      // read another's spend.
+      const session = currentSession();
+      return { text: renderCostCompact(session.scope, session.id) };
+    }
 
     case 'clear':
       ctx.state.history.length = 0;

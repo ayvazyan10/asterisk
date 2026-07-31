@@ -56,11 +56,11 @@ function gate(nonce: string): string {
 <body>
 <main class="gate">
   <div class="card">
-    <h1>Asterisk<span style="color:var(--signal)">*</span> control</h1>
+    <h1>Asterisk<span class="accent">*</span> control</h1>
     <p>This panel needs an access token. Start it from a terminal and follow the printed link, which
        carries the token as a query parameter and exchanges it for a session cookie.</p>
     <code>asterisk web</code>
-    <p style="margin-top:1.25rem">Already have a token? Append it to the URL:</p>
+    <p class="mt-lg">Already have a token? Append it to the URL:</p>
     <code>http://127.0.0.1:4321/?token=YOUR_TOKEN</code>
   </div>
 </main>

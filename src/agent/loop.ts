@@ -11,6 +11,7 @@ import type {
   Message,
   Provider,
   TextBlock,
+  TokenUsage,
   ToolResultBlock,
   ToolUseBlock,
 } from '../types/messages.ts';
@@ -25,6 +26,8 @@ import { retry } from '../utils/retry.ts';
 import { type AgentSession, runWithSession } from './context.ts';
 import { shouldPersistOutput, persistOutput } from './output-store.ts';
 import { compactHistory } from './compaction.ts';
+import { getDb } from '../db/index.ts';
+import { isEmptyUsage, recordUsage } from '../db/usage.ts';
 import { isConcurrencySafe } from '../tools/concurrency.ts';
 
 const SYSTEM_PROMPT = `You are Asterisk, a personal AI assistant running on the user's machine.
@@ -174,6 +177,60 @@ export interface RunOptions {
 export interface AgentTurnResult {
   finalText: string;
   reason: TerminalReason;
+  /** Tokens consumed across every model call made during the turn. */
+  usage: TokenUsage;
+  /** How many times the provider was called — one per tool round trip plus one. */
+  modelCalls: number;
+}
+
+/**
+ * Writes the turn's usage to the database.
+ *
+ * Deliberately a no-op when the providers reported no counters: that keeps
+ * turns driven by stub providers (every agent-loop test) from touching the
+ * filesystem at all. Failures are swallowed — accounting must never break a
+ * turn that already produced an answer for the user.
+ */
+function persistUsage(
+  providerName: string,
+  session: AgentSession,
+  usage: TokenUsage,
+  modelCalls: number,
+): void {
+  if (isEmptyUsage(usage)) return;
+
+  // Provider names are `<provider>:<model>`; the model itself may contain
+  // colons (`qwen3.5:9b-q8-max`), so split on the first one only.
+  const separator = providerName.indexOf(':');
+  const provider = separator > 0 ? providerName.slice(0, separator) : providerName;
+  const model = separator > 0 ? providerName.slice(separator + 1) : '';
+
+  try {
+    recordUsage(getDb(), {
+      sessionScope: session.scope,
+      sessionId: session.id,
+      provider,
+      model,
+      tokens: usage,
+      modelCalls,
+    });
+  } catch {
+    // A read-only or missing database must not fail the turn.
+  }
+}
+
+/** Folds one response's usage into a running total. Mutates `into` in place. */
+function addUsage(into: TokenUsage, from: TokenUsage | undefined): void {
+  if (!from) return;
+  for (const key of [
+    'inputTokens',
+    'outputTokens',
+    'cacheCreationInputTokens',
+    'cacheReadInputTokens',
+  ] as const) {
+    const value = from[key];
+    if (typeof value === 'number') into[key] = (into[key] ?? 0) + value;
+  }
 }
 
 export async function runAgentTurn(
@@ -241,6 +298,10 @@ async function runAgentTurnInner(
   let summaryProdsUsed = 0;
   const MAX_SUMMARY_PRODS = 1;
   let reason: TerminalReason = 'unknown-error';
+  // Usage accumulates across every model call in the turn — a turn that fires
+  // tools makes several, and the caller wants the total, not the last one.
+  const usage: TokenUsage = {};
+  let modelCalls = 0;
 
   try {
     for (let turn = 0; turn < maxTurns; turn++) {
@@ -309,6 +370,9 @@ async function runAgentTurnInner(
         }
         throw error;
       }
+
+      modelCalls++;
+      addUsage(usage, response.usage);
 
       state.history.push({ role: 'assistant', content: response.content });
 
@@ -513,7 +577,14 @@ async function runAgentTurnInner(
     for (const r of after) opts.onHook?.(r);
   }
 
-  return { finalText, reason };
+  persistUsage(
+    provider.name,
+    opts.session ?? { id: 'default', scope: 'unknown' },
+    usage,
+    modelCalls,
+  );
+
+  return { finalText, reason, usage, modelCalls };
 }
 
 // Partition tool_use blocks into sequential/parallel batches.

@@ -10,6 +10,7 @@ import { chmodSync } from 'node:fs';
 import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
 import { openDriver, type SqliteDriver } from './driver.ts';
 import { migrate } from './migrations.ts';
+import { seedBuiltinPricing } from './pricing.ts';
 
 const open = new Map<string, SqliteDriver>();
 
@@ -30,6 +31,7 @@ export function getDb(file?: string): SqliteDriver {
   if (target !== ':memory:') ensurePaths(asteriskPaths());
   const db = openDriver(target);
   migrate(db);
+  seedBuiltinPricing(db);
 
   // The database holds API keys and bot tokens, so it gets the same 0600 the
   // old secrets.env had. Applied after open so the file definitely exists;

@@ -5,7 +5,18 @@
 // amber signal colour carrying state. Light and dark are both deliberate
 // rather than one being an inversion of the other.
 
-export const STYLES = String.raw`
+/**
+ * The page's CSP is `style-src 'nonce-…'`, and a nonce does not authorise
+ * `style="…"` attributes — only whole `<style>` elements. Everything the UI
+ * needs is therefore a class, including the bar widths, which are quantised
+ * into 2% steps and emitted as `.w0`…`.w100` below.
+ */
+const WIDTH_UTILITIES = Array.from(
+  { length: 51 },
+  (_, i) => `.w${i * 2} { width: ${i * 2}%; }`,
+).join('\n');
+
+const BASE_STYLES = String.raw`
 :root {
   color-scheme: light dark;
 
@@ -373,4 +384,24 @@ pre.log {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* --- usage chart + layout helpers (no inline styles; see CSP note) ------ */
+
+.bar-row { gap: 0.75rem; }
+.bar-label { width: 3.5rem; flex: none; }
+.bar-track {
+  flex: 1; height: 10px; border-radius: 2px; overflow: hidden;
+  background: var(--bg-sunken);
+}
+.bar-fill { height: 100%; background: var(--signal); }
+.bar-tokens { width: 5rem; text-align: right; flex: none; }
+.bar-cost { width: 6rem; text-align: right; flex: none; }
+
+.pad { padding: 1.15rem; }
+.mt { margin-top: 0.75rem; }
+.mb { margin-bottom: 1rem; }
+.mt-lg { margin-top: 1.25rem; }
+.accent { color: var(--signal); }
 `;
+
+export const STYLES = `${BASE_STYLES}\n${WIDTH_UTILITIES}\n`;

@@ -3,9 +3,20 @@
 Forward-looking work, ranked by priority within each tier. Items move from
 here into commits as they ship.
 
-## Tier 1 — Likely next
+## Tier 1 — cleared
 
-### Skill marketplace
+Everything that was in Tier 1 has either shipped or been dropped. The next
+items to promote come from Tier 2 — image content blocks and the multi-agent
+coordinator are the two with real demand behind them.
+
+### ~~Skill marketplace~~ — dropped
+Cut on 2026-07-31. The bundled set stays the whole story; skills are still
+authored by hand in `~/.asterisk/skills/` or through the web panel's editor.
+Design notes kept below for anyone who wants to revive it.
+
+<details>
+<summary>Original design</summary>
+
 **Status:** designed, not started · **Effort:** medium
 
 Add `/skill install <name-or-url>` so users can pull `SKILL.md` files
@@ -40,35 +51,29 @@ Keeps the catalogue navigable without losing reach.
 - Update flow: `/skill update <name>` re-fetches and shows a diff before
   overwriting?
 
-### Token / cost tracking
-**Status:** infrastructure-light, content-heavy · **Effort:** medium
+</details>
 
-Wire token counts through the providers so users can see what their
-turns actually cost.
+### ~~Token / cost tracking~~ ✓ shipped
+Both providers now report usage — Ollama's `prompt_eval_count` /
+`eval_count` were previously discarded. The agent loop sums usage across
+every model call in a turn and writes one row to the `usage` table.
 
-- Both `Anthropic` and `Ollama` providers expose token usage on
-  responses; capture into a per-turn `TokenUsage { input, output, cached }`
-  block.
-- Aggregate per session and persist to `~/.asterisk/usage.jsonl`.
-- New `/cost` command (per-session + lifetime), new `/usage` command
-  with day / week / month breakdowns.
-- Telegram `/cost` for the bot side.
-- Optional: alert hook when a session crosses a configurable threshold.
+- `/cost` — session, today, last 7d, lifetime, plus a per-model split.
+- `/usage [days]` — day / week / month rollups and a daily chart.
+- Telegram `/cost`, scoped to the calling chat.
+- Web panel **Usage & cost** tab, with an editable per-model rate table
+  seeded from Anthropic's published prices.
+- Local models are recorded at zero cost; a paid model with no configured
+  rate is counted in tokens and flagged `unpriced` rather than silently
+  treated as free.
 
-**Why:** hard to budget LLM use without visibility. Especially relevant
-for users running paid Anthropic alongside local Ollama — they want to
-know which calls hit the paid API.
+Not done: the optional alert hook for crossing a spend threshold.
 
 ### ~~Streaming for the REPL~~ ✓ shipped
 Provider streaming wired into the REPL transcript via `onAssistantDelta`.
 Tokens land in a single self-updating assistant entry. Working
 indicator surfaces character counts when no tools have fired yet so
 long generations don't look like a hang.
-
-### ~~Token / cost tracking~~ ✓ partially shipped
-`TokenUsage` type and Anthropic prompt caching wired. Provider responses
-carry `usage` with input/output/cache breakdown. Remaining: per-session
-aggregation, `/cost` command, `/usage` command, persistence to usage.jsonl.
 
 ### ~~SQLite-backed settings + web control panel~~ ✓ shipped
 Configuration moved out of `config.json` and into `~/.asterisk/asterisk.db`

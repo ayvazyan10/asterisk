@@ -7,6 +7,7 @@ import type {
   Provider,
   ProviderRequest,
   ProviderResponse,
+  TokenUsage,
   ToolDefinition,
   ToolUseBlock,
 } from '../types/messages.ts';
@@ -45,6 +46,22 @@ interface OllamaChatResponse {
   message: OllamaMessage;
   done: boolean;
   done_reason?: string;
+  // Token counts. Present only on the final frame (done: true); Ollama omits
+  // them entirely on older builds, hence the optionality.
+  // Reference: https://github.com/ollama/ollama/blob/main/docs/api.md#response-10
+  prompt_eval_count?: number;
+  eval_count?: number;
+}
+
+/** Reads Ollama's token counters off a frame, if it carries any. */
+function usageFrom(frame: OllamaChatResponse): TokenUsage | undefined {
+  const input = frame.prompt_eval_count;
+  const output = frame.eval_count;
+  if (typeof input !== 'number' && typeof output !== 'number') return undefined;
+  return {
+    ...(typeof input === 'number' ? { inputTokens: input } : {}),
+    ...(typeof output === 'number' ? { outputTokens: output } : {}),
+  };
 }
 
 const DEFAULTS: OllamaConfig = {
@@ -215,9 +232,23 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
           throw classifyHttpError(res.status, text, retryAfterSeconds);
         }
 
-        const finalMessage = streaming
-          ? await readStreamingChat(res, req.onText!, req.onThinking, cfg.modelIdleTimeoutMs, ctrl)
-          : (await res.json() as OllamaChatResponse).message;
+        let finalMessage: OllamaMessage;
+        let usage: TokenUsage | undefined;
+        if (streaming) {
+          const streamed = await readStreamingChat(
+            res,
+            req.onText!,
+            req.onThinking,
+            cfg.modelIdleTimeoutMs,
+            ctrl,
+          );
+          finalMessage = streamed.message;
+          usage = streamed.usage;
+        } else {
+          const parsed = (await res.json()) as OllamaChatResponse;
+          finalMessage = parsed.message;
+          usage = usageFrom(parsed);
+        }
 
         const content = blocksFromOllama(finalMessage);
         const stopReason: ProviderResponse['stopReason'] = content.some(
@@ -225,7 +256,7 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
         )
           ? 'tool_use'
           : 'end_turn';
-        return { content, stopReason };
+        return { content, stopReason, ...(usage ? { usage } : {}) };
       } finally {
         clearTimeout(totalTimer);
         if (req.signal) req.signal.removeEventListener('abort', onParentAbort);
@@ -246,16 +277,20 @@ async function readStreamingChat(
   onThinking?: (delta: string) => void,
   idleTimeoutMs?: number,
   ctrl?: AbortController,
-): Promise<OllamaMessage> {
+): Promise<{ message: OllamaMessage; usage?: TokenUsage }> {
   if (!res.body) {
     const data = (await res.json()) as OllamaChatResponse;
-    return data.message;
+    const only = usageFrom(data);
+    return { message: data.message, ...(only ? { usage: only } : {}) };
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
   let aggregatedContent = '';
   let toolCalls: OllamaToolCall[] | undefined;
+  // Counts ride on the final frame; keep the last non-empty reading so a
+  // stream that ends without a trailing newline still reports usage.
+  let usage: TokenUsage | undefined;
   const filter = createThinkFilter();
 
   // Idle timeout: abort if no chunk arrives for idleTimeoutMs.
@@ -331,6 +366,7 @@ async function readStreamingChat(
         if (ev.message?.tool_calls && ev.message.tool_calls.length > 0) {
           toolCalls = ev.message.tool_calls;
         }
+        usage = usageFrom(ev) ?? usage;
       }
     }
   } finally {
@@ -353,6 +389,7 @@ async function readStreamingChat(
       if (ev.message?.tool_calls && ev.message.tool_calls.length > 0) {
         toolCalls = ev.message.tool_calls;
       }
+      usage = usageFrom(ev) ?? usage;
     } catch {
       // ignore malformed trailing data
     }
@@ -378,7 +415,7 @@ async function readStreamingChat(
 
   const out: OllamaMessage = { role: 'assistant', content: aggregatedContent };
   if (toolCalls) out.tool_calls = toolCalls;
-  return out;
+  return { message: out, ...(usage ? { usage } : {}) };
 }
 
 /** Split the chain-of-thought block (<think>…</think>) out from the visible

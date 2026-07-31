@@ -48,9 +48,11 @@ const OllamaSchema = z.object({
 });
 
 const AnthropicSchema = z.object({
+  // Was `claude-3-5-haiku-latest` until 2026-07: Haiku 3.5 retired on
+  // 2026-02-19, so that alias 404s. `claude-haiku-4-5` is its replacement.
   model: z
     .string()
-    .default('claude-3-5-haiku-latest')
+    .default('claude-haiku-4-5')
     .describe('Anthropic model id. Requires ANTHROPIC_API_KEY.'),
 });
 
