@@ -9,8 +9,7 @@ import { closeDb } from '../db/index.ts';
 import { createDaemonLogger } from '../daemon/logger.ts';
 import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
 import { createMcpManager } from '../mcp/manager.ts';
-import { createAnthropicProvider } from '../providers/anthropic.ts';
-import { createOllamaProvider } from '../providers/ollama.ts';
+import { chooseProvider } from '../providers/factory.ts';
 import { loadRules } from '../rules/loader.ts';
 import { loadSouls } from '../soul/loader.ts';
 import { closeBrowser } from '../tools/browser/session.ts';
@@ -27,24 +26,11 @@ log.info({ pid: process.pid }, 'asterisk daemon starting');
 const loaded = loadConfig();
 
 function pickProvider(): Provider {
-  if (loaded.config.provider === 'anthropic') {
-    if (!loaded.secrets.ANTHROPIC_API_KEY) {
-      log.warn('anthropic provider configured but ANTHROPIC_API_KEY missing; falling back to ollama');
-      return createOllamaProvider();
-    }
-    return createAnthropicProvider({
-      apiKey: loaded.secrets.ANTHROPIC_API_KEY,
-      model: loaded.config.anthropic.model,
-    });
+  const chosen = chooseProvider(loaded);
+  if (chosen.fallbackReason) {
+    log.warn({ reason: chosen.fallbackReason, using: chosen.kind }, 'provider fallback');
   }
-  return createOllamaProvider({
-    baseUrl: loaded.config.ollama.baseUrl,
-    model: loaded.config.ollama.model,
-    contextWindow: loaded.config.ollama.contextWindow,
-    think: loaded.config.ollama.think,
-    modelTimeoutMs: loaded.config.ollama.modelTimeoutMs,
-    modelIdleTimeoutMs: loaded.config.ollama.modelIdleTimeoutMs,
-  });
+  return chosen.provider;
 }
 
 const provider = pickProvider();

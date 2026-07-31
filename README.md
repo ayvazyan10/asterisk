@@ -75,7 +75,27 @@ bun run build
 Requirements:
 
 - [Bun](https://bun.sh) ≥ 1.2 (handled by the installer).
-- An Ollama server reachable from this machine, OR an `ANTHROPIC_API_KEY`.
+- A local model server — Ollama, or anything speaking the OpenAI
+  `/v1/chat/completions` API (llama.cpp's `llama-server`, LM Studio, vLLM,
+  Jan, LocalAI) — OR an `ANTHROPIC_API_KEY`.
+
+### Connecting a local model
+
+Ollama works out of the box. For everything else, point Asterisk at the
+endpoint and pick the `openai-compatible` provider:
+
+```bash
+asterisk configure       # answer "openai-compatible", then the base URL + model
+# or, in the REPL:
+/provider openai-compatible
+/model gemma-4-26b
+```
+
+A llama.cpp server started with `--alias gemma-4-26b --port 8080` is reached
+at `http://127.0.0.1:8080/v1`. Tool calling, streaming, and reasoning output
+(`--reasoning-format deepseek`) are all supported; local turns are recorded at
+zero cost in `/cost`. Set `ASTERISK_OPENAI_API_KEY` only if the endpoint is a
+hosted service that needs one.
 
 ```bash
 asterisk                # interactive REPL
@@ -499,11 +519,18 @@ the panel's **Download JSON** button produces and **Upload JSON** accepts:
 
 ```jsonc
 {
-  "provider": "ollama",                       // or "anthropic"
+  "provider": "ollama",                       // or "openai-compatible" | "anthropic"
   "ollama": {
     "baseUrl": "http://127.0.0.1:11434",
     "model": "qwen3.5:9b-q8-max",
     "contextWindow": 131072
+  },
+  "openaiCompatible": {                       // llama.cpp / LM Studio / vLLM / …
+    "baseUrl": "http://127.0.0.1:8080/v1",
+    "model": "gemma-4-26b",                   // blank = server default
+    "maxTokens": 0,                           // 0 = let the server decide
+    "modelTimeoutMs": 300000,
+    "modelIdleTimeoutMs": 90000
   },
   "anthropic": { "model": "claude-haiku-4-5" },
   "bots": {

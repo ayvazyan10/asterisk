@@ -4,6 +4,7 @@
 // than NULL — "free" and "unknown" are different answers, and conflating them
 // makes lifetime totals silently wrong.
 
+import { isLocalProvider } from '../providers/kinds.ts';
 import type { SqliteDriver } from './driver.ts';
 import { costOf, findPrice, type TokenCounts } from './pricing.ts';
 
@@ -44,10 +45,12 @@ export function isEmptyUsage(tokens: TokenCounts): boolean {
 export function recordUsage(db: SqliteDriver, record: UsageRecord): void {
   const { tokens } = record;
 
-  // Local inference has no marginal cost. Anything else without a price row
-  // records NULL, which the summaries surface as "unpriced" rather than free.
-  const cost =
-    record.provider === 'ollama' ? 0 : costOf(findPrice(db, record.model), tokens);
+  // Precedence: an explicit price row wins (so an openai-compatible endpoint
+  // pointed at a paid service is billed correctly), then local providers are
+  // free, then unknown — recorded as NULL and surfaced as "unpriced" rather
+  // than silently counted as free.
+  const priced = costOf(findPrice(db, record.model), tokens);
+  const cost = priced ?? (isLocalProvider(record.provider) ? 0 : undefined);
 
   db.run(
     `INSERT INTO usage

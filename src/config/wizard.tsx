@@ -24,10 +24,18 @@ interface WizardState {
 const STEPS: Step[] = [
   {
     key: 'provider',
-    prompt: 'Provider — type "ollama" or "anthropic"',
+    prompt: 'Provider — "ollama", "openai-compatible", or "anthropic"',
     initial: (s) => s.config.provider,
     apply: (s, v) => {
-      const p = v.trim().toLowerCase() === 'anthropic' ? 'anthropic' : 'ollama';
+      const typed = v.trim().toLowerCase();
+      // Accept a few obvious spellings for the OpenAI-compatible path so the
+      // wizard doesn't silently drop the answer back to ollama.
+      const p =
+        typed === 'anthropic'
+          ? 'anthropic'
+          : typed === 'openai-compatible' || typed === 'openai' || typed === 'llama.cpp'
+            ? 'openai-compatible'
+            : 'ollama';
       return { ...s, config: { ...s.config, provider: p } };
     },
   },
@@ -47,6 +55,33 @@ const STEPS: Step[] = [
     apply: (s, v) => ({
       ...s,
       config: { ...s.config, ollama: { ...s.config.ollama, model: v.trim() || s.config.ollama.model } },
+    }),
+  },
+  {
+    key: 'openaiCompatible.baseUrl',
+    prompt: 'OpenAI-compatible base URL (llama.cpp, LM Studio, vLLM…)',
+    initial: (s) => s.config.openaiCompatible.baseUrl,
+    apply: (s, v) => ({
+      ...s,
+      config: {
+        ...s.config,
+        openaiCompatible: {
+          ...s.config.openaiCompatible,
+          baseUrl: v.trim() || s.config.openaiCompatible.baseUrl,
+        },
+      },
+    }),
+  },
+  {
+    key: 'openaiCompatible.model',
+    prompt: 'OpenAI-compatible model id (blank = server default)',
+    initial: (s) => s.config.openaiCompatible.model,
+    apply: (s, v) => ({
+      ...s,
+      config: {
+        ...s.config,
+        openaiCompatible: { ...s.config.openaiCompatible, model: v.trim() },
+      },
     }),
   },
   {

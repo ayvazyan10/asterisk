@@ -79,6 +79,7 @@ describe('settings registry', () => {
     expect(settingsByGroup().map((g) => g.group)).toEqual([
       'provider',
       'ollama',
+      'openaiCompatible',
       'anthropic',
       'bots',
       'daemon',

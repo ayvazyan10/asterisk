@@ -10,8 +10,7 @@ import { findAgent, loadAgents } from '../agents/loader.ts';
 import { type AgentState, createAgentState, runAgentTurn } from '../agent/loop.ts';
 import { currentSession } from '../agent/context.ts';
 import { loadConfig } from '../config/load.ts';
-import { createAnthropicProvider } from '../providers/anthropic.ts';
-import { createOllamaProvider } from '../providers/ollama.ts';
+import { createProviderFromConfig } from '../providers/factory.ts';
 import { loadRules } from '../rules/loader.ts';
 import { type Tool, ok, err } from './types.ts';
 import type { Provider } from '../types/messages.ts';
@@ -31,21 +30,9 @@ export function setSubAgentProvider(provider: Provider): void {
 
 function pickProviderForSub(): Provider {
   if (deps?.provider) return deps.provider;
-  // Fallback: rebuild from config the same way main entry points do.
-  const cfg = loadConfig();
-  if (cfg.config.provider === 'anthropic' && cfg.secrets.ANTHROPIC_API_KEY) {
-    return createAnthropicProvider({
-      apiKey: cfg.secrets.ANTHROPIC_API_KEY,
-      model: cfg.config.anthropic.model,
-    });
-  }
-  return createOllamaProvider({
-    baseUrl: cfg.config.ollama.baseUrl,
-    model: cfg.config.ollama.model,
-    contextWindow: cfg.config.ollama.contextWindow,
-    modelTimeoutMs: cfg.config.ollama.modelTimeoutMs,
-    modelIdleTimeoutMs: cfg.config.ollama.modelIdleTimeoutMs,
-  });
+  // Rebuild from config through the shared factory, so a sub-agent always
+  // runs on the same backend and settings as the parent.
+  return createProviderFromConfig(loadConfig());
 }
 
 function describeAgent(): string {

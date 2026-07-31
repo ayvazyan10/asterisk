@@ -17,8 +17,7 @@ import { loadConfig, saveConfig, saveSecrets } from '../config/load.ts';
 import { renderCost, renderUsage } from './usage-report.ts';
 import type { HookConfig, McpServerConfig } from '../config/schema.ts';
 import type { McpManager } from '../mcp/manager.ts';
-import { createAnthropicProvider } from '../providers/anthropic.ts';
-import { createOllamaProvider } from '../providers/ollama.ts';
+import { chooseProvider } from '../providers/factory.ts';
 import { loadRules } from '../rules/loader.ts';
 import { loadSkills, type Skill } from '../skills/loader.ts';
 import { DEFAULT_SOUL_TEMPLATE, type Soul, loadSouls } from '../soul/loader.ts';
@@ -116,12 +115,15 @@ async function listAnthropicModels(apiKey: string): Promise<AnthropicModel[]> {
   }
 }
 
-function parseProviderName(name: string): { kind: 'ollama' | 'anthropic'; model: string } | null {
+type ProviderKind = 'ollama' | 'openai-compatible' | 'anthropic';
+
+/** Splits `<kind>:<model>`; model ids may contain colons, so only the first splits. */
+function parseProviderName(name: string): { kind: ProviderKind; model: string } | null {
   const colon = name.indexOf(':');
   if (colon === -1) return null;
   const kind = name.slice(0, colon);
   const model = name.slice(colon + 1);
-  if (kind !== 'ollama' && kind !== 'anthropic') return null;
+  if (kind !== 'ollama' && kind !== 'openai-compatible' && kind !== 'anthropic') return null;
   return { kind, model };
 }
 
@@ -217,11 +219,12 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/provider',
-    description: 'Switch between ollama and anthropic',
-    usage: '/provider [ollama|anthropic]',
+    description: 'Switch between ollama, openai-compatible, and anthropic',
+    usage: '/provider [ollama|openai-compatible|anthropic]',
     execute(ctx, args) {
       const target = args.trim().toLowerCase();
       if (target) return switchProvider(ctx, target);
+      const cfg = loadConfig().config;
       const list: ListSpec = {
         kind: 'list',
         title: 'Pick a provider',
@@ -229,13 +232,19 @@ export const COMMANDS: SlashCommand[] = [
           {
             value: 'ollama',
             label: 'Ollama (local)',
-            description: loadConfig().config.ollama.model,
+            description: cfg.ollama.model,
             ...(ctx.provider.name.startsWith('ollama:') ? { badge: '* current' } : {}),
+          },
+          {
+            value: 'openai-compatible',
+            label: 'OpenAI-compatible (llama.cpp, LM Studio, vLLM, …)',
+            description: `${cfg.openaiCompatible.model || '(server default)'} @ ${cfg.openaiCompatible.baseUrl}`,
+            ...(ctx.provider.name.startsWith('openai-compatible:') ? { badge: '* current' } : {}),
           },
           {
             value: 'anthropic',
             label: 'Anthropic API',
-            description: loadConfig().config.anthropic.model,
+            description: cfg.anthropic.model,
             ...(ctx.provider.name.startsWith('anthropic:') ? { badge: '* current' } : {}),
           },
         ],
@@ -366,27 +375,11 @@ export const COMMANDS: SlashCommand[] = [
     description: 'Clear history and reload config-driven provider',
     execute(ctx) {
       ctx.clearHistory();
-      const cfg = loadConfig();
-      if (cfg.config.provider === 'anthropic' && cfg.secrets.ANTHROPIC_API_KEY) {
-        ctx.setProvider(
-          createAnthropicProvider({
-            apiKey: cfg.secrets.ANTHROPIC_API_KEY,
-            model: cfg.config.anthropic.model,
-          }),
-        );
-      } else {
-        ctx.setProvider(
-          createOllamaProvider({
-            baseUrl: cfg.config.ollama.baseUrl,
-            model: cfg.config.ollama.model,
-            contextWindow: cfg.config.ollama.contextWindow,
-            think: cfg.config.ollama.think,
-            modelTimeoutMs: cfg.config.ollama.modelTimeoutMs,
-            modelIdleTimeoutMs: cfg.config.ollama.modelIdleTimeoutMs,
-          }),
-        );
-      }
-      return '(reset)';
+      const chosen = chooseProvider(loadConfig());
+      ctx.setProvider(chosen.provider);
+      return chosen.fallbackReason
+        ? `(reset — ${chosen.fallbackReason}; using ${chosen.kind})`
+        : `(reset — provider ${chosen.kind})`;
     },
   },
   {
@@ -1324,51 +1317,51 @@ function toggleHookByName(name: string): string {
 //  Provider / model switching
 // ─────────────────────────────────────────────────────────────────────────
 
+/**
+ * Switches the model on whichever backend is currently active, by handing the
+ * factory a config with that one field overridden. The switch is in-memory —
+ * `/config` persists it.
+ */
 function switchModel(ctx: CommandContext, model: string): string {
   const trimmed = model.trim();
   if (!trimmed) return 'no model specified';
   const current = parseProviderName(ctx.provider.name);
   if (!current) return `cannot parse current provider: ${ctx.provider.name}`;
-  const cfg = loadConfig();
-  if (current.kind === 'ollama') {
-    ctx.setProvider(
-      createOllamaProvider({
-        baseUrl: cfg.config.ollama.baseUrl,
-        model: trimmed,
-        contextWindow: cfg.config.ollama.contextWindow,
-        modelTimeoutMs: cfg.config.ollama.modelTimeoutMs,
-        modelIdleTimeoutMs: cfg.config.ollama.modelIdleTimeoutMs,
-      }),
-    );
-  } else {
-    const apiKey = cfg.secrets.ANTHROPIC_API_KEY;
-    if (!apiKey) return 'ANTHROPIC_API_KEY not set; run `asterisk configure`';
-    ctx.setProvider(createAnthropicProvider({ apiKey, model: trimmed }));
+
+  const loaded = loadConfig();
+  const kind = current.kind;
+  if (kind === 'anthropic' && !loaded.secrets.ANTHROPIC_API_KEY) {
+    return 'ANTHROPIC_API_KEY not set; run `asterisk configure`';
   }
-  return `✓ switched to ${current.kind}:${trimmed}`;
+
+  loaded.config = {
+    ...loaded.config,
+    provider: kind,
+    ...(kind === 'ollama' ? { ollama: { ...loaded.config.ollama, model: trimmed } } : {}),
+    ...(kind === 'openai-compatible'
+      ? { openaiCompatible: { ...loaded.config.openaiCompatible, model: trimmed } }
+      : {}),
+    ...(kind === 'anthropic' ? { anthropic: { ...loaded.config.anthropic, model: trimmed } } : {}),
+  };
+
+  ctx.setProvider(chooseProvider(loaded).provider);
+  return `✓ switched to ${kind}:${trimmed}`;
 }
 
 function switchProvider(ctx: CommandContext, target: string): string {
-  const cfg = loadConfig();
-  if (target === 'ollama') {
-    ctx.setProvider(
-      createOllamaProvider({
-        baseUrl: cfg.config.ollama.baseUrl,
-        model: cfg.config.ollama.model,
-        contextWindow: cfg.config.ollama.contextWindow,
-        modelTimeoutMs: cfg.config.ollama.modelTimeoutMs,
-        modelIdleTimeoutMs: cfg.config.ollama.modelIdleTimeoutMs,
-      }),
-    );
-    return `✓ switched to ollama:${cfg.config.ollama.model}`;
+  if (target !== 'ollama' && target !== 'openai-compatible' && target !== 'anthropic') {
+    return `unknown provider: ${target} (expected ollama, openai-compatible, or anthropic)`;
   }
-  if (target === 'anthropic') {
-    const apiKey = cfg.secrets.ANTHROPIC_API_KEY;
-    if (!apiKey) return 'ANTHROPIC_API_KEY not set; run `asterisk configure`';
-    ctx.setProvider(createAnthropicProvider({ apiKey, model: cfg.config.anthropic.model }));
-    return `✓ switched to anthropic:${cfg.config.anthropic.model}`;
+
+  const loaded = loadConfig();
+  if (target === 'anthropic' && !loaded.secrets.ANTHROPIC_API_KEY) {
+    return 'ANTHROPIC_API_KEY not set; run `asterisk configure`';
   }
-  return `unknown provider: ${target} (expected ollama or anthropic)`;
+
+  loaded.config = { ...loaded.config, provider: target };
+  const chosen = chooseProvider(loaded);
+  ctx.setProvider(chosen.provider);
+  return `✓ switched to ${chosen.provider.name}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

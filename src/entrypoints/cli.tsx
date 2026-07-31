@@ -8,23 +8,26 @@ import React from 'react';
 import { createAgentState } from '../agent/loop.ts';
 import { loadConversation } from '../agent/persistence.ts';
 import { createMcpManager } from '../mcp/manager.ts';
-import { createAnthropicProvider } from '../providers/anthropic.ts';
-import { createOllamaProvider } from '../providers/ollama.ts';
+import { loadConfig } from '../config/load.ts';
+import { chooseProvider } from '../providers/factory.ts';
 import { App } from '../repl/App.tsx';
 import { setExtraTools } from '../tools/registry.ts';
 import type { Provider } from '../types/messages.ts';
 
 function pickProvider(): Provider {
-  const explicit = (process.env['ASTERISK_PROVIDER'] ?? '').toLowerCase();
-  if (explicit === 'anthropic') return createAnthropicProvider();
-  if (explicit === 'ollama') return createOllamaProvider();
+  const loaded = loadConfig();
 
-  // Auto: prefer Anthropic only when an API key is present AND user opts in
-  // by setting ASTERISK_USE_ANTHROPIC=1; otherwise default to Ollama.
-  if (process.env['ANTHROPIC_API_KEY'] && process.env['ASTERISK_USE_ANTHROPIC'] === '1') {
-    return createAnthropicProvider();
+  // ASTERISK_PROVIDER overrides the stored choice for one run.
+  const explicit = (process.env['ASTERISK_PROVIDER'] ?? '').toLowerCase();
+  if (explicit === 'anthropic' || explicit === 'ollama' || explicit === 'openai-compatible') {
+    loaded.config = { ...loaded.config, provider: explicit };
   }
-  return createOllamaProvider();
+
+  const chosen = chooseProvider(loaded);
+  if (chosen.fallbackReason) {
+    console.error(`asterisk: ${chosen.fallbackReason} — using ${chosen.kind}`);
+  }
+  return chosen.provider;
 }
 
 const provider = pickProvider();

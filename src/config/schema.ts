@@ -9,7 +9,10 @@
 
 import { z } from 'zod';
 
-const ProviderSchema = z.enum(['ollama', 'anthropic']);
+// `openai-compatible` is the universal local-model path — llama.cpp,
+// LM Studio, vLLM, Jan, LocalAI, or any proxy speaking /v1/chat/completions.
+// Ollama keeps a dedicated entry because Asterisk drives its native API.
+const ProviderSchema = z.enum(['ollama', 'openai-compatible', 'anthropic']);
 
 const OllamaSchema = z.object({
   baseUrl: z
@@ -31,6 +34,39 @@ const OllamaSchema = z.object({
     .boolean()
     .default(false)
     .describe('Ask the model for structured reasoning blocks before its answer.'),
+  modelTimeoutMs: z
+    .number()
+    .int()
+    .min(10000)
+    .max(1800000)
+    .default(300_000)
+    .describe('Hard limit on a single generation before it is aborted.'),
+  modelIdleTimeoutMs: z
+    .number()
+    .int()
+    .min(5000)
+    .max(300000)
+    .default(90_000)
+    .describe('Abort a generation that stops emitting tokens for this long.'),
+});
+
+const OpenAiCompatibleSchema = z.object({
+  baseUrl: z
+    .string()
+    .url()
+    .default('http://127.0.0.1:8080/v1')
+    .describe('Endpoint root including the version segment, e.g. http://127.0.0.1:8080/v1'),
+  model: z
+    .string()
+    .default('')
+    .describe('Model id as the server reports it in /v1/models. Blank uses the server default.'),
+  maxTokens: z
+    .number()
+    .int()
+    .min(0)
+    .max(1_000_000)
+    .default(0)
+    .describe('Cap on generated tokens. 0 lets the server decide.'),
   modelTimeoutMs: z
     .number()
     .int()
@@ -229,6 +265,7 @@ export const ConfigSchema = z.object({
     'Which backend the agent loop talks to.',
   ),
   ollama: OllamaSchema.default({}),
+  openaiCompatible: OpenAiCompatibleSchema.default({}),
   anthropic: AnthropicSchema.default({}),
   bots: BotsSchema.default({}),
   daemon: DaemonSchema.default({}),
@@ -244,6 +281,9 @@ export type AsteriskConfig = z.infer<typeof ConfigSchema>;
 
 export const SECRET_KEYS = [
   'ANTHROPIC_API_KEY',
+  // Only needed when the OpenAI-compatible endpoint is a hosted service;
+  // local servers accept requests without one.
+  'ASTERISK_OPENAI_API_KEY',
   'ASTERISK_TELEGRAM_BOT_TOKEN',
   'ASTERISK_WHATSAPP_META_TOKEN',
   'ASTERISK_WHATSAPP_VERIFY_TOKEN',

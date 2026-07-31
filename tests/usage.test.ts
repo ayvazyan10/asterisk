@@ -152,6 +152,19 @@ describe('usage recording', () => {
     expect(totals.unpricedTurns).toBe(0);
   });
 
+  it('records an openai-compatible local endpoint at zero cost', () => {
+    record({ provider: 'openai-compatible', model: 'gemma-4-26b' });
+    expect(totalUsage(db)).toMatchObject({ costUsd: 0, unpricedTurns: 0 });
+  });
+
+  it('lets an explicit rate override the local-is-free rule', () => {
+    // An openai-compatible endpoint may point at a paid hosted service.
+    upsertPricing(db, { model: 'hosted-llm', inputPerMTok: 2, outputPerMTok: 6 });
+    record({ provider: 'openai-compatible', model: 'hosted-llm' });
+    // 1000 * $2/Mtok + 500 * $6/Mtok
+    expect(totalUsage(db).costUsd).toBeCloseTo(0.005, 8);
+  });
+
   it('flags an unknown paid model as unpriced rather than free', () => {
     record({ provider: 'anthropic', model: 'claude-unreleased-9' });
     const totals = totalUsage(db);
