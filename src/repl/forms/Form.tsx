@@ -345,6 +345,6 @@ function SecretInput({ value, onChange, onSubmit }: SecretInputProps) {
   // value but display a masked version above it. The TextInput itself shows
   // the raw value at the cursor; for genuine secrecy we just hide the value
   // until the next field, which is good enough for our flow (the value is
-  // immediately written to ~/.asterisk/secrets.env on submit).
+  // immediately written to the secrets table in ~/.asterisk/asterisk.db).
   return <TextInput value={value} onChange={onChange} onSubmit={onSubmit} mask="•" />;
 }

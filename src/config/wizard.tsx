@@ -198,8 +198,9 @@ export function ConfigureWizard() {
   const [stepIndex, setStepIndex] = useState(0);
   const [input, setInput] = useState<string>(STEPS[0]?.initial(state) ?? '');
   const [history, setHistory] = useState<string[]>([
-    'asterisk configure — answers persist to ~/.asterisk/{config.json,secrets.env}',
+    'asterisk configure — answers persist to ~/.asterisk/asterisk.db',
     'Press Enter to accept the shown default; ^C aborts without saving.',
+    'For every setting at once, try `asterisk web`.',
   ]);
 
   const step = STEPS[stepIndex];
@@ -219,7 +220,7 @@ export function ConfigureWizard() {
       try {
         saveConfig(nextState.config);
         saveSecrets(nextState.secrets);
-        next.push('saved ~/.asterisk/config.json and ~/.asterisk/secrets.env');
+        next.push('saved to ~/.asterisk/asterisk.db');
       } catch (e) {
         next.push(`SAVE FAILED: ${(e as Error).message}`);
       }

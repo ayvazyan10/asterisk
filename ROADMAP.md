@@ -70,6 +70,17 @@ long generations don't look like a hang.
 carry `usage` with input/output/cache breakdown. Remaining: per-session
 aggregation, `/cost` command, `/usage` command, persistence to usage.jsonl.
 
+### ~~SQLite-backed settings + web control panel~~ ✓ shipped
+Configuration moved out of `config.json` and into `~/.asterisk/asterisk.db`
+(`bun:sqlite` under Bun, `node:sqlite` under Node — no new dependency). The
+settings form is **generated from the Zod schema** via `config/introspect.ts`,
+so a new field in `ConfigSchema` appears in the browser with the right widget
+and bounds without touching UI code. `asterisk web` serves a full control
+panel: settings, secrets (masked), MCP servers, hooks, a markdown editor for
+rules/skills/agents/souls, daemon start/stop, diagnostics, log tail, audit
+trail and token management. `config.json` survives only as an import/export
+format and is absorbed on first run.
+
 ## Tier 2 — Worth doing once Tier 1 settles
 
 ### ~~`/doctor` diagnostics command~~ ✓ shipped
@@ -99,10 +110,10 @@ parallelised across actual sub-agents instead of sequential.
 
 ## Tier 3 — Speculative, not committed
 
-### Web dashboard
-Optional read-only dashboard at `localhost:<port>` showing daemon state,
-per-chat conversation history, token usage, scheduled jobs. Single Bun
-process, no extra deps. Off by default; opt-in via config.
+### ~~Web dashboard~~ ✓ shipped as the control panel
+Promoted to Tier 1 and shipped read-write — see above. Still outstanding
+from the original sketch: per-chat conversation history and token-usage
+views, which land with the cost-tracking work.
 
 ### Voice IO
 Speech-to-text on input, text-to-speech on output for the daemon (so a

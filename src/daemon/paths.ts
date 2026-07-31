@@ -12,6 +12,7 @@ export interface AsteriskPaths {
   daemonLog: string;
   configFile: string;
   secretsFile: string;
+  dbFile: string;
   whatsappSession: string;
 }
 
@@ -24,6 +25,7 @@ export function asteriskPaths(): AsteriskPaths {
     daemonLog: join(root, 'logs', 'daemon.log'),
     configFile: join(root, 'config.json'),
     secretsFile: join(root, 'secrets.env'),
+    dbFile: join(root, 'asterisk.db'),
     whatsappSession: join(root, 'whatsapp-web-session'),
   };
 }

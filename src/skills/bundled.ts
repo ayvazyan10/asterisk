@@ -508,8 +508,8 @@ Steps:
    .asterisk/rules/, and ASTERISK.md. Show the full file paths.
 2. Read the souls: ~/.asterisk/SOUL.md (operator), ~/.asterisk/souls/*.md
    (per-chat), <cwd>/.asterisk/SOUL.md or <cwd>/SOUL.md (project).
-3. Read hooks: from ~/.asterisk/config.json under \`hooks\`. Show name,
-   event, command, enabled flag.
+3. Read hooks: run \`/hooks\` (they live in ~/.asterisk/asterisk.db). Show
+   name, event, command, enabled flag.
 4. For each entry, judge:
    - **Active**: matches the agent's current work; clearly load-bearing.
    - **Probably-stale**: references concepts/files/projects that no
@@ -650,7 +650,7 @@ Workflow:
    - Run the MCP Inspector (\`bunx @modelcontextprotocol/inspector\`) —
      a UI that talks to your server, listing tools / calling them /
      showing the JSON wire format.
-   - Add it to Asterisk's config.json mcpServers[] and verify
+   - Register it with \`/mcp add\` (or the web panel) and verify
      /mcp list shows it connected.
 5. Common pitfalls:
    - Tool descriptions too vague → model never calls them.

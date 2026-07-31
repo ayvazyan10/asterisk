@@ -85,8 +85,37 @@ asterisk logs 100
 asterisk restart
 asterisk stop
 asterisk configure      # interactive wizard for provider + bots + MCP
+asterisk web            # web control panel for every setting
 asterisk help
 ```
+
+## Web control panel
+
+`asterisk web` serves a settings UI at `http://127.0.0.1:4321`. It is the
+whole configuration surface in one place:
+
+- **Settings** — every field Asterisk understands, with its validation
+  bounds and help text. The form is generated from the configuration
+  schema, so it is never out of date with the code.
+- **Secrets** — API keys and bot tokens. Values are write-only: the browser
+  only ever receives a masked fingerprint.
+- **MCP servers** and **hooks** — add, edit, enable, delete.
+- **Rules & skills** — a markdown editor for your rules, skills, sub-agent
+  definitions and persona files.
+- **Diagnostics, daemon control, log tail, audit trail** — the same ground
+  as `/doctor`, `asterisk start|stop`, and `asterisk logs`.
+
+```bash
+asterisk web                     # prints a link with a one-time token
+asterisk web --port 8080
+asterisk web --print-token       # issue another token
+asterisk web --no-auth           # loopback binds only
+```
+
+A token is required by default and is exchanged for an httpOnly session
+cookie on first load. Only SHA-256 hashes are stored, so a lost token is
+regenerated rather than recovered. Binding to a non-loopback address without
+authentication is refused outright.
 
 ## REPL highlights
 
@@ -456,7 +485,13 @@ the REPL and each per-chat conversation in the daemon.
 
 ## Configuration reference
 
-`~/.asterisk/config.json`:
+Configuration lives in `~/.asterisk/asterisk.db` (SQLite, mode 0600). Edit it
+with `asterisk web`, `asterisk configure`, or the REPL slash commands — not by
+hand.
+
+An existing `config.json` from an older install is imported automatically on
+first run and renamed to `config.json.migrated`. The same shape is still what
+the panel's **Download JSON** button produces and **Upload JSON** accepts:
 
 ```jsonc
 {
@@ -488,12 +523,25 @@ the REPL and each per-chat conversation in the daemon.
     }
   },
   "daemon": { "logLevel": "info", "heartbeatSeconds": 60 },
+  "web": {
+    "host": "127.0.0.1",
+    "port": 4321,
+    "authRequired": true,
+    "openBrowser": true
+  },
   "mcpServers": [],
   "hooks": []
 }
 ```
 
-`~/.asterisk/secrets.env` (chmod 600):
+### Secrets
+
+Secrets are stored in the database and set through `asterisk web` or
+`asterisk configure`. They are resolved highest-priority-first:
+
+1. the process environment,
+2. the database,
+3. a legacy `~/.asterisk/secrets.env`, read as a fallback and imported once.
 
 ```bash
 ANTHROPIC_API_KEY="..."
@@ -502,6 +550,10 @@ ASTERISK_WHATSAPP_META_TOKEN="..."
 ASTERISK_WHATSAPP_VERIFY_TOKEN="..."
 ASTERISK_NOTIFY_URL="..."     # optional — used by PushNotification tool
 ```
+
+Exporting one of these in your shell overrides whatever is stored, which is
+useful for one-off runs and CI. Note this is the reverse of the pre-database
+behaviour, where `secrets.env` won.
 
 Override the config root with `ASTERISK_HOME=/path/to/dir`.
 

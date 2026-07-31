@@ -5,6 +5,7 @@
 import { createAgentState, runAgentTurn } from '../agent/loop.ts';
 import { createBotManager } from '../bots/manager.ts';
 import { loadConfig } from '../config/load.ts';
+import { closeDb } from '../db/index.ts';
 import { createDaemonLogger } from '../daemon/logger.ts';
 import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
 import { createMcpManager } from '../mcp/manager.ts';
@@ -276,6 +277,8 @@ async function shutdown(signal: string): Promise<void> {
   await manager.stop().catch(() => {});
   await mcp.shutdown().catch(() => {});
   await closeBrowser().catch(() => {});
+  // Checkpoint the WAL and release the database file.
+  closeDb();
   setTimeout(() => process.exit(0), 100);
 }
 

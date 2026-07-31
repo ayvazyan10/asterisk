@@ -1,6 +1,6 @@
 // Output styles — pluggable behaviour modifiers spliced into the system
 // prompt alongside rules + soul. Toggled via /output-style or by setting
-// outputStyle in ~/.asterisk/config.json. Persists across turns.
+// outputStyle in ~/.asterisk/asterisk.db. Persists across turns.
 //
 // Provenance: idea inspired by claude-code-main's output-style system
 // (default / Explanatory / Learning). Prose authored fresh.

@@ -1,0 +1,137 @@
+// Schema migrations for ~/.asterisk/asterisk.db.
+//
+// Migrations are append-only: never edit a shipped entry, add a new one. The
+// runner records applied versions in `schema_migrations` and applies the rest
+// inside a single transaction so a partial upgrade can't leave the database
+// half-migrated.
+
+import type { SqliteDriver } from './driver.ts';
+
+export interface Migration {
+  readonly version: number;
+  readonly name: string;
+  readonly sql: string;
+}
+
+export const MIGRATIONS: readonly Migration[] = [
+  {
+    version: 1,
+    name: 'initial',
+    sql: `
+      -- Scalar settings, keyed by dotted path into ConfigSchema
+      -- (e.g. 'ollama.model'). Values are JSON-encoded so booleans, numbers
+      -- and arrays all round-trip through one column.
+      CREATE TABLE settings (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      -- Secrets live in their own table so they can be excluded from exports
+      -- and masked in the web UI without special-casing the settings table.
+      CREATE TABLE secrets (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      -- MCP servers. The transport column discriminates the union: stdio uses
+      -- command/args/env, http uses url/headers. The unused columns stay NULL.
+      CREATE TABLE mcp_servers (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT NOT NULL UNIQUE,
+        transport  TEXT NOT NULL CHECK (transport IN ('stdio', 'http')),
+        command    TEXT,
+        args       TEXT NOT NULL DEFAULT '[]',
+        env        TEXT NOT NULL DEFAULT '{}',
+        url        TEXT,
+        headers    TEXT NOT NULL DEFAULT '{}',
+        enabled    INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE hooks (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        name            TEXT NOT NULL UNIQUE,
+        event           TEXT NOT NULL,
+        matcher         TEXT,
+        command         TEXT NOT NULL,
+        timeout_seconds INTEGER NOT NULL DEFAULT 30,
+        enabled         INTEGER NOT NULL DEFAULT 1,
+        sort_order      INTEGER NOT NULL DEFAULT 0,
+        updated_at      INTEGER NOT NULL
+      );
+
+      CREATE INDEX idx_hooks_event ON hooks (event);
+
+      -- Access tokens for the web control panel. Only the SHA-256 hash is
+      -- stored; the plaintext token is shown once at creation time.
+      CREATE TABLE web_tokens (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        label       TEXT NOT NULL,
+        token_hash  TEXT NOT NULL UNIQUE,
+        created_at  INTEGER NOT NULL,
+        last_used_at INTEGER
+      );
+
+      -- Append-only audit of every mutation made through the web UI, so a
+      -- surprising config change can be traced back.
+      CREATE TABLE audit_log (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        at         INTEGER NOT NULL,
+        actor      TEXT NOT NULL,
+        action     TEXT NOT NULL,
+        target     TEXT NOT NULL,
+        detail     TEXT
+      );
+
+      CREATE INDEX idx_audit_at ON audit_log (at DESC);
+    `,
+  },
+];
+
+interface MigrationRow {
+  version: number;
+}
+
+/**
+ * Applies every migration newer than the database's current version.
+ * Idempotent — safe to call on every process start.
+ */
+export function migrate(db: SqliteDriver): number {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version    INTEGER PRIMARY KEY,
+      name       TEXT NOT NULL,
+      applied_at INTEGER NOT NULL
+    );
+  `);
+
+  const applied = new Set(
+    db.all<MigrationRow>('SELECT version FROM schema_migrations').map((r) => r.version),
+  );
+
+  const pending = MIGRATIONS.filter((m) => !applied.has(m.version)).sort(
+    (a, b) => a.version - b.version,
+  );
+  if (pending.length === 0) return 0;
+
+  db.transaction(() => {
+    for (const m of pending) {
+      db.exec(m.sql);
+      db.run('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)', [
+        m.version,
+        m.name,
+        Date.now(),
+      ]);
+    }
+  });
+
+  return pending.length;
+}
+
+/** Highest migration version this build knows about. */
+export function latestVersion(): number {
+  return MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);
+}

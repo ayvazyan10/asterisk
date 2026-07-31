@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Asterisk dispatcher — REPL by default, daemon subcommands handled here.
-# Subcommands: start | stop | restart | status | logs | configure
+# Subcommands: start | stop | restart | status | logs | configure | web | update
 # No subcommand → interactive REPL.
 
 set -euo pipefail
@@ -22,10 +22,12 @@ DIST_DAEMON="$ROOT/dist/daemon.js"
 DIST_CONTROL="$ROOT/dist/control.js"
 DIST_CONFIGURE="$ROOT/dist/configure.js"
 DIST_UPDATE="$ROOT/dist/update.js"
+DIST_WEB="$ROOT/dist/web.js"
 SRC_CLI="$ROOT/src/entrypoints/cli.tsx"
 SRC_CONTROL="$ROOT/src/entrypoints/control.ts"
 SRC_CONFIGURE="$ROOT/src/entrypoints/configure.tsx"
 SRC_UPDATE="$ROOT/src/entrypoints/update.ts"
+SRC_WEB="$ROOT/src/entrypoints/web.ts"
 
 # Sensible defaults — local Ollama, telemetry off.
 export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
@@ -65,6 +67,13 @@ run_update() {
   exec bun "$SRC_UPDATE" "$@"
 }
 
+run_web() {
+  if [[ -f "$DIST_WEB" ]]; then
+    exec bun "$DIST_WEB" "$@"
+  fi
+  exec bun "$SRC_WEB" "$@"
+}
+
 case "$cmd" in
   repl|"")
     run_cli "$@"
@@ -74,6 +83,9 @@ case "$cmd" in
     ;;
   configure)
     run_configure "$@"
+    ;;
+  web)
+    run_web "$@"
     ;;
   update)
     run_update "$@"
@@ -90,7 +102,15 @@ Usage:
   asterisk status         Show daemon status
   asterisk logs [N]       Tail last N daemon log lines (default 50)
   asterisk configure      Interactive config wizard
+  asterisk web [flags]    Web control panel for every setting
   asterisk update         Self-update to the latest version
+
+Web panel flags:
+  --port <n>              Override the configured port (default 4321)
+  --host <addr>           Override the bind address (default 127.0.0.1)
+  --no-auth               Disable token auth (loopback binds only)
+  --no-open               Do not launch a browser
+  --print-token           Issue a token, print it, and exit
 
 Environment:
   OLLAMA_BASE_URL         Ollama HTTP base URL (default http://127.0.0.1:11434)

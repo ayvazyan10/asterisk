@@ -1,21 +1,57 @@
-// Asterisk configuration schemas. Persisted as ~/.asterisk/config.json.
-// Secrets (API keys, bot tokens) live separately in ~/.asterisk/secrets.env.
+// Asterisk configuration schemas. Persisted in ~/.asterisk/asterisk.db —
+// scalars in the `settings` table, secrets in `secrets`, and the list-shaped
+// fields (mcpServers, hooks) in tables of their own. `config.json` is only an
+// import/export format now; see config/store.ts.
+//
+// The `.describe()` calls are not decoration: config/introspect.ts turns this
+// schema into the web control panel's form, and these strings become its help
+// text. Add a field here and it appears in the browser automatically.
 
 import { z } from 'zod';
 
 const ProviderSchema = z.enum(['ollama', 'anthropic']);
 
 const OllamaSchema = z.object({
-  baseUrl: z.string().url().default('http://127.0.0.1:11434'),
-  model: z.string().default('carstenuhlig/omnicoder-9b:q8_0'),
-  contextWindow: z.number().int().positive().default(65536),
-  think: z.boolean().default(false),
-  modelTimeoutMs: z.number().int().min(10000).max(1800000).default(300_000),
-  modelIdleTimeoutMs: z.number().int().min(5000).max(300000).default(90_000),
+  baseUrl: z
+    .string()
+    .url()
+    .default('http://127.0.0.1:11434')
+    .describe('HTTP endpoint of the Ollama server.'),
+  model: z
+    .string()
+    .default('carstenuhlig/omnicoder-9b:q8_0')
+    .describe('Model tag to run, as shown by `ollama list`.'),
+  contextWindow: z
+    .number()
+    .int()
+    .positive()
+    .default(65536)
+    .describe('Tokens of context to request. Larger windows need more VRAM.'),
+  think: z
+    .boolean()
+    .default(false)
+    .describe('Ask the model for structured reasoning blocks before its answer.'),
+  modelTimeoutMs: z
+    .number()
+    .int()
+    .min(10000)
+    .max(1800000)
+    .default(300_000)
+    .describe('Hard limit on a single generation before it is aborted.'),
+  modelIdleTimeoutMs: z
+    .number()
+    .int()
+    .min(5000)
+    .max(300000)
+    .default(90_000)
+    .describe('Abort a generation that stops emitting tokens for this long.'),
 });
 
 const AnthropicSchema = z.object({
-  model: z.string().default('claude-3-5-haiku-latest'),
+  model: z
+    .string()
+    .default('claude-3-5-haiku-latest')
+    .describe('Anthropic model id. Requires ANTHROPIC_API_KEY.'),
 });
 
 // Telegram streaming modes — Telegram has no native server-sent events for
@@ -38,29 +74,53 @@ export const TelegramParseMode = z.enum(['plain', 'html']);
 export type TelegramParseModeT = z.infer<typeof TelegramParseMode>;
 
 const TelegramSchema = z.object({
-  enabled: z.boolean().default(false),
-  allowedUserIds: z.array(z.number().int().positive()).default([]),
-  streamMode: TelegramStreamMode.default('final'),
-  streamThrottleMs: z.number().int().min(250).max(10000).default(1000),
-  parseMode: TelegramParseMode.default('html'),
+  enabled: z.boolean().default(false).describe('Run the Telegram bridge when the daemon starts.'),
+  allowedUserIds: z
+    .array(z.number().int().positive())
+    .default([])
+    .describe('Numeric Telegram user ids allowed to talk to the bot. Empty means nobody.'),
+  streamMode: TelegramStreamMode.default('final').describe(
+    'final — one message at the end · status — live tool-use status · stream — progressive text.',
+  ),
+  streamThrottleMs: z
+    .number()
+    .int()
+    .min(250)
+    .max(10000)
+    .default(1000)
+    .describe('Minimum gap between message edits. Below ~1s Telegram starts rate-limiting.'),
+  parseMode: TelegramParseMode.default('html').describe(
+    'html renders markdown properly; plain shows the raw markers.',
+  ),
 });
 
 const WhatsappTransport = z.enum(['meta-cloud', 'web-js']);
 
 const WhatsappMetaCloudSchema = z.object({
-  phoneNumberId: z.string().default(''),
-  businessAccountId: z.string().default(''),
-  webhookPath: z.string().default('/whatsapp/webhook'),
-  webhookPort: z.number().int().min(1).max(65535).default(8787),
+  phoneNumberId: z.string().default('').describe('Phone number id from the Meta app dashboard.'),
+  businessAccountId: z.string().default('').describe('WhatsApp Business Account id.'),
+  webhookPath: z.string().default('/whatsapp/webhook').describe('Path Meta posts webhooks to.'),
+  webhookPort: z
+    .number()
+    .int()
+    .min(1)
+    .max(65535)
+    .default(8787)
+    .describe('Local port the webhook listener binds to.'),
 });
 
 const WhatsappWebJsSchema = z.object({
-  sessionDir: z.string().default(''),
+  sessionDir: z
+    .string()
+    .default('')
+    .describe('Where the linked-device session is cached. Blank uses ~/.asterisk/whatsapp-web-session.'),
 });
 
 const WhatsappSchema = z.object({
-  enabled: z.boolean().default(false),
-  transport: WhatsappTransport.default('meta-cloud'),
+  enabled: z.boolean().default(false).describe('Run the WhatsApp bridge when the daemon starts.'),
+  transport: WhatsappTransport.default('meta-cloud').describe(
+    'meta-cloud uses the official Business API; web-js drives a linked WhatsApp Web session.',
+  ),
   metaCloud: WhatsappMetaCloudSchema.default({}),
   webJs: WhatsappWebJsSchema.default({}),
 });
@@ -71,8 +131,40 @@ const BotsSchema = z.object({
 });
 
 const DaemonSchema = z.object({
-  logLevel: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
-  heartbeatSeconds: z.number().int().min(5).default(60),
+  logLevel: z
+    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
+    .default('info')
+    .describe('Verbosity of ~/.asterisk/logs/daemon.log.'),
+  heartbeatSeconds: z
+    .number()
+    .int()
+    .min(5)
+    .default(60)
+    .describe('How often the daemon writes a liveness record.'),
+});
+
+// The web control panel. Off unless started explicitly via `asterisk web`;
+// these values are its defaults when no flag overrides them.
+const WebSchema = z.object({
+  host: z
+    .string()
+    .default('127.0.0.1')
+    .describe('Interface to bind. Leave on loopback unless you front it with a TLS proxy.'),
+  port: z
+    .number()
+    .int()
+    .min(1)
+    .max(65535)
+    .default(4321)
+    .describe('Port the control panel listens on.'),
+  authRequired: z
+    .boolean()
+    .default(true)
+    .describe('Require a token. Only safe to disable on a loopback bind you fully trust.'),
+  openBrowser: z
+    .boolean()
+    .default(true)
+    .describe('Open the panel in the default browser on start.'),
 });
 
 // Hooks fire at agent-loop lifecycle events. Each hook is a shell command
@@ -131,12 +223,17 @@ export type McpServerConfig = z.infer<typeof McpServerSchema>;
 export const OutputStyleSchema = z.enum(['default', 'concise', 'explanatory', 'learning']);
 
 export const ConfigSchema = z.object({
-  provider: ProviderSchema.default('ollama'),
+  provider: ProviderSchema.default('ollama').describe(
+    'Which backend the agent loop talks to.',
+  ),
   ollama: OllamaSchema.default({}),
   anthropic: AnthropicSchema.default({}),
   bots: BotsSchema.default({}),
   daemon: DaemonSchema.default({}),
-  outputStyle: OutputStyleSchema.default('default'),
+  web: WebSchema.default({}),
+  outputStyle: OutputStyleSchema.default('default').describe(
+    'Behaviour modifier spliced into the system prompt.',
+  ),
   mcpServers: z.array(McpServerSchema).default([]),
   hooks: z.array(HookConfigSchema).default([]),
 });
