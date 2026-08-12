@@ -196,13 +196,7 @@ async function handleTurn(
     await safeEdit(ctx, chatId, placeholder.message_id, '(no reply)', parseMode);
   }
 
-  for (const a of out.attachments ?? []) {
-    try {
-      await sendAttachment(ctx, a);
-    } catch (sendErr) {
-      await ctx.reply(`(failed to send ${a.kind} ${a.path}: ${(sendErr as Error).message})`);
-    }
-  }
+  await sendAttachments(ctx, out.attachments);
 }
 
 async function deliverFinal(
@@ -216,7 +210,23 @@ async function deliverFinal(
       await replyText(ctx, chunk, parseMode);
     }
   }
-  for (const a of out.attachments ?? []) {
+  await sendAttachments(ctx, out.attachments);
+}
+
+/**
+ * Sends each attachment, reporting a failure instead of aborting the rest.
+ *
+ * One function rather than the copy this used to be in both delivery paths:
+ * a test covering the copy in `deliverFinal` said nothing about the one in
+ * `handleTurn`, which is exactly the blind spot eight duplicated lines
+ * produce. Confirmed by breaking it — with the duplicate, the regression went
+ * unnoticed; with this, two tests fail.
+ *
+ * A missing file is ordinary — a screenshot the agent has since cleaned up —
+ * and should cost that one attachment, not the four after it.
+ */
+async function sendAttachments(ctx: Context, attachments: Attachment[] | undefined): Promise<void> {
+  for (const a of attachments ?? []) {
     try {
       await sendAttachment(ctx, a);
     } catch (sendErr) {

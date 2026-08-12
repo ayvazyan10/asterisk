@@ -23,10 +23,10 @@ export default defineConfig({
       // What is left is nameable rather than mysterious: the Telegram
       // transport (~32%), which needs a fake Bot API to test properly.
       thresholds: {
-        lines: 75,
-        functions: 77,
-        branches: 66,
-        statements: 74,
+        lines: 77,
+        functions: 79,
+        branches: 68,
+        statements: 76,
       },
     },
   },
