@@ -6,8 +6,9 @@ name: Release
 # produces from the `files` list — the same tarball a publish would upload, so
 # what people download is what they would have installed.
 #
-# Publishing to npm and building container images are deliberately not here.
-# Add them when there is a token and a decision to stand behind them.
+# Container images are deliberately not here. npm publishing is, gated on the
+# NPM_TOKEN secret: without it the step is skipped and the release still cuts,
+# because a missing token should cost you a publish, not the whole release.
 
 on:
   push:
@@ -15,11 +16,18 @@ on:
 
 permissions:
   contents: write
+  # Required for npm provenance: the token is minted by GitHub and lets npm
+  # attest that this tarball was built by this workflow from this commit.
+  id-token: write
 
 jobs:
   release:
     name: verify / build / publish release
     runs-on: ubuntu-latest
+    env:
+      # Hoisted to the job so the step's `if` can read it. A step cannot test
+      # a variable declared in its own env block.
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -86,6 +94,18 @@ jobs:
       # so this has to run after the build step above.
       - name: Pack the tarball
         run: npm pack --pack-destination .
+
+      # Skipped rather than failed when the secret is absent — a fork, or a
+      # repo where the token has not been set up, still gets its release.
+      - name: Publish to npm
+        if: ${{ env.NPM_TOKEN != '' }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" > ~/.npmrc
+          # --provenance publishes a signed attestation tying the tarball to
+          # this workflow run and commit. It costs nothing and is the one
+          # supply-chain control npm gives away.
+          npm publish --provenance --access public
+          rm -f ~/.npmrc
 
       - name: Publish the GitHub Release
         env:

@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Plugins** — in-process TypeScript modules that can register tools and
   lifecycle handlers. Off by default; the sandbox does not confine them.
 - **`/plugins`** — what is loaded, what failed, and what would load.
+- Releases publish to npm as `@ayvazyan101/asterisk` with provenance. The step
+  is skipped rather than failed when no token is configured, so a fork still
+  cuts a release.
 
 ### Changed
 

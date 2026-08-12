@@ -63,11 +63,13 @@ Your `~/.asterisk/` config is preserved unless you delete it explicitly.
 ### From npm
 
 ```bash
-npm install -g @ayvazyan10/asterisk
+npm install -g @ayvazyan101/asterisk
 ```
 
 Published under a scope because the bare `asterisk` name on npm belongs to an
-unrelated package. **Bun must already be installed** — the bundles target the
+unrelated package. Releases are published from CI with npm provenance, so the
+registry carries a signed attestation tying each tarball to the workflow run
+and commit that built it. **Bun must already be installed** — the bundles target the
 Bun runtime, and npm will not bring it along; the `asterisk` command stops with
 an install hint if it can't find Bun. Browser tools also need a one-off
 `bun playwright install chromium`. The one-line installer above handles both

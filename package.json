@@ -1,5 +1,5 @@
 {
-  "name": "@ayvazyan10/asterisk",
+  "name": "@ayvazyan101/asterisk",
   "version": "0.3.0",
   "description": "Asterisk \u2014 lightweight, personal AI assistant with Ollama-first model support, daemon controls, and Telegram/WhatsApp bot bridges.",
   "license": "Apache-2.0",
