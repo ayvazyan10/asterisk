@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto';
 import type { SqliteDriver } from '../db/driver.ts';
 import { authenticate } from './auth.ts';
 import { fail, HttpError, type RequestContext } from './http.ts';
+import { checkRequestOrigin } from './origin-guard.ts';
 import { matchRoute } from './router.ts';
 import { renderIndexHtml } from './ui/index.ts';
 
@@ -47,6 +48,14 @@ export function createRequestHandler(opts: WebServerOptions): (req: Request) => 
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     const nonce = randomBytes(16).toString('base64');
+
+    // Before authentication: a rebound or cross-site request must be refused
+    // even when it carries a valid session cookie, because the cookie is
+    // exactly what such a request is trying to ride on.
+    const originProblem = checkRequestOrigin(req, { host: opts.host, port: opts.port });
+    if (originProblem) {
+      return fail(originProblem, 403);
+    }
 
     const auth = authenticate(db, req, { required: authRequired, secure: url.protocol === 'https:' });
     const cookieHeader = auth.setCookie ? { 'set-cookie': auth.setCookie } : {};
@@ -91,10 +100,16 @@ export function createRequestHandler(opts: WebServerOptions): (req: Request) => 
       return res;
     } catch (e) {
       if (e instanceof HttpError) return fail(e.message, e.status, e.detail);
-      // Zod and filesystem errors surface here. The message is safe to return
-      // — this is a localhost admin panel, not a public endpoint — but the
-      // stack stays server-side.
-      return fail((e as Error).message || 'internal error', 500);
+      // Unexpected errors carry absolute paths, SQLite schema details and Zod
+      // internals. "It's only localhost" stopped being a good enough reason to
+      // return them once we accepted that a browser can be made to reach
+      // localhost; the caller gets a correlation id and the detail stays in the
+      // server's own output.
+      const ref = randomBytes(4).toString('hex');
+      // stderr is this process's log — `asterisk web` reports everything else
+      // the same way, and under the daemon it lands in daemon.log.
+      console.error(`[web ${ref}]`, e);
+      return fail(`internal error (ref ${ref})`, 500);
     }
   };
 }

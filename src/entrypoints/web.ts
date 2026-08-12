@@ -106,6 +106,21 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
+  // Loopback is not a boundary against a browser: a page the user visits can
+  // reach 127.0.0.1, and the panel writes hook commands that later run through
+  // bash. Host and Origin validation blocks the drive-by case, but running with
+  // no credential at all still means any local process — or any local user —
+  // has full control, so it takes a deliberate opt-in.
+  if (!authRequired && process.env['ASTERISK_I_UNDERSTAND_NO_AUTH'] !== '1') {
+    console.error(
+      'asterisk web: --no-auth disables the only credential on a panel that can\n' +
+        '  write shell commands executed by the agent. Set\n' +
+        '  ASTERISK_I_UNDERSTAND_NO_AUTH=1 to proceed, or drop the flag and use\n' +
+        '  `asterisk web --print-token`.',
+    );
+    process.exit(2);
+  }
+
   // A fresh install has no token; mint one so the printed link just works.
   let token: string | undefined;
   if (authRequired && !hasAnyToken(db)) token = issueToken(db, 'first-run');
