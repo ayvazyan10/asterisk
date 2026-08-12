@@ -538,6 +538,7 @@ the panel's **Download JSON** button produces and **Upload JSON** accepts:
 ```jsonc
 {
   "provider": "ollama",                       // or "openai-compatible" | "anthropic"
+  "providerFallback": [],                     // e.g. ["anthropic"] — tried when the primary is unreachable
   "ollama": {
     "baseUrl": "http://127.0.0.1:11434",
     "model": "qwen3.5:9b-q8-max",
@@ -723,6 +724,16 @@ On Linux, `apt install bubblewrap` (or your distro's equivalent) is all it
 takes. Its seatbelt counterpart ships with macOS.
 
 ## Reliability
+
+**Provider fallback.** `providerFallback` lists backends to try, in order, when
+the primary one cannot answer — a laptop whose Ollama is not running falls
+through to a configured Anthropic key instead of failing every turn. Only
+availability failures step down the chain (network, 5xx, overloaded, rate
+limit, auth); a rejected request is *not* replayed elsewhere, because it would
+fail there too and the switch would hide the real error. A reply that has
+already begun streaming is never restarted on another backend. The chain
+reports the smallest context window of its links, since the history is built
+once and may be answered by any of them.
 
 The agent loop wraps every model call in retry logic with exponential
 backoff + jitter, honours the `Retry-After` header, classifies HTTP errors

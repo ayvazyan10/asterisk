@@ -372,6 +372,12 @@ export const OutputStyleSchema = z.enum(['default', 'concise', 'explanatory', 'l
 
 export const ConfigSchema = z.object({
   provider: ProviderSchema.default('ollama').describe('Which backend the agent loop talks to.'),
+  providerFallback: z
+    .array(ProviderSchema)
+    .default([])
+    .describe(
+      'Backends to try, in order, when the primary one is unreachable. Only availability failures step down the chain — a rejected request is not retried elsewhere.',
+    ),
   ollama: OllamaSchema.default({}),
   openaiCompatible: OpenAiCompatibleSchema.default({}),
   anthropic: AnthropicSchema.default({}),

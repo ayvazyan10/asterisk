@@ -9,6 +9,7 @@ import type { LoadedConfig } from '../config/load.ts';
 import type { AsteriskConfig } from '../config/schema.ts';
 import type { Provider } from '../types/messages.ts';
 import { createAnthropicProvider } from './anthropic.ts';
+import { type FallbackLink, createFallbackProvider } from './fallback.ts';
 import { createOllamaProvider } from './ollama.ts';
 import { createOpenAiCompatibleProvider } from './openai-compatible.ts';
 
@@ -52,9 +53,49 @@ export function chooseProvider(loaded: LoadedConfig): ProviderChoice {
   return { provider: buildOllama(config), kind: 'ollama' };
 }
 
+/**
+ * Builds the provider chain: the chosen backend, then anything in
+ * `providerFallback` that is usable and not already in front of it.
+ *
+ * A backend that cannot be constructed at all — Anthropic with no key — is
+ * dropped here rather than added and left to fail on first use, so the chain
+ * only contains links that could plausibly answer.
+ */
+export function createProviderChain(loaded: LoadedConfig): ProviderChoice {
+  const head = chooseProvider(loaded);
+  const wanted = loaded.config.providerFallback.filter((kind) => kind !== head.kind);
+  if (wanted.length === 0) return head;
+
+  const links: FallbackLink[] = [{ provider: head.provider, label: head.provider.name }];
+  for (const kind of wanted) {
+    const built = buildKind(kind, loaded);
+    if (built) links.push({ provider: built, label: built.name });
+  }
+  if (links.length === 1) return head;
+
+  return { ...head, provider: createFallbackProvider(links) };
+}
+
+/** Builds one backend by name, or null when it cannot be built. */
+function buildKind(kind: AsteriskConfig['provider'], loaded: LoadedConfig): Provider | null {
+  try {
+    if (kind === 'anthropic') {
+      const apiKey = loaded.secrets.ANTHROPIC_API_KEY;
+      // Without a key this link could only ever contribute an auth failure.
+      return apiKey
+        ? createAnthropicProvider({ apiKey, model: loaded.config.anthropic.model })
+        : null;
+    }
+    if (kind === 'openai-compatible') return buildOpenAiCompatible(loaded);
+    return buildOllama(loaded.config);
+  } catch {
+    return null;
+  }
+}
+
 /** Convenience wrapper for callers that don't care why a fallback happened. */
 export function createProviderFromConfig(loaded: LoadedConfig): Provider {
-  return chooseProvider(loaded).provider;
+  return createProviderChain(loaded).provider;
 }
 
 function buildOllama(config: AsteriskConfig): Provider {

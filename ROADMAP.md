@@ -179,6 +179,16 @@ parent dispatch N agents and orchestrate them — fork-join semantics with
 shared task list, results merged on collection. Like `batch` skill but
 parallelised across actual sub-agents instead of sequential.
 
+### ~~Provider fallback chain~~ ✓ shipped
+`providerFallback` is an ordered list of backends to try when the primary one
+cannot answer. Only availability failures advance the chain; `bad-request`,
+`context-overflow` and `aborted` describe the request rather than the backend,
+and replaying them elsewhere would hide the real error behind a model switch.
+Failover also stops once a reply has started streaming — the first half is
+already on the user's screen. The chain advertises the smallest context window
+of its links, because history is budgeted once and answered by whichever link
+takes it.
+
 ## Tier 3 — Speculative, not committed
 
 ### ~~Web dashboard~~ ✓ shipped as the control panel

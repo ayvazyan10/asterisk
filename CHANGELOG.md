@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cover.
 - **Dropped history is summarised** rather than replaced by a bare count.
 - **`/permissions`** and the Bash permission boundary.
+- **Provider fallback chain** (`providerFallback`) — try another backend when
+  the primary is unreachable, without replaying a rejected request or
+  restarting a reply that has already begun streaming.
 
 ### Changed
 
