@@ -935,7 +935,7 @@ function runSkill(ctx: CommandContext, skill: Skill): string {
     ctx.injectInput(skill.prompt);
     return `✓ skill "${skill.name}" loaded into the input — press Enter to run`;
   }
-  return `Skill: ${skill.name}\n${skill.description ? skill.description + '\n\n' : ''}${skill.prompt}`;
+  return `Skill: ${skill.name}\n${skill.description ? `${skill.description}\n\n` : ''}${skill.prompt}`;
 }
 
 function formatSessions(): string {
@@ -1279,7 +1279,7 @@ function hooksAddForm(): FormSpec {
       };
       cfg.config.hooks.push(hook);
       saveConfig(cfg.config);
-      return `✓ added hook "${hook.name}" (${hook.event}${matcher ? ' / ' + matcher : ''})`;
+      return `✓ added hook "${hook.name}" (${hook.event}${matcher ? ` / ${matcher}` : ''})`;
     },
     onCancel: () => '(cancelled)',
   };

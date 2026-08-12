@@ -42,8 +42,8 @@ export function balanceOpenTags(html: string): string {
   const stack: string[] = [];
   // Walk the string, push on open tags, pop on close tags.
   const re = /<\/?([a-z]+)(?:\s[^>]*)?>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) !== null) {
+  let m: RegExpExecArray | null = re.exec(html);
+  for (; m !== null; m = re.exec(html)) {
     const tag = m[1]?.toLowerCase();
     if (!tag || !TG_HTML_TAGS.includes(tag as (typeof TG_HTML_TAGS)[number])) continue;
     if (m[0].startsWith('</')) {

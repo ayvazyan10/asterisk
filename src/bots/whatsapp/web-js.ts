@@ -23,7 +23,9 @@ interface WhatsappWebMessage {
   reply(text: string): Promise<unknown>;
 }
 
-type WhatsappWebMessageMedia = {};
+// An opaque handle from whatsapp-web.js. `{}` would mean "any non-nullish
+// value"; this says "a value we deliberately do not inspect".
+type WhatsappWebMessageMedia = Record<string, unknown>;
 
 interface WhatsappWebClient {
   on(event: 'qr', cb: (qr: string) => void): void;

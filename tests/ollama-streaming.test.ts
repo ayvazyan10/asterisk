@@ -245,8 +245,7 @@ describe('Ollama streaming', () => {
           const enc = new TextEncoder();
           ctrl.enqueue(
             enc.encode(
-              JSON.stringify({ message: { role: 'assistant', content: 'start' }, done: false }) +
-                '\n',
+              `${JSON.stringify({ message: { role: 'assistant', content: 'start' }, done: false })}\n`,
             ),
           );
           // Never sends more data — triggers idle timeout.
@@ -277,8 +276,7 @@ describe('Ollama streaming', () => {
             try {
               ctrl.enqueue(
                 enc.encode(
-                  JSON.stringify({ message: { role: 'assistant', content: '.' }, done: false }) +
-                    '\n',
+                  `${JSON.stringify({ message: { role: 'assistant', content: '.' }, done: false })}\n`,
                 ),
               );
             } catch {

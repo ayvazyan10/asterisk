@@ -156,10 +156,10 @@ function runShellHook(
       else signal.addEventListener('abort', onAbort, { once: true });
     }
 
-    proc.stdout!.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
-    proc.stderr!.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
-    proc.stdin!.write(stdin);
-    proc.stdin!.end();
+    proc.stdout?.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+    proc.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    proc.stdin?.write(stdin);
+    proc.stdin?.end();
 
     proc.on('close', (code) => {
       finish({

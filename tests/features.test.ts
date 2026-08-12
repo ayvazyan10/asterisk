@@ -93,7 +93,7 @@ describe('output store', () => {
   });
 
   it('persistOutput writes file to disk and returns summary', () => {
-    const output = 'line1\nline2\nline3\n' + 'x'.repeat(10000);
+    const output = `line1\nline2\nline3\n${'x'.repeat(10000)}`;
     const summary = persistOutput('Bash', output);
 
     expect(summary).toContain('[output persisted to');
@@ -223,7 +223,7 @@ describe('compaction', () => {
   it('compactHistory keeps 6 most recent and compacts older messages', () => {
     // Create 10 messages with large text blocks to exceed 80k tokens
     const messages: Message[] = Array.from({ length: 10 }, (_, i) =>
-      makeMessage(i % 2 === 0 ? 'user' : 'assistant', `msg-${i} ` + 'x'.repeat(50000)),
+      makeMessage(i % 2 === 0 ? 'user' : 'assistant', `msg-${i} ${'x'.repeat(50000)}`),
     );
 
     const result = compactHistory(messages);
@@ -236,7 +236,7 @@ describe('compaction', () => {
 
     // First 4 should be compacted (text truncated to ~400 + suffix)
     for (let i = 0; i < 4; i++) {
-      const block = result[i]!.content[0]!;
+      const block = result[i]?.content[0]!;
       expect(block.type).toBe('text');
       if (block.type === 'text') {
         expect(block.text.length).toBeLessThan(50050);
@@ -248,16 +248,16 @@ describe('compaction', () => {
   it('compactHistory compacts long tool_result content', () => {
     // Need total > 80k tokens = 320k chars. Use 4 x 60k + 6 x 20k = 360k chars = 90k tokens.
     const messages: Message[] = [
-      ...Array.from({ length: 4 }, () => makeToolResultMessage('line1\n' + 'z'.repeat(60000))),
+      ...Array.from({ length: 4 }, () => makeToolResultMessage(`line1\n${'z'.repeat(60000)}`)),
       ...Array.from({ length: 6 }, (_, i) =>
-        makeMessage('user', `recent-${i} ` + 'w'.repeat(20000)),
+        makeMessage('user', `recent-${i} ${'w'.repeat(20000)}`),
       ),
     ];
 
     const result = compactHistory(messages);
     // First 4 should have compacted tool results
     for (let i = 0; i < 4; i++) {
-      const block = result[i]!.content[0]!;
+      const block = result[i]?.content[0]!;
       if (block.type === 'tool_result') {
         expect(block.content).toContain('[compacted]');
         expect(block.content).toContain('chars original');
@@ -507,10 +507,10 @@ describe('conversation persistence', () => {
     saveConversation('test-conv-1', testMessages);
     const loaded = loadConversation('test-conv-1');
     expect(loaded).toHaveLength(2);
-    expect(loaded[0]!.role).toBe('user');
-    expect(loaded[1]!.role).toBe('assistant');
-    if (loaded[0]!.content[0]!.type === 'text') {
-      expect((loaded[0]!.content[0]! as TextBlock).text).toBe('hello');
+    expect(loaded[0]?.role).toBe('user');
+    expect(loaded[1]?.role).toBe('assistant');
+    if (loaded[0]?.content[0]?.type === 'text') {
+      expect((loaded[0]?.content[0]! as TextBlock).text).toBe('hello');
     }
   });
 
@@ -595,7 +595,7 @@ describe('conversation persistence', () => {
     saveConversation('complex-conv', complexMessages);
     const loaded = loadConversation('complex-conv');
     expect(loaded).toHaveLength(4);
-    expect(loaded[1]!.content[0]!.type).toBe('tool_use');
-    expect(loaded[2]!.content[0]!.type).toBe('tool_result');
+    expect(loaded[1]?.content[0]?.type).toBe('tool_use');
+    expect(loaded[2]?.content[0]?.type).toBe('tool_result');
   });
 });

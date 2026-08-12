@@ -20,6 +20,7 @@ import type {
   ContentBlock,
   Message,
   Provider,
+  ProviderResponse,
   TextBlock,
   TokenUsage,
   ToolResultBlock,
@@ -314,7 +315,7 @@ async function runAgentTurnInner(
       // tool_use written by an older build would otherwise fail every turn.
       state.history = repairHistory(compactHistory(state.history));
 
-      let response;
+      let response: ProviderResponse;
       try {
         response = await retry(
           () => {
@@ -329,7 +330,7 @@ async function runAgentTurnInner(
             const allTools = toolDefinitions();
             const tools =
               opts.allowedTools && opts.allowedTools.length > 0
-                ? allTools.filter((t) => opts.allowedTools!.includes(t.name))
+                ? allTools.filter((t) => opts.allowedTools?.includes(t.name))
                 : allTools;
             return provider.send({
               system: systemPrompt,
@@ -416,10 +417,7 @@ async function runAgentTurnInner(
             content: [
               {
                 type: 'text',
-                text:
-                  `You ran ${toolList} but haven't sent a closing reply yet. ` +
-                  `Now respond — in one or two sentences — with a short summary of what changed. ` +
-                  `Do NOT call more tools; text only.`,
+                text: `You ran ${toolList} but haven't sent a closing reply yet. Now respond — in one or two sentences — with a short summary of what changed. Do NOT call more tools; text only.`,
               },
             ],
           });

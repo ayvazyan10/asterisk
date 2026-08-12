@@ -112,7 +112,7 @@ export function Form({ spec, onSubmit, onCancel }: Props) {
         <Text dimColor>
           {submitting
             ? '  …submitting…'
-            : `  Tab next · Shift+Tab back · Enter on last field submits · Ctrl+S submit · Esc cancel`}
+            : '  Tab next · Shift+Tab back · Enter on last field submits · Ctrl+S submit · Esc cancel'}
         </Text>
       </Box>
     </Box>
@@ -291,7 +291,7 @@ function SelectRow({ field, value, onChange, active, onAdvance, isLast }: Select
           if (isSelected) {
             return (
               <Box key={opt.value}>
-                <Text>{'  ● ' + opt.label}</Text>
+                <Text>{`  ● ${opt.label}`}</Text>
                 {opt.description && opt.description !== opt.label && (
                   <Text dimColor>{`  ${opt.description}`}</Text>
                 )}
@@ -300,7 +300,7 @@ function SelectRow({ field, value, onChange, active, onAdvance, isLast }: Select
           }
           return (
             <Box key={opt.value}>
-              <Text dimColor>{'  ○ ' + opt.label}</Text>
+              <Text dimColor>{`  ○ ${opt.label}`}</Text>
             </Box>
           );
         })}

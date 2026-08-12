@@ -96,12 +96,12 @@ export const enterWorktreeTool: Tool = {
       setActive({ path, branch, createdAt: Date.now() });
       return ok(
         [
-          `✓ worktree ready`,
+          '✓ worktree ready',
           `  path:   ${path}`,
           `  branch: ${branch}`,
           `  base:   ${base}`,
           '',
-          'Run subsequent commands with `cd ' + path + ' && …` via Bash.',
+          `Run subsequent commands with \`cd ${path} && …\` via Bash.`,
         ].join('\n'),
       );
     } catch (e) {

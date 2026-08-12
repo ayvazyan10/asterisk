@@ -28,12 +28,20 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      # Was continue-on-error while biome.json was absent and lint emitted 750
+      # diagnostics — CI stayed green while CONTRIBUTING.md and the PR template
+      # both required lint to pass. The config now exists and the tree is clean,
+      # so the gate is real.
       - name: Lint
         run: bun run lint
-        continue-on-error: true
 
       - name: Test
         run: bun run test
+
+      # The coverage thresholds in vitest.config.ts had never run:
+      # @vitest/coverage-v8 was not installed, so --coverage errored out.
+      - name: Coverage
+        run: bun run test:coverage
 
       - name: Build
         run: bun run build

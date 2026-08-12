@@ -330,8 +330,8 @@ async function readStreamingChat(
       if (ctrl?.signal.aborted) break;
       resetIdleTimer();
       buf += decoder.decode(value, { stream: true });
-      let nl: number;
-      while ((nl = buf.indexOf('\n')) !== -1) {
+      let nl = buf.indexOf('\n');
+      for (; nl !== -1; nl = buf.indexOf('\n')) {
         const line = buf.slice(0, nl).trim();
         buf = buf.slice(nl + 1);
         if (!line) continue;

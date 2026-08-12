@@ -65,7 +65,7 @@ export function ListPicker({ spec, onPick, onCancel }: Props) {
                     {item.label}
                   </Text>
                 ) : (
-                  <Text>{'  ' + item.label}</Text>
+                  <Text>{`  ${item.label}`}</Text>
                 )}
                 {item.badge && (
                   <Text color="green" dimColor>

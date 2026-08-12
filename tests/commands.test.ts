@@ -103,7 +103,7 @@ describe('command registry', () => {
 
   it('/help with no args lists all commands', async () => {
     const c = ctx(createOllamaProvider());
-    const out = (await COMMANDS.find((c2) => c2.name === '/help')!.execute(c, '')) as string;
+    const out = (await COMMANDS.find((c2) => c2.name === '/help')?.execute(c, '')) as string;
     expect(out).toContain('/help');
     expect(out).toContain('/mcp');
     expect(out).toContain('/model');
@@ -111,7 +111,7 @@ describe('command registry', () => {
 
   it('/help model returns details', async () => {
     const c = ctx(createOllamaProvider());
-    const out = (await COMMANDS.find((c2) => c2.name === '/help')!.execute(c, 'model')) as string;
+    const out = (await COMMANDS.find((c2) => c2.name === '/help')?.execute(c, 'model')) as string;
     expect(out).toMatch(/\/model/);
   });
 
@@ -119,21 +119,21 @@ describe('command registry', () => {
     const c = ctx(createOllamaProvider());
     c.state.history.push({ role: 'user', content: [{ type: 'text', text: 'hi' }] });
     expect(c.state.history).toHaveLength(1);
-    await COMMANDS.find((c2) => c2.name === '/clear')!.execute(c, '');
+    await COMMANDS.find((c2) => c2.name === '/clear')?.execute(c, '');
     expect(c.state.history).toHaveLength(0);
     expect(c.flags().cleared).toBe(true);
   });
 
   it('/quit calls exit()', async () => {
     const c = ctx(createOllamaProvider());
-    const result = await COMMANDS.find((c2) => c2.name === '/quit')!.execute(c, '');
+    const result = await COMMANDS.find((c2) => c2.name === '/quit')?.execute(c, '');
     expect(result).toBeNull();
     expect(c.flags().exited).toBe(true);
   });
 
   it('/tools lists registered tools', async () => {
     const c = ctx(createOllamaProvider());
-    const out = (await COMMANDS.find((c2) => c2.name === '/tools')!.execute(c, '')) as string;
+    const out = (await COMMANDS.find((c2) => c2.name === '/tools')?.execute(c, '')) as string;
     expect(out).toContain('Bash');
     expect(out).toContain('Read');
     expect(out).toContain('Glob');
@@ -141,14 +141,14 @@ describe('command registry', () => {
 
   it('/mcp list reports empty text when no servers configured', async () => {
     const c = ctx(createOllamaProvider());
-    const out = await COMMANDS.find((c2) => c2.name === '/mcp')!.execute(c, 'list');
+    const out = await COMMANDS.find((c2) => c2.name === '/mcp')?.execute(c, 'list');
     expect(typeof out).toBe('string');
     expect(out as string).toMatch(/No MCP servers/);
   });
 
   it('/mcp (no args) returns an action picker list', async () => {
     const c = ctx(createOllamaProvider());
-    const out = await COMMANDS.find((c2) => c2.name === '/mcp')!.execute(c, '');
+    const out = await COMMANDS.find((c2) => c2.name === '/mcp')?.execute(c, '');
     expect(out && typeof out === 'object' && (out as { kind?: string }).kind).toBe('list');
     if (out && typeof out === 'object' && 'items' in out) {
       const items = (out as { items: { value: string }[] }).items.map((i) => i.value);
@@ -158,7 +158,7 @@ describe('command registry', () => {
 
   it('/mcp add stdio returns a stdio form', async () => {
     const c = ctx(createOllamaProvider());
-    const out = await COMMANDS.find((c2) => c2.name === '/mcp')!.execute(c, 'add stdio');
+    const out = await COMMANDS.find((c2) => c2.name === '/mcp')?.execute(c, 'add stdio');
     expect(out && typeof out === 'object' && (out as { kind?: string }).kind).toBe('form');
     if (out && typeof out === 'object' && 'fields' in out) {
       const keys = (out as { fields: { key: string }[] }).fields.map((f) => f.key);
@@ -168,7 +168,7 @@ describe('command registry', () => {
 
   it('/mcp add (no transport) returns a transport picker', async () => {
     const c = ctx(createOllamaProvider());
-    const out = await COMMANDS.find((c2) => c2.name === '/mcp')!.execute(c, 'add');
+    const out = await COMMANDS.find((c2) => c2.name === '/mcp')?.execute(c, 'add');
     expect(out && typeof out === 'object' && (out as { kind?: string }).kind).toBe('list');
     if (out && typeof out === 'object' && 'items' in out) {
       const items = (out as { items: { value: string }[] }).items.map((i) => i.value);
@@ -178,7 +178,7 @@ describe('command registry', () => {
 
   it('/status reports provider, history, and daemon state', async () => {
     const c = ctx(createOllamaProvider());
-    const out = (await COMMANDS.find((c2) => c2.name === '/status')!.execute(c, '')) as string;
+    const out = (await COMMANDS.find((c2) => c2.name === '/status')?.execute(c, '')) as string;
     expect(out).toMatch(/Provider/);
     expect(out).toMatch(/History/);
     expect(out).toMatch(/Daemon/);
@@ -192,7 +192,7 @@ describe('command registry', () => {
 
   it('/provider (no args) returns a list of providers', async () => {
     const c = ctx(createOllamaProvider());
-    const out = await COMMANDS.find((c2) => c2.name === '/provider')!.execute(c, '');
+    const out = await COMMANDS.find((c2) => c2.name === '/provider')?.execute(c, '');
     expect(out && typeof out === 'object' && (out as { kind?: string }).kind).toBe('list');
     if (out && typeof out === 'object' && 'items' in out) {
       const items = (out as { items: { value: string }[] }).items.map((i) => i.value);
@@ -202,7 +202,7 @@ describe('command registry', () => {
 
   it('/provider with bad name reports unknown', async () => {
     const c = ctx(createOllamaProvider());
-    const out = (await COMMANDS.find((c2) => c2.name === '/provider')!.execute(
+    const out = (await COMMANDS.find((c2) => c2.name === '/provider')?.execute(
       c,
       'gpt-banana',
     )) as string;

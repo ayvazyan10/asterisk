@@ -7,7 +7,7 @@ import { loadSkills, parseSkillMarkdown } from '../src/skills/loader.ts';
 
 describe('parseSkillMarkdown', () => {
   it('parses frontmatter + body', () => {
-    const raw = `---\nname: code-review\ndescription: Review the diff\n---\nLook at the diff.`;
+    const raw = '---\nname: code-review\ndescription: Review the diff\n---\nLook at the diff.';
     expect(parseSkillMarkdown(raw, 'fallback')).toEqual({
       name: 'code-review',
       description: 'Review the diff',
@@ -16,7 +16,7 @@ describe('parseSkillMarkdown', () => {
   });
 
   it('falls back to the directory name when frontmatter omits name', () => {
-    const raw = `---\ndescription: anon\n---\nbody here`;
+    const raw = '---\ndescription: anon\n---\nbody here';
     expect(parseSkillMarkdown(raw, 'mydir').name).toBe('mydir');
   });
 

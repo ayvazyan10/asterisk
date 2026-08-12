@@ -828,9 +828,9 @@ function renderSystemPanel(entry: Entry) {
 // match "label: value" with one space if the colon is glued to the label.
 function parseKeyValue(line: string): { label: string; gap: string; value: string } | null {
   const m = /^([A-Za-z][\w/.\- ]{0,18})(\s{2,})(\S.*)$/.exec(line);
-  if (m && m[1] && m[2] && m[3]) return { label: m[1], gap: m[2], value: m[3] };
+  if (m?.[1] && m[2] && m[3]) return { label: m[1], gap: m[2], value: m[3] };
   const c = /^([A-Za-z][\w/.\- ]{0,18}:)(\s+)(\S.*)$/.exec(line);
-  if (c && c[1] && c[2] && c[3]) return { label: c[1], gap: c[2], value: c[3] };
+  if (c?.[1] && c[2] && c[3]) return { label: c[1], gap: c[2], value: c[3] };
   return null;
 }
 

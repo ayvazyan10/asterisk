@@ -111,7 +111,7 @@ export function expandCronField(field: string, min: number, max: number): Set<nu
     const stepMatch = /^(.+)\/(\d+)$/.exec(piece);
     let range: string;
     let step = 1;
-    if (stepMatch && stepMatch[1] && stepMatch[2]) {
+    if (stepMatch?.[1] && stepMatch[2]) {
       range = stepMatch[1];
       step = Math.max(1, Number.parseInt(stepMatch[2], 10));
     } else {

@@ -100,8 +100,7 @@ async function main(): Promise<void> {
 
   if (!authRequired && !isLoopback(host)) {
     console.error(
-      `asterisk web: refusing to serve without authentication on ${host}.\n` +
-        '  --no-auth is only allowed on a loopback address.',
+      `asterisk web: refusing to serve without authentication on ${host}.\n  --no-auth is only allowed on a loopback address.`,
     );
     process.exit(2);
   }

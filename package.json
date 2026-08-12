@@ -1,7 +1,7 @@
 {
   "name": "asterisk",
   "version": "0.1.0",
-  "description": "Asterisk — lightweight, personal AI assistant with Ollama-first model support, daemon controls, and Telegram/WhatsApp bot bridges.",
+  "description": "Asterisk \u2014 lightweight, personal AI assistant with Ollama-first model support, daemon controls, and Telegram/WhatsApp bot bridges.",
   "license": "Apache-2.0",
   "type": "module",
   "private": false,
@@ -16,7 +16,8 @@
     "format": "biome format --write src/ tests/",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "bun src/entrypoints/cli.tsx"
+    "dev": "bun src/entrypoints/cli.tsx",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",

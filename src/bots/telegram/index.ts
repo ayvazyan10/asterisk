@@ -417,7 +417,6 @@ async function sendAttachment(ctx: Context, a: Attachment): Promise<void> {
     case 'audio':
       await ctx.replyWithAudio(file, captionOpts);
       return;
-    case 'document':
     default:
       await ctx.replyWithDocument(file, captionOpts);
       return;

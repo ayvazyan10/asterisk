@@ -69,7 +69,7 @@ export function writeSessionSoul(session: AgentSession, content: string): string
   const path = sessionSoulPath(session);
   const dir = path.slice(0, path.lastIndexOf('/'));
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path, content.trim() + '\n', { mode: 0o644 });
+  writeFileSync(path, `${content.trim()}\n`, { mode: 0o644 });
   return path;
 }
 

@@ -97,7 +97,7 @@ export const askUserQuestionTool: Tool = {
     );
     const abortPromise = opts?.signal
       ? new Promise<AskAnswer>((resolve) => {
-          opts.signal!.addEventListener(
+          opts.signal?.addEventListener(
             'abort',
             () => resolve({ id, answer: '', cancelled: true }),
             {

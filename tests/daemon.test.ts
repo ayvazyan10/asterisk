@@ -43,9 +43,16 @@ describe('daemon lifecycle', () => {
     const statusRes = status();
     expect(statusRes.message).toMatch(/running \(pid \d+\)/);
 
-    // Wait for at least one heartbeat to land in the log.
-    await delay(500);
-    const tail = logs(20);
+    // Poll for the first log line instead of sleeping a fixed 500ms. The fixed
+    // wait passed in isolation and failed under a loaded parallel run, because
+    // it raced a real spawned `bun` process writing its first line — the suite's
+    // only genuinely flaky assertion.
+    const deadline = Date.now() + 10_000;
+    let tail = logs(20);
+    while (!/heartbeat|asterisk daemon starting/.test(tail.message) && Date.now() < deadline) {
+      await delay(50);
+      tail = logs(20);
+    }
     expect(tail.message).toMatch(/heartbeat|asterisk daemon starting/);
 
     const stopRes = await stop();

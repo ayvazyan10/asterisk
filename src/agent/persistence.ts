@@ -79,9 +79,7 @@ export function listConversations(): Array<{
           updatedAt: data.updatedAt,
           messageCount: data.messages?.length ?? 0,
         });
-      } catch {
-        continue;
-      }
+      } catch {}
     }
     return result.sort((a, b) => b.updatedAt - a.updatedAt);
   } catch {

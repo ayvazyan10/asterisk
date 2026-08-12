@@ -59,7 +59,7 @@ export function CommandMenu({ input, selectedIndex }: Props) {
                 {cmd.name.padEnd(12)}
               </Text>
             ) : (
-              <Text>{'  ' + cmd.name.padEnd(12)}</Text>
+              <Text>{`  ${cmd.name.padEnd(12)}`}</Text>
             )}
             <Text dimColor> {cmd.description}</Text>
           </Box>

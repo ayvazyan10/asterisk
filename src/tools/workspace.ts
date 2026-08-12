@@ -17,7 +17,7 @@ let cachedRoot: string | null = null;
 export function workspaceRoot(): string {
   if (cachedRoot !== null) return cachedRoot;
   const env = process.env['ASTERISK_WORKSPACE'];
-  cachedRoot = resolve(env && env.trim() ? env.trim() : process.cwd());
+  cachedRoot = resolve(env?.trim() ? env.trim() : process.cwd());
   return cachedRoot;
 }
 

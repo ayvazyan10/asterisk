@@ -38,7 +38,7 @@ export function compactHistory(messages: Message[]): Message[] {
       if (block.type === 'text' && block.text.length > 500) {
         return {
           ...block,
-          text: block.text.slice(0, 400) + `… [compacted from ${block.text.length} chars]`,
+          text: `${block.text.slice(0, 400)}… [compacted from ${block.text.length} chars]`,
         };
       }
       return block;

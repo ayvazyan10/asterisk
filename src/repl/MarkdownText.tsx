@@ -132,7 +132,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
     <Box flexDirection="column" marginY={1}>
       {lang && <Text dimColor>{`┌─ ${lang}`}</Text>}
       {lines.map((l, i) => (
-        <Box key={`c${i}`}>
+        <Box key={`c${i}:${l}`}>
           <Text dimColor color="cyan">
             {'│ '}
           </Text>
@@ -148,7 +148,7 @@ function BulletList({ items }: { items: string[] }) {
   return (
     <Box flexDirection="column">
       {items.map((item, i) => (
-        <Box key={`bul${i}`}>
+        <Box key={`bul${i}:${item}`}>
           <Text color="cyan">{'  • '}</Text>
           <Inline text={item} />
         </Box>
@@ -161,7 +161,7 @@ function OrderedList({ items }: { items: string[] }) {
   return (
     <Box flexDirection="column">
       {items.map((item, i) => (
-        <Box key={`ord${i}`}>
+        <Box key={`ord${i}:${item}`}>
           <Text color="cyan">{`  ${i + 1}. `}</Text>
           <Inline text={item} />
         </Box>
@@ -174,7 +174,7 @@ function Quote({ lines }: { lines: string[] }) {
   return (
     <Box flexDirection="column" marginY={1}>
       {lines.map((l, i) => (
-        <Box key={`q${i}`}>
+        <Box key={`q${i}:${l}`}>
           <Text dimColor>{'  ▎ '}</Text>
           <Text dimColor italic>
             {l}
@@ -213,7 +213,7 @@ export function parseInline(text: string): InlinePart[] {
     else if (m[5]) out.push({ kind: 'code', value: m[5].slice(1, -1) });
     else if (m[6]) {
       const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(m[6]);
-      if (linkMatch && linkMatch[1] && linkMatch[2]) {
+      if (linkMatch?.[1] && linkMatch[2]) {
         out.push({ kind: 'link', value: linkMatch[1], href: linkMatch[2] });
       } else {
         out.push({ kind: 'text', value: m[6] });

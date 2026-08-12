@@ -112,9 +112,7 @@ export function checkOutboundUrl(raw: string): UrlCheck {
 
   if (blocked) {
     return {
-      reason:
-        `refusing to fetch ${host}: ${blocked}. ` +
-        'Set ASTERISK_ALLOW_LOCAL_FETCH=1 to permit requests to local and private addresses.',
+      reason: `refusing to fetch ${host}: ${blocked}. Set ASTERISK_ALLOW_LOCAL_FETCH=1 to permit requests to local and private addresses.`,
     };
   }
   return { reason: null };

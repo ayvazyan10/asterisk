@@ -63,17 +63,25 @@ export function WorkingIndicator({ since, status }: Props) {
   const [, setTick] = useState(0);
   // Track when the externally-supplied status was last set so we can fall
   // back to the cycled verb during long silences.
-  const [statusSetAt, setStatusSetAt] = useState(Date.now());
+  const [statusStamp, setStatusStamp] = useState({ value: status, at: Date.now() });
 
-  // Pick one verb per turn — re-randomised when `since` changes (i.e. a new
-  // turn starts). Same pattern as claude-code-main's spinner.
-  const verb = useMemo(() => {
-    const i = Math.floor(Math.random() * VERBS.length);
-    return VERBS[i] ?? 'Working';
-  }, [since]);
+  // One verb per turn, derived from the turn's start timestamp rather than
+  // drawn at random. `since` changes exactly when a new turn begins, so the
+  // verb still varies turn to turn — but it is now a genuine function of its
+  // dependency, which means the memo is honest about what it depends on and
+  // the component renders deterministically for a given turn (also making it
+  // testable, which the random version was not).
+  const verb = useMemo(
+    () => VERBS[Math.abs(Math.trunc(since / 1000)) % VERBS.length] ?? 'Working',
+    [since],
+  );
 
+  // The timestamp lives next to the value it describes, so the effect reads
+  // `status` rather than merely being keyed on it — which is both honest about
+  // the dependency and cheaper, since an identical status no longer restarts
+  // the silence timer.
   useEffect(() => {
-    setStatusSetAt(Date.now());
+    setStatusStamp((prev) => (prev.value === status ? prev : { value: status, at: Date.now() }));
   }, [status]);
 
   useEffect(() => {
@@ -91,7 +99,7 @@ export function WorkingIndicator({ since, status }: Props) {
     elapsedSec < 60
       ? `${elapsedSec}s`
       : `${Math.floor(elapsedSec / 60)}m ${(elapsedSec % 60).toString().padStart(2, '0')}s`;
-  const silenceMs = Date.now() - statusSetAt;
+  const silenceMs = Date.now() - statusStamp.at;
   const displayStatus = silenceMs > SILENCE_THRESHOLD_MS ? `${verb}…` : status;
 
   return (
