@@ -85,6 +85,7 @@ describe('settings registry', () => {
       'daemon',
       'web',
       'permissions',
+      'sandbox',
       'outputStyle',
     ]);
   });

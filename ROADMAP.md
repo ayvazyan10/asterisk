@@ -5,10 +5,10 @@ here into commits as they ship.
 
 ## Tier 1
 
-The original Tier 1 has shipped or been dropped. What remains at this tier is
-the **OS-level sandbox** below — the permission boundary that shipped covers
-consent, not containment. After that, the next items to promote come from
-Tier 2: image content blocks and the multi-agent coordinator.
+The original Tier 1 has shipped or been dropped, and so has the OS-level
+sandbox. What remains here is extending that boundary to the in-process file
+tools. After that, the next items to promote come from Tier 2: image content
+blocks and the multi-agent coordinator.
 
 ### ~~Skill marketplace~~ — dropped
 Cut on 2026-07-31. The bundled set stays the whole story; skills are still
@@ -74,20 +74,31 @@ defaults to refusing. Manage it with `/permissions`.
 This is a consent boundary and nothing more. See **OS-level sandbox** below
 for the half that is still open.
 
-### OS-level sandbox for tool execution
-**Status:** not started · **Effort:** large
+### ~~OS-level sandbox for Bash~~ ✓ shipped
+`Bash` runs under bubblewrap on Linux and `sandbox-exec` on macOS: `/` bound
+read-only, workspace and `/tmp` writable, fresh `/dev` and `/proc`, optional
+network unshare. `~/.asterisk` is deliberately read-only, so a command cannot
+rewrite the secret store or the permission grants that let it run.
 
-The permission gate decides *whether* a command runs. Nothing constrains
-what it does once approved, and `Read` / `Write` / `Edit` bypass the gate
-entirely because they execute in-process — only the workspace guard bounds
-them, and `ASTERISK_NO_WORKSPACE_GUARD=1` turns that off.
+The part worth keeping: **a backend is not trusted until it passes a
+containment probe on the machine it is running on.** Asterisk tries a write
+that must fail and drops to unconfined if it succeeds. The macOS profile in
+particular cannot be exercised by CI, which is Linux-only, and a sandbox that
+silently does not sandbox is worse than none — it converts caution into
+confidence without converting any security.
 
-A real boundary needs a kernel-level backend: `bubblewrap` on Linux,
-`sandbox-exec` (seatbelt) on macOS, with `none` as an explicit opt-out and
-graceful degradation when neither is installed. Read-only bind of `/`,
-writable binds for the workspace plus `~/.asterisk/outputs` and a temp dir,
-and an optional network unshare. The in-process file tools need a path
-policy over the same rules, since no child-process sandbox can cover them.
+Modes: `auto`, `required` (refuse to run at all when unconfined), `off`.
+
+### Extend the sandbox boundary to the in-process file tools
+**Status:** not started · **Effort:** medium
+
+`Read`, `Write` and `Edit` execute inside the agent process, so no
+child-process sandbox reaches them. Today they are bounded by the workspace
+guard, which lands in nearly the same place — workspace-only writes — but is
+separate code with separate configuration, and
+`ASTERISK_NO_WORKSPACE_GUARD=1` turns it off entirely. They should share one
+path policy with `sandbox.writablePaths` rather than approximating each other.
+Reads are unconfined on both paths and would stay that way.
 
 ### ~~Streaming for the REPL~~ ✓ shipped
 Provider streaming wired into the REPL transcript via `onAssistantDelta`.

@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import { loadConfig } from '../config/load.ts';
 import { asteriskPaths } from '../daemon/paths.ts';
 import { statusFromPidFile } from '../daemon/pidfile.ts';
+import { sandboxStatus } from '../tools/sandbox.ts';
 import { parseProviderName } from './models.ts';
 import type { SlashCommand } from './registry.ts';
 
@@ -93,6 +94,22 @@ export const doctorCommand: SlashCommand = {
     const mcpConnected = ctx.mcp.servers.length;
     const mcpTools = ctx.mcp.tools.length;
     lines.push(`MCP          ${mcpConnected}/${mcpCfg.length} servers · ${mcpTools} tools`);
+
+    // Security posture. Two separate questions, and users conflate them:
+    // permissions decide whether a command runs, the sandbox decides what it
+    // can reach once it does.
+    const perms = loadConfig().config.permissions;
+    const sandbox = await sandboxStatus();
+    lines.push('');
+    lines.push('Security');
+    lines.push(
+      `  ${perms.mode === 'unrestricted' ? '✗' : '✓'} Bash perms mode ${perms.mode} · unattended runs ${perms.headless}`,
+    );
+    lines.push(
+      sandbox.backend === 'none'
+        ? `  ✗ Sandbox    none — ${sandbox.reason}`
+        : `  ✓ Sandbox    ${sandbox.backend} — ${sandbox.reason}`,
+    );
 
     // Config files
     lines.push('');

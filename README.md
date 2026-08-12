@@ -568,6 +568,11 @@ the panel's **Download JSON** button produces and **Upload JSON** accepts:
     }
   },
   "daemon": { "logLevel": "info", "heartbeatSeconds": 60 },
+  "sandbox": {                                // what a command may reach — see "Sandbox"
+    "mode": "auto",                           // "auto" | "required" | "off"
+    "network": true,                          // off blocks installs, git push, curl
+    "writablePaths": []                       // beyond the workspace and /tmp
+  },
   "permissions": {                            // what Bash may run — see "Permissions"
     "mode": "ask",                            // "ask" | "allowlist" | "unrestricted"
     "allow": [],                              // extra rules, e.g. ["npm test", "docker ps"]
@@ -667,6 +672,46 @@ in depth rather than the boundary: `rm -r -f /`, `$(echo rm) -rf /` and
 `sh -c '…'` all walk straight through it. The permission gate is what stops
 them.
 
+## Sandbox
+
+Permissions decide *whether* a command runs. The sandbox decides what it can
+reach once it does — and the two are independent, so an allowlisted read-only
+command is confined too.
+
+`Bash` runs under **bubblewrap** on Linux and **`sandbox-exec`** (seatbelt) on
+macOS. The whole filesystem is bound read-only; the workspace and `/tmp` are
+writable; `/dev` and `/proc` are fresh, so a command cannot see every other
+process on the machine. Notably `~/.asterisk` is *not* writable: a command
+cannot rewrite the secret store or the permission grants that let it run.
+
+**A backend is not trusted until it proves itself.** On first use Asterisk
+runs a probe that tries to write somewhere it must not be able to, and refuses
+to use the backend unless that write fails. A sandbox that silently does not
+sandbox is worse than none — it moves you from cautious to confident without
+moving the security — so "installed" is never taken as "working".
+
+| `sandbox.mode` | Behaviour                                                    |
+| -------------- | ------------------------------------------------------------ |
+| `auto` (default) | Confine when a probed backend exists, run unconfined otherwise |
+| `required`     | Refuse to run commands at all when no backend is available     |
+| `off`          | Never confine                                                  |
+
+`sandbox.network` (default on) controls network access — turning it off blocks
+package installs and `git push` along with everything else.
+`sandbox.writablePaths` adds paths beyond the workspace and `/tmp`.
+
+`/doctor` reports which backend is active and why. If it says `none`, you are
+not sandboxed:
+
+```
+Security
+  ✓ Bash perms mode ask · unattended runs deny
+  ✓ Sandbox    bubblewrap — bwrap passed a containment probe
+```
+
+On Linux, `apt install bubblewrap` (or your distro's equivalent) is all it
+takes. Its seatbelt counterpart ships with macOS.
+
 ## Reliability
 
 The agent loop wraps every model call in retry logic with exponential
@@ -723,11 +768,14 @@ coordinator, and others.
   (7-day expiry), but task lists do not.
 - No image content blocks back to the model, so it can't *see* the
   screenshots it captures (tracked).
-- **No sandbox.** [Permissions](#permissions) gate *whether* a command runs;
-  nothing constrains what it does once approved. `Read`, `Write` and `Edit`
-  are outside that gate entirely — they are bounded only by the workspace
-  guard (`ASTERISK_NO_WORKSPACE_GUARD` disables it). An OS-level sandbox
-  backend is still open work.
+- **The sandbox covers `Bash` only.** `Read`, `Write` and `Edit` run
+  in-process, so no child-process sandbox can reach them; they are bounded by
+  the workspace guard instead, which `ASTERISK_NO_WORKSPACE_GUARD=1` disables.
+  The two boundaries nearly coincide — workspace-only writes either way — but
+  they are enforced by different code and configured separately.
+- **Reads are not confined.** The sandbox restricts what a command can
+  *change*, not what it can see. A command you approve can read any file your
+  user can.
 
 ## Provenance
 

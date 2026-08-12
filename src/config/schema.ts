@@ -255,6 +255,31 @@ const PermissionsSchema = z.object({
     ),
 });
 
+// How far a shell command can reach once it is allowed to run. Distinct from
+// `permissions`, which decides whether it runs at all: an approved command is
+// still confined. Backed by bubblewrap on Linux and sandbox-exec on macOS, and
+// neither is trusted until it has passed a containment probe on this machine.
+const SandboxSchema = z.object({
+  mode: z
+    .enum(['auto', 'required', 'off'])
+    .default('auto')
+    .describe(
+      'auto — confine commands when a working backend exists, run unconfined otherwise. required — refuse to run commands at all when none is available. off — never confine.',
+    ),
+  network: z
+    .boolean()
+    .default(true)
+    .describe(
+      'Let sandboxed commands reach the network. Turning this off blocks package installs, git push and curl along with everything else.',
+    ),
+  writablePaths: z
+    .array(z.string())
+    .default([])
+    .describe(
+      'Extra absolute paths a sandboxed command may write to, on top of the workspace and /tmp. Everything else on the filesystem is readable but read-only.',
+    ),
+});
+
 // Hooks fire at agent-loop lifecycle events. Each hook is a shell command
 // run with the event payload on stdin (JSON). Stdout is logged into the
 // transcript as a system note; non-zero exit logs the stderr too.
@@ -319,6 +344,7 @@ export const ConfigSchema = z.object({
   daemon: DaemonSchema.default({}),
   web: WebSchema.default({}),
   permissions: PermissionsSchema.default({}),
+  sandbox: SandboxSchema.default({}),
   outputStyle: OutputStyleSchema.default('default').describe(
     'Behaviour modifier spliced into the system prompt.',
   ),
