@@ -10,6 +10,7 @@ import { attachTool } from './attach.ts';
 import { bashTool } from './bash.ts';
 import { BROWSER_TOOLS } from './browser/tools.ts';
 import { codeIntelTool } from './code-intel.ts';
+import { runCodeTool } from './code/tool.ts';
 import { diffReviewTool } from './diff-review.ts';
 import { editTool } from './edit.ts';
 import { globTool } from './glob.ts';
@@ -52,6 +53,7 @@ export const BUILTIN_TOOLS: Tool[] = [
   attachTool,
   toolSearchTool,
   codeIntelTool,
+  runCodeTool,
   diffReviewTool,
   ...MCP_RESOURCE_TOOLS,
 ];

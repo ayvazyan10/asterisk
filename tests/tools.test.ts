@@ -55,6 +55,7 @@ describe('tool registry', () => {
         'Recall',
         'RemoteTrigger',
         'Remember',
+        'RunCode',
         'ScheduleWakeup',
         'TaskCreate',
         'TaskGet',
