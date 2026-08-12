@@ -112,6 +112,13 @@ enumerate every edit. "done" is fine for trivial work.`;
 const DEFAULT_MAX_TURNS = 48;
 const DEFAULT_MAX_RETRIES = 5;
 const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
+// Backstop for tools that wait on a person. It is not their real bound —
+// AskUserQuestion times out at 5 minutes and Bash caps its command at 600s
+// plus a 90s approval window — it only stops a wedged prompt hanging the turn
+// forever. Anything under the tools' own limits would kill them mid-wait,
+// which is what used to happen: a 5-minute Ask under a 2-minute deadline
+// could never receive an answer.
+const INTERACTIVE_TOOL_TIMEOUT_MS = 15 * 60_000;
 
 export type TerminalReason =
   | 'end-turn'
@@ -445,7 +452,10 @@ async function runAgentTurnInner(
             output = `tool not found: ${use.name}`;
             isError = true;
           } else {
-            const exec = await runToolWithTimeout(tool, toolInput, toolTimeoutMs, signal);
+            const deadlineMs = tool.interactive
+              ? Math.max(toolTimeoutMs, INTERACTIVE_TOOL_TIMEOUT_MS)
+              : toolTimeoutMs;
+            const exec = await runToolWithTimeout(tool, toolInput, deadlineMs, signal);
             output = exec.output;
             isError = exec.isError;
             if (exec.attachments && opts.onAttachment) {
@@ -607,7 +617,7 @@ async function runToolWithTimeout(
   // Hard deadline via Promise.race — guarantees we return within timeoutMs
   // even if the tool ignores the AbortSignal (e.g. execa + Bun edge cases
   // where cancelSignal doesn't kill the child process tree).
-  let timer: ReturnType<typeof setTimeout>;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<ToolExecResult>((resolve) => {
     timer = setTimeout(() => {
       ctrl.abort(new Error(`tool timeout after ${Math.round(timeoutMs / 1000)}s`));
@@ -626,7 +636,7 @@ async function runToolWithTimeout(
       deadline,
     ]);
   } finally {
-    clearTimeout(timer!);
+    if (timer) clearTimeout(timer);
     if (parent) parent.removeEventListener('abort', onParentAbort);
   }
 }

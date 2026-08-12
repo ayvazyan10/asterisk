@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createOllamaProvider } from '../src/providers/ollama.ts';
 import type { TextBlock, ToolUseBlock } from '../src/types/messages.ts';
+import { defined } from './helpers.ts';
 
 function ndjsonStream(lines: string[]): ReadableStream<Uint8Array> {
   const enc = new TextEncoder();
@@ -62,7 +63,7 @@ describe('Ollama streaming', () => {
 
     expect(deltas.join('')).toBe('Hello, world!');
     expect(deltas.length).toBe(3); // one per non-empty chunk
-    expect(JSON.parse(lastBody!)).toMatchObject({ stream: true });
+    expect(JSON.parse(defined(lastBody, 'request body'))).toMatchObject({ stream: true });
     expect(r.content).toEqual([{ type: 'text', text: 'Hello, world!' }]);
     expect(r.stopReason).toBe('end_turn');
   });
@@ -285,7 +286,7 @@ describe('Ollama streaming', () => {
           }, 50);
         },
         cancel() {
-          clearInterval(interval!);
+          if (interval) clearInterval(interval);
         },
       });
       return new Response(stream, { status: 200 });
@@ -313,7 +314,7 @@ describe('Ollama streaming', () => {
 
     const provider = createOllamaProvider({ baseUrl: 'http://x', model: 'm' });
     const r = await provider.send({ system: 's', messages: [], tools: [] });
-    expect(JSON.parse(lastBody!)).toMatchObject({ stream: false });
+    expect(JSON.parse(defined(lastBody, 'request body'))).toMatchObject({ stream: false });
     expect((r.content[0] as TextBlock).text).toBe('plain');
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { defined } from './helpers.ts';
 
 import {
   answerAskQuestion,
@@ -42,9 +43,12 @@ describe('AskUserQuestion', () => {
   });
 
   it('emits options array when provided', async () => {
-    let captured: { options?: string[] } | null = null;
+    // Collected into an array rather than a `let`: TypeScript does not track
+    // assignments made inside the callback, so a nullable local stays narrowed
+    // to null no matter what the emitter did.
+    const asked: Array<{ options?: string[] }> = [];
     const off = onAskQuestion((q) => {
-      captured = q;
+      asked.push(q);
       answerAskQuestion(q.id, q.options?.[0] ?? '');
     });
     try {
@@ -52,8 +56,8 @@ describe('AskUserQuestion', () => {
         question: 'colour?',
         options: ['red', 'blue', 'green'],
       });
-      expect(captured).not.toBeNull();
-      expect(captured!.options).toEqual(['red', 'blue', 'green']);
+      expect(asked).toHaveLength(1);
+      expect(defined(asked[0], 'captured question').options).toEqual(['red', 'blue', 'green']);
     } finally {
       off();
     }

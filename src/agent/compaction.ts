@@ -130,9 +130,7 @@ function noticeFor(count: number): Message {
     content: [
       {
         type: 'text',
-        text:
-          `[${count} earlier message(s) dropped to fit the context window. ` +
-          'Ask the user to restate anything you need from before this point.]',
+        text: `[${count} earlier message(s) dropped to fit the context window. Ask the user to restate anything you need from before this point.]`,
       },
     ],
   };

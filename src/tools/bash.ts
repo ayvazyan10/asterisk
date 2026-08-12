@@ -12,6 +12,11 @@ import { type Tool, err, ok } from './types.ts';
 
 export const bashTool: Tool = {
   name: 'Bash',
+  // The permission gate can sit waiting on a person for up to 90s, which would
+  // otherwise eat most of the loop's 120s deadline and leave a legitimate
+  // command to be killed as if it had run away. Bash still bounds itself:
+  // execa gets `timeout`, capped at 600s.
+  interactive: true,
   description:
     'Run a shell command and return its combined stdout/stderr. Use for file listings, builds, tests, git, anything reasonable in a shell. Output is truncated at 30000 characters. Read-only commands run immediately; anything else asks the user to approve it first, so prefer one clear command over a long chain — a chain needs approval if any part of it does.',
   input_schema: {

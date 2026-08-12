@@ -6,12 +6,16 @@ let cached: string | undefined;
 
 export function getVersion(): string {
   if (cached) return cached;
+  let version = '0.0.0';
   try {
     const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-    const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
-    cached = pkg.version ?? '0.0.0';
+    const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
+      version?: string;
+    };
+    version = pkg.version ?? '0.0.0';
   } catch {
-    cached = '0.0.0';
+    // Running from a bundle with no package.json alongside it.
   }
-  return cached!;
+  cached = version;
+  return version;
 }

@@ -51,6 +51,7 @@ export function cancelAskQuestion(id: string): void {
 
 export const askUserQuestionTool: Tool = {
   name: 'AskUserQuestion',
+  interactive: true,
   description:
     'Pause and ask the user a question. Returns the user\'s answer (or "(cancelled)" if they Esc). Use when you need an authoritative decision the user has to make: pick between options, confirm a destructive action, supply missing info. Times out after 5 minutes.',
   input_schema: {

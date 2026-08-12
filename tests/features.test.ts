@@ -39,6 +39,7 @@ import { toolSearchTool } from '../src/tools/tool-search.ts';
 
 // --- file-history ---
 import { getFileHistory, recordFileChange, restoreFile } from '../src/agent/file-history.ts';
+import { defined } from './helpers.ts';
 
 // --- persistence ---
 import {
@@ -111,7 +112,7 @@ describe('output store', () => {
     // millisecond, and the timestamp alone used to collide.
     expect(files[0]).toMatch(/^\d+-[0-9a-f]{8}-Bash\.txt$/);
 
-    const content = readFileSync(join(outputDir, files[0]!), 'utf8');
+    const content = readFileSync(join(outputDir, defined(files[0], 'output file')), 'utf8');
     expect(content).toBe(output);
   });
 
@@ -236,7 +237,7 @@ describe('compaction', () => {
 
     // First 4 should be compacted (text truncated to ~400 + suffix)
     for (let i = 0; i < 4; i++) {
-      const block = result[i]?.content[0]!;
+      const block = defined(result[i]?.content[0], `block ${i}`);
       expect(block.type).toBe('text');
       if (block.type === 'text') {
         expect(block.text.length).toBeLessThan(50050);
@@ -257,7 +258,7 @@ describe('compaction', () => {
     const result = compactHistory(messages);
     // First 4 should have compacted tool results
     for (let i = 0; i < 4; i++) {
-      const block = result[i]?.content[0]!;
+      const block = defined(result[i]?.content[0], `block ${i}`);
       if (block.type === 'tool_result') {
         expect(block.content).toContain('[compacted]');
         expect(block.content).toContain('chars original');
@@ -437,7 +438,7 @@ describe('file history', () => {
     const history = getFileHistory(filePath);
     expect(history.length).toBeGreaterThanOrEqual(1);
 
-    const last = history[history.length - 1]!;
+    const last = defined(history.at(-1), 'last message');
     expect(last.path).toBe(filePath);
     expect(last.tool).toBe('Edit');
     expect(existsSync(last.backupPath)).toBe(true);
@@ -475,7 +476,7 @@ describe('file history', () => {
     recordFileChange(filePath, 'Edit');
 
     const history = getFileHistory(filePath);
-    const snap = history[history.length - 1]!;
+    const snap = defined(history.at(-1), 'last message');
 
     // Now overwrite the file
     await writeFile(filePath, 'version 2', 'utf8');
@@ -510,7 +511,7 @@ describe('conversation persistence', () => {
     expect(loaded[0]?.role).toBe('user');
     expect(loaded[1]?.role).toBe('assistant');
     if (loaded[0]?.content[0]?.type === 'text') {
-      expect((loaded[0]?.content[0]! as TextBlock).text).toBe('hello');
+      expect((defined(loaded[0]?.content[0], 'restored block') as TextBlock).text).toBe('hello');
     }
   });
 

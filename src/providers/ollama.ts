@@ -168,7 +168,8 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
     name: `ollama:${cfg.model}`,
     contextWindow: cfg.contextWindow,
     async send(req: ProviderRequest): Promise<ProviderResponse> {
-      const streaming = !!req.onText;
+      const onText = req.onText;
+      const streaming = onText !== undefined;
       const body: Record<string, unknown> = {
         model: cfg.model,
         stream: streaming,
@@ -228,10 +229,10 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
         }
 
         let finalMessage: OllamaMessage;
-        if (streaming) {
+        if (onText) {
           const streamed = await readStreamingChat(
             res,
-            req.onText!,
+            onText,
             req.onThinking,
             cfg.modelIdleTimeoutMs,
             ctrl,

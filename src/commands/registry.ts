@@ -345,7 +345,10 @@ export const COMMANDS: SlashCommand[] = [
           label: s.label,
           description: s.summary,
         })),
-        onPick: (v) => openConfigSection(ctx, configSectionByKey(v)!),
+        onPick: (v) => {
+          const section = configSectionByKey(v);
+          return section ? openConfigSection(ctx, section) : `unknown config section: ${v}`;
+        },
         onCancel: () => null,
       };
       return list;
