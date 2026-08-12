@@ -632,6 +632,14 @@ coordinator, and others.
 - No image content blocks back to the model, so it can't *see* the
   screenshots it captures (tracked).
 
+## Provenance
+
+Asterisk is an independent, clean-room implementation, written from published
+API documentation and public npm packages. [PROVENANCE.md](./PROVENANCE.md)
+sets out what that means concretely, which sources were used, what was
+consulted as an architectural reference and what was not, and how to report
+anything you believe was copied when it should not have been.
+
 ## License
 
 [Apache 2.0](./LICENSE).
