@@ -45,7 +45,7 @@ describe('tool registry', () => {
         'ExitPlanMode',
         'ExitWorktree',
         'Forget',
-      'Glob',
+        'Glob',
         'Grep',
         'Monitor',
         'McpListResources',
