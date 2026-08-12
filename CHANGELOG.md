@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-13
+
+### Fixed
+
+- **`asterisk update` on an npm install.** It assumed the `install.sh` layout —
+  a git clone at `~/.local/share/asterisk` — so anyone who ran
+  `npm i -g @ayvazyan101/asterisk` was told "…is not a git repository. Run
+  install.sh first," which would have installed a second copy over the one
+  already working. It now recognises the npm layout from its own path and
+  prints `npm i -g @ayvazyan101/asterisk@latest` instead.
+- **`asterisk update` ran on import.** `main()` was called at module scope, so
+  importing the module performed a real `git fetch` and would have performed a
+  real `git reset --hard` on the install directory. Found the moment a test
+  imported it for a pure helper — against a live install. Now guarded on being
+  the executed entry. `acp.ts`, `control.ts`, `web.ts` and `mcp-server.ts`
+  still share the pattern; they start servers rather than mutating an install,
+  so they are noted rather than changed.
+
+### Changed
+
+- **The published bundles are minified**, taking the package from 8.1 MB
+  packed / 44.3 MB unpacked to 5.9 MB / 20.2 MB. Stated plainly rather than
+  sold as free: a stack trace from a minified bundle loses its function names.
+  What it does not lose is more than it looks — the bundle was already a single
+  concatenated file with no mapping back to source — and `src/` ships in the
+  package either way. Bun's `keepNames` was measured and makes no difference,
+  and keeping identifiers costs two thirds of the saving.
+
+### Added
+
+- The Telegram adapter is covered, 32% to 95% of statements. `Bot` is faked so
+  the registered handler can be driven directly; `GrammyError` is deliberately
+  the real class, since most of what matters is how the adapter reacts to
+  Telegram rejecting something. The pass also merged an attachment loop that
+  existed twice — a test of one copy proved nothing about the other.
+
 ## [0.4.0] - 2026-08-12
 
 ### Added
@@ -297,6 +333,7 @@ Initial public release.
 - 25 tests (Vitest) covering tools, agent loop, daemon lifecycle, config
   persistence, and bot manager wiring.
 
+[0.4.1]: https://github.com/ayvazyan10/asterisk/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ayvazyan10/asterisk/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ayvazyan10/asterisk/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ayvazyan10/asterisk/compare/v0.1.0...v0.2.0

@@ -1,6 +1,6 @@
 {
   "name": "@ayvazyan101/asterisk",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Asterisk — lightweight, personal AI assistant with Ollama-first model support, daemon controls, and a Telegram bot bridge.",
   "license": "Apache-2.0",
   "type": "module",
@@ -44,7 +44,7 @@
     "test:watch": "vitest",
     "dev": "bun src/entrypoints/cli.tsx",
     "test:coverage": "vitest run --coverage",
-    "prepublishOnly": "bun run build"
+    "prepublishOnly": "bun run build --minify"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
