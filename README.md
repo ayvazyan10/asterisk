@@ -2,7 +2,7 @@
 
 A lightweight, personal AI assistant. Asterisk gives you an interactive
 agent in your terminal and an optional long-running daemon that bridges the
-same assistant to Telegram and WhatsApp.
+same assistant to Telegram.
 
 - **Local by default** — talks to a local [Ollama](https://ollama.com) model
   out of the box; the public `@anthropic-ai/sdk` is wired in as an opt-in
@@ -12,11 +12,11 @@ same assistant to Telegram and WhatsApp.
   prompts, and more.
 - **No telemetry, no cloud control plane.** Everything runs on your machine.
 - **Built on documented APIs** — Anthropic Messages + tool-use loop, Ollama
-  HTTP, Telegram Bot API ([grammY](https://grammy.dev)), WhatsApp Meta Cloud
-  API, [Model Context Protocol](https://modelcontextprotocol.io), Playwright.
+  HTTP, Telegram Bot API ([grammY](https://grammy.dev)),
+  [Model Context Protocol](https://modelcontextprotocol.io), Playwright.
 - **Apache 2.0** licensed.
 
-Status `0.3.0` — early but real. 44 built-in tools, 28 slash commands,
+Status `0.4.0` — early but real. 45 built-in tools, 29 slash commands,
 14 daemon-managed scheduling/lifecycle features, **29 bundled skills**,
 **27 specialised sub-agent types** the agent can dispatch on demand,
 layered multi-language rules, switchable output styles
@@ -117,7 +117,7 @@ one.
 
 ```bash
 asterisk                # interactive REPL
-asterisk start          # daemon mode (Telegram / WhatsApp bridges)
+asterisk start          # daemon mode (Telegram bridge)
 asterisk status         # daemon pid + log size
 asterisk logs 100
 asterisk restart
@@ -253,6 +253,38 @@ free-text or a list-picker; user's answer resolves the tool.
 (5-field cron expressions). The daemon polls every 30s and dispatches due
 items as fresh agent turns.
 
+**Batch**
+`RunCode` — run a short program that calls the tools above in a loop, in one
+turn instead of N. Bash can already loop; what it cannot do is call `Edit`,
+`Grep`, `WebFetch` or `Remember`, so a batch whose loop body is an Asterisk
+tool used to be one turn per item.
+
+```js
+const found = tool('Grep', { pattern: 'oldName', path: 'src' });
+let done = 0;
+for (const line of found.output.split('\n')) {
+  const path = line.split(':')[0];
+  if (!path) continue;
+  const r = tool('Edit', { path, oldString: 'oldName', newString: 'newName', replaceAll: true });
+  if (r.ok) done += 1; else log(`failed ${path}: ${r.output}`);
+}
+return done;
+```
+
+The language is a **subset of JavaScript**, not JavaScript, and it is not run
+by `node:vm` — a vm context handed a single host callable is not a boundary
+(`callTool.constructor(…)` reaches the host realm's `Function`, and from
+there `process.env` and `fs.writeFileSync`). A program is parsed to an AST and
+walked by an interpreter with no host object graph to reach, which is what
+lets tool calls keep their own rules: `Bash` from a program still asks you to
+approve the command, `Write` and `Edit` still refuse paths outside the
+writable set, because it is the same call. There is no `function`, `class`,
+`new`, `import`, `eval`, `try`/`catch` or regex; anything outside the subset
+is a syntax error naming what to write instead. Bounded on wall clock, tool
+calls, interpreter steps, call depth and value size, so `while (true) {}` ends
+the tool call rather than the session. `RunCode` cannot call itself, `Agent`
+or `AskUserQuestion`.
+
 **Tool discovery**
 `ToolSearch` — keyword search across all registered tools. Enables
 deferred tool loading so the full tool list doesn't bloat every prompt.
@@ -366,14 +398,14 @@ all optional, later wins on conflict:
 
 - `~/.asterisk/SOUL.md` — operator persona (applies everywhere)
 - `~/.asterisk/souls/<scope>-<sid>.md` — **per-chat** persona; written by
-  Telegram / WhatsApp users via `/soul set <text>`, so each chat owns its
+  Telegram users via `/soul set <text>`, so each chat owns its
   own description without affecting anyone else
 - `<repo>/.asterisk/SOUL.md` or `<repo>/SOUL.md` — project-local persona
 
 In the REPL: `/soul` shows what's loaded, `/soul init` drops a starter
 template at `~/.asterisk/SOUL.md`, `/soul where` lists the search paths.
 
-In Telegram / WhatsApp: `/soul`, `/soul set <multi-line markdown>`,
+In Telegram: `/soul`, `/soul set <multi-line markdown>`,
 `/soul edit`, `/soul clear`, `/soul help` — all scoped to the current
 chat. `/soul set Call me Levon, reply in Russian, skip apologies` is
 enough to teach the bot a new persona for that chat alone.
@@ -420,18 +452,44 @@ You review code against the patterns in our internal style guide …
 User/project files override bundled by name. Run `/agents` to see what's
 loaded.
 
+## Interface language
+
+The REPL speaks English and Russian. The locale comes from the environment
+rather than from configuration, because it is a property of the terminal you
+are sitting at, not of the install:
+
+```bash
+ASTERISK_LANG=ru asterisk        # explicit, wins over everything
+LANG=ru_RU.UTF-8 asterisk        # picked up automatically (LC_ALL first)
+```
+
+**Only what you read is translated.** The system prompt, tool names, tool
+descriptions and tool results stay English in every locale, and that is a
+correctness boundary rather than unfinished work: models are tuned on English
+tool descriptions, `Bash` is an identifier the provider matches on, and
+translating them would change how the agent behaves rather than how it looks.
+A key a translation is missing falls back to English instead of showing you
+the key. Adding a language is `src/i18n/messages.ts` — the English catalogue
+is the type, so a translation cannot invent a key that does not exist.
+
 ## Bot transports
 
 | Transport            | Status                | Notes                                              |
 | -------------------- | --------------------- | -------------------------------------------------- |
-| Telegram (grammY)    | Recommended           | Bot token from @BotFather; allowlist required.     |
-| WhatsApp Meta Cloud  | Recommended           | ToS-compliant; needs Meta Business Manager setup.  |
-| WhatsApp web-js      | **Personal use only** | Drives WhatsApp Web via Puppeteer. Violates WhatsApp ToS. Risks number bans. |
+| Telegram (grammY)    | Supported             | Bot token from @BotFather; allowlist required.     |
 
-All bot writes are gated by config — no transport runs unless you explicitly
-enable it via `asterisk configure`. Both bots can also send media: any
+Telegram is the only transport. WhatsApp support was removed in `0.4.0`:
+the Meta Cloud path needed a Business Manager account most users of a
+personal assistant will never have, and the web-js path drove WhatsApp Web
+through Puppeteer in violation of WhatsApp's Terms of Service — shipping a
+ToS violation as a documented feature was the wrong default, however
+prominent the warning. The adapter contract in `src/bots/adapter.ts` is
+unchanged, so a new transport is still a self-contained module.
+
+The bot is gated by config — it does not run unless you explicitly
+enable it via `asterisk configure`. It can also send media: any
 attachment the agent emits via the `Attach` tool (image, video, audio,
-document) is delivered as a real Telegram / WhatsApp media message.
+document) is delivered as a real Telegram media message.
 
 **Telegram reply modes** (`bots.telegram.streamMode`):
 
@@ -448,8 +506,6 @@ document) is delivered as a real Telegram / WhatsApp media message.
 
 Telegram's Bot API rate-limits edits to ~1/sec/chat; `streamThrottleMs`
 (default 1000) coalesces rapid updates so we stay under the limit.
-WhatsApp transports don't expose `editMessageText`, so this knob is
-Telegram-only — WhatsApp always uses the equivalent of `final` mode.
 
 **Text formatting** (`bots.telegram.parseMode`):
 
@@ -463,10 +519,10 @@ Telegram-only — WhatsApp always uses the equivalent of `final` mode.
   raw markdown markers visible (debugging, or if your persona instructs
   the model to avoid markup entirely).
 
-**Per-user isolation.** Each chat — Telegram chatId, WhatsApp number, or
-the local REPL — gets its own task list, plan-mode flag, browser context,
-monitored processes, and SOUL.md persona. Two users sharing a daemon
-never see each other's state.
+**Per-chat isolation.** Each chat — a Telegram chatId, or the local REPL —
+gets its own task list, plan-mode flag, browser context, monitored
+processes, and SOUL.md persona. Two chats sharing a daemon never see each
+other's state.
 
 **Bot-side slash commands** (auto-completed in Telegram via
 `setMyCommands`):
@@ -514,11 +570,13 @@ src/
 │                    # tasks · subagent · planmode · worktree · notify ·
 │                    # monitor · ask · schedule · tool-search ·
 │                    # approval · bash-gate · bash-permissions ·
-│                    # command-parse · bash-safety · concurrency
+│                    # command-parse · bash-safety · concurrency ·
+│                    # code/ (RunCode: lexer · parser · interpreter · bridge)
 ├── commands/        # slash command registry (visual flows)
 ├── config/          # zod schema · loader · interactive wizard
 ├── daemon/          # pidfile · logger · lifecycle · scheduler
-├── bots/            # adapter contract · telegram · whatsapp/{meta-cloud, web-js}
+├── i18n/            # interface language (en · ru) — user-facing strings only
+├── bots/            # adapter contract · telegram
 ├── mcp/             # client · manager (stdio + Streamable HTTP)
 ├── hooks/runner.ts  # lifecycle hooks (before/after_tool, …)
 ├── rules/loader.ts  # markdown rules → system prompt
@@ -566,17 +624,6 @@ the panel's **Download JSON** button produces and **Upload JSON** accepts:
       "streamMode": "final",                  // "final" | "status" | "stream"
       "streamThrottleMs": 1000,               // min gap between editMessageText calls
       "parseMode": "html"                     // "html" renders markdown · "plain" leaves it literal
-    },
-    "whatsapp": {
-      "enabled": false,
-      "transport": "meta-cloud",              // or "web-js"
-      "metaCloud": {
-        "phoneNumberId": "",
-        "businessAccountId": "",
-        "webhookPath": "/whatsapp/webhook",
-        "webhookPort": 8787
-      },
-      "webJs": { "sessionDir": "" }
     }
   },
   "daemon": { "logLevel": "info", "heartbeatSeconds": 60 },
@@ -621,8 +668,6 @@ Secrets are stored in the database and set through `asterisk web` or
 ```bash
 ANTHROPIC_API_KEY="..."
 ASTERISK_TELEGRAM_BOT_TOKEN="..."
-ASTERISK_WHATSAPP_META_TOKEN="..."
-ASTERISK_WHATSAPP_VERIFY_TOKEN="..."
 ASTERISK_NOTIFY_URL="..."     # optional — used by PushNotification tool
 ```
 

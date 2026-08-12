@@ -23,18 +23,34 @@ The security boundaries we care about:
    allowlist; messages from non-allowlisted users are dropped. Configure this
    carefully — an empty allowlist with a public bot token means anyone who
    guesses the bot can send messages.
-3. **Secrets.** API keys and bot tokens live in `~/.asterisk/secrets.env`
-   (chmod 600). Asterisk never logs or echoes secrets after the configure
-   wizard reads them.
-4. **WhatsApp web-js transport.** This adapter logs in as a real WhatsApp
-   account and **violates WhatsApp's Terms of Service**. We document it for
-   personal use only; using it commercially or at scale will get the number
-   banned. The official transport (`meta-cloud`) is the recommended path.
+3. **Secrets.** API keys and bot tokens live in `~/.asterisk/asterisk.db`
+   (mode 0600, and created 0600 *before* WAL is enabled so the `-wal`/`-shm`
+   sidecars inherit the restriction — they hold a verbatim copy of every
+   value written). A legacy `~/.asterisk/secrets.env` is still read as a
+   fallback. Asterisk never logs or echoes secrets after the configure wizard
+   reads them.
+4. **Bash consent.** Commands the agent proposes are gated by
+   `src/tools/bash-permissions.ts` before they run. This is a consent check,
+   not containment: an approved command executes with your full privileges.
+   Unattended runs (daemon, bots) answer from `permissions.headless`, which
+   defaults to `deny`.
+5. **Bash containment.** Where a backend is available — bubblewrap on Linux,
+   seatbelt on macOS — the command additionally runs with `/` read-only and
+   only the workspace, `/tmp` and configured paths writable. `~/.asterisk` is
+   deliberately not writable, so a command cannot rewrite the secret store or
+   its own permission grants. A backend is never trusted until it is probed
+   with both a positive and a negative control, and is dropped to `none` if
+   either says otherwise.
 
 ## Out of scope
 
-- Sandboxing of `Bash` tool output. Tool calls run with the user's shell;
-  there is no syscall filter, container, or seccomp profile. If you need
-  hardening for untrusted prompts, run Asterisk inside a VM or container.
-- Hardening of dependent libraries (Bun, `whatsapp-web.js`, `grammy`, etc.)
-  beyond pinning known-safe versions.
+- Confinement of anything other than `Bash`. `Read`/`Write`/`Edit` are
+  in-process and bounded by the write policy, not by the sandbox; in-process
+  plugins are not confined at all, which is why they are off by default and
+  enabled path-by-path. Untrusted code belongs in an MCP server.
+- Sandboxing on a machine with no backend available. `sandbox.mode: "auto"`
+  runs unconfined when bubblewrap/seatbelt is missing or non-functional; set
+  `"required"` to refuse instead. If you need hardening for untrusted
+  prompts, run Asterisk inside a VM or container.
+- Hardening of dependent libraries (Bun, `grammy`, `playwright`, etc.) beyond
+  pinning known-safe versions.

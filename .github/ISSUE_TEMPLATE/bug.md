@@ -23,7 +23,7 @@ labels: bug
 - Bun version (`bun --version`):
 - OS:
 - Provider in use (ollama / anthropic):
-- Bots enabled (telegram / whatsapp / none):
+- Bots enabled (telegram / none):
 
 ## Logs
 

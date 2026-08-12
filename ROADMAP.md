@@ -5,10 +5,18 @@ here into commits as they ship.
 
 ## Tier 1
 
-The original Tier 1 has shipped or been dropped, and so has the OS-level
-sandbox. What remains here is extending that boundary to the in-process file
-tools. After that, the next item to promote from Tier 2 is the multi-agent
-coordinator.
+**Empty.** Everything the original Tier 1 named has shipped or been dropped,
+including the OS-level sandbox and the write boundary for the in-process file
+tools, and Tier 2 emptied behind it. Two things shipped in `0.4.0` that were
+never on this list at all — an interface language and `RunCode` — which is a
+sign the list had stopped describing the work rather than a sign the work was
+unplanned.
+
+What is left is Tier 3, which is speculative by construction. The honest
+statement of priority for `0.4.x` is therefore not a feature: it is coverage
+of `src/bots/telegram` (~32%, the last large untested surface), and whatever
+the first outside users actually report. New items should arrive from issues,
+not from this file.
 
 ### ~~Skill marketplace~~ — dropped
 Cut on 2026-07-31. The bundled set stays the whole story; skills are still
@@ -264,6 +272,14 @@ views, which land with the cost-tracking work.
 Speech-to-text on input, text-to-speech on output for the daemon (so a
 phone can run an Asterisk session via Telegram voice messages). Punts on
 wake-word; just a bot message handler that takes audio.
+
+### A second bot transport
+WhatsApp was removed in `0.4.0` — the official path needed a Business Manager
+account, the unofficial one violated WhatsApp's ToS — which leaves Telegram
+as the only bridge. The adapter contract in `src/bots/adapter.ts` survived
+the removal intact, so Matrix, Discord, Signal or a plain webhook are each a
+self-contained module. None is committed; the question is which one a real
+user asks for.
 
 ### Model-aware soul context
 Today souls are static markdown. A "dynamic soul" would let a snippet

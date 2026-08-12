@@ -7,8 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-12
+
 ### Added
 
+- **`RunCode`** — run a short program that calls Asterisk's own tools in a
+  loop, in one turn instead of N. Bash can already loop; what it cannot do is
+  call `Edit`, `Grep`, `WebFetch` or `Remember`. The language is a subset of
+  JavaScript evaluated by an interpreter, **not** `node:vm`: a vm context
+  handed one host callable is not a boundary, since `callTool.constructor(…)`
+  reaches the host realm's `Function` and from there `process.env` and
+  `fs.writeFileSync`. Tools are resolved through the same registry the agent
+  loop uses, so `Bash` from a program still asks for approval and `Write`
+  still refuses paths outside the writable set — it is the same call.
+  Bounded on wall clock, tool calls, interpreter steps, call depth and value
+  size. `RunCode`, `Agent` and `AskUserQuestion` are not reachable from a
+  program.
+- **Interface language** — English and Russian, chosen by `ASTERISK_LANG` or
+  the system locale. Only what the *user* reads is translated; the system
+  prompt, tool names, tool descriptions and tool results stay English in every
+  locale, because those are behaviour rather than presentation.
 - **`asterisk mcp-server`** — serve Asterisk's memory, skills and rules to
   other agents over MCP. Bash, Write and Edit are deliberately not exposed.
 - **Plugins** — in-process TypeScript modules that can register tools and
@@ -31,6 +49,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The build script pins its output root. The ninth entrypoint made Bun mirror
   the source tree into `dist/` instead of flattening it, which silently missed
   every path in the dispatcher.
+- CI installs ripgrep, and `/code` names it as the cause when it is missing
+  rather than reporting an empty result.
+
+### Removed
+
+- **WhatsApp support (breaking).** Both transports are gone: the Meta Cloud
+  path needed a Business Manager account most users of a personal assistant
+  will never have, and the web-js path drove WhatsApp Web through Puppeteer in
+  violation of WhatsApp's Terms of Service. Shipping a ToS violation as a
+  documented feature was the wrong default, however prominent the warning.
+  A migration deletes the orphaned `bots.whatsapp.*` settings and the
+  `ASTERISK_WHATSAPP_*` secrets — the latter matters, because a secret whose
+  key has left `SECRET_KEYS` is unreadable, unlistable and undeletable by any
+  code path while remaining a live credential in the database. **The migration
+  revokes nothing upstream.** A Meta token stays valid until you revoke it in
+  Meta's console, and a linked web-js device stays linked until you remove it
+  in WhatsApp → Linked Devices. `~/.asterisk/whatsapp-web-session/` is left on
+  disk on purpose: deleting it destroys the evidence while leaving the grant
+  alive. Unlink first, then delete it.
+
+### Fixed
+
+- Five slash-command bugs that a coverage pass surfaced: `/config provider`
+  omitted `openai-compatible`, so picking it silently moved the user to Ollama;
+  `/model` offered Anthropic models on non-Anthropic providers, writing Claude
+  ids into `openaiCompatible.model`; `/mcp edit` skipped the validation
+  `/mcp add` performs; `/code`'s "no matches" branch was unreachable; and
+  `/doctor`'s config line could not be reached after `loadConfig()` migrated
+  the file.
 
 ## [0.3.0] - 2026-08-12
 
@@ -250,6 +297,7 @@ Initial public release.
 - 25 tests (Vitest) covering tools, agent loop, daemon lifecycle, config
   persistence, and bot manager wiring.
 
+[0.4.0]: https://github.com/ayvazyan10/asterisk/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ayvazyan10/asterisk/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ayvazyan10/asterisk/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ayvazyan10/asterisk/releases/tag/v0.1.0

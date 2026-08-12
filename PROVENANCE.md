@@ -71,8 +71,8 @@ contributors:
    [CONTRIBUTING.md](CONTRIBUTING.md#provenance--non-negotiable).
 
 Asterisk is written in TypeScript on Bun with an Ink/React terminal UI, a
-SQLite configuration store, a Zod-derived web control panel, and bot
-transports for Telegram and WhatsApp. Its module layout, data model,
+SQLite configuration store, a Zod-derived web control panel, and a Telegram
+bot transport. Its module layout, data model,
 configuration system, command surface, and tests are its own.
 
 ## If you believe something here is wrong
