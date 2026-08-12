@@ -36,9 +36,9 @@ export interface ToolResult {
   output: string;
   isError: boolean;
   /** Optional files the tool wants delivered to the user out-of-band — e.g.
-   *  via Telegram's sendPhoto, WhatsApp's sendMessage(MessageMedia), or the
-   *  REPL's inline image rendering. The Attach tool produces these; the
-   *  agent loop forwards them to a per-turn collector via onAttachment. */
+   *  via Telegram's sendPhoto, or the REPL's inline image rendering. The
+   *  Attach tool produces these; the agent loop forwards them to a per-turn
+   *  collector via onAttachment. */
   attachments?: ToolAttachment[];
 }
 

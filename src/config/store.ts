@@ -123,7 +123,7 @@ export function readSecrets(
  * The distinction matters. This used to iterate SECRET_KEYS and delete every
  * key the caller had not supplied, which made a partial update silently
  * destroy the other credentials — saving an Anthropic key from a form that
- * did not also carry the Telegram and WhatsApp tokens wiped them. Callers
+ * did not also carry the Telegram token wiped it. Callers
  * happened to be safe only because they spread the full existing set back in.
  * Use `deleteSecrets` to remove keys deliberately.
  */

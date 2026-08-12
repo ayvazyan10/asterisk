@@ -1,7 +1,7 @@
 {
   "name": "@ayvazyan101/asterisk",
   "version": "0.3.0",
-  "description": "Asterisk \u2014 lightweight, personal AI assistant with Ollama-first model support, daemon controls, and Telegram/WhatsApp bot bridges.",
+  "description": "Asterisk — lightweight, personal AI assistant with Ollama-first model support, daemon controls, and a Telegram bot bridge.",
   "license": "Apache-2.0",
   "type": "module",
   "private": false,
@@ -59,7 +59,6 @@
     "react": "^18.3.0",
     "tinyglobby": "^0.2.16",
     "undici": "^7.3.0",
-    "whatsapp-web.js": "^1.26.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
@@ -82,7 +81,6 @@
     "ollama",
     "anthropic",
     "telegram-bot",
-    "whatsapp-bot",
     "local-first"
   ]
 }

@@ -170,8 +170,7 @@ function viewOverview() {
           '<button class="btn danger" data-daemon="stop"' + (s.daemon.running ? '' : ' disabled') + '>Stop</button>' +
         '</div></div>' +
       '<div class="item"><div class="grow"><div class="name">Bot bridges</div>' +
-        '<div class="detail">telegram ' + (s.bots.telegram ? 'enabled' : 'disabled') +
-        ' · whatsapp ' + (s.bots.whatsapp ? 'enabled' : 'disabled') + '</div></div></div>' +
+        '<div class="detail">telegram ' + (s.bots.telegram ? 'enabled' : 'disabled') + '</div></div></div>' +
     '</div>' +
     '<div class="panel"><h3>Configuration file</h3>' +
       '<div class="item"><div class="grow"><div class="name">Export / import</div>' +

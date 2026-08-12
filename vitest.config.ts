@@ -20,9 +20,8 @@ export default defineConfig({
       // at the start of the day. `src/repl` went 7.45% → 77%, `src/commands`
       // 18% → 97%, and the old 60/60/50/60 target is now clear on all four.
       //
-      // What is left is nameable rather than mysterious: the bot transports
-      // (whatsapp ~17%, telegram ~32%), which need a fake Bot API to test
-      // properly.
+      // What is left is nameable rather than mysterious: the Telegram
+      // transport (~32%), which needs a fake Bot API to test properly.
       thresholds: {
         lines: 73,
         functions: 75,

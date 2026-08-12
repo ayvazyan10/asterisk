@@ -12,7 +12,7 @@ export interface AgentSession {
   id: string;
   /** Source channel — informational, used by tools that want to behave
    *  differently in bot vs REPL contexts. */
-  scope: 'repl' | 'telegram' | 'whatsapp' | 'sub-agent' | 'scheduled' | 'unknown';
+  scope: 'repl' | 'telegram' | 'sub-agent' | 'scheduled' | 'unknown';
 }
 
 const store = new AsyncLocalStorage<AgentSession>();

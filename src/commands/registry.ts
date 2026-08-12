@@ -250,11 +250,9 @@ export const COMMANDS: SlashCommand[] = [
           : 'not running';
 
       const tg = cfg.bots.telegram;
-      const wa = cfg.bots.whatsapp;
       const tgState = tg.enabled
         ? `enabled · ${tg.allowedUserIds.length} allowlisted ${secrets.ASTERISK_TELEGRAM_BOT_TOKEN ? '· token set' : '· ⚠ NO TOKEN'}`
         : 'disabled';
-      const waState = wa.enabled ? `enabled · ${wa.transport}` : 'disabled';
 
       const mcpConfigured = cfg.mcpServers.length;
       const mcpConnected = ctx.mcp.servers.length;
@@ -283,7 +281,6 @@ export const COMMANDS: SlashCommand[] = [
         `Provider   ${providerLabel}`,
         `History    ${ctx.state.history.length} message${ctx.state.history.length === 1 ? '' : 's'}`,
         `Telegram   ${tgState}`,
-        `WhatsApp   ${waState}`,
         `MCP        ${mcpLine}`,
         `Daemon     ${daemonLine}`,
         '',

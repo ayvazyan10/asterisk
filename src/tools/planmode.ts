@@ -1,6 +1,6 @@
 // Plan Mode — when active for the current session, write/mutate tools are
 // hidden from the agent so it can only research. State is per-session: each
-// Telegram chat / WhatsApp number / the REPL toggles independently.
+// Telegram chat and the REPL toggles independently.
 
 import { currentSessionId } from '../agent/context.ts';
 import { type Tool, ok } from './types.ts';

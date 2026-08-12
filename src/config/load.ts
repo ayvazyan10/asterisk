@@ -26,11 +26,6 @@ export function loadConfig(): LoadedConfig {
 
   const config = readConfig(db);
 
-  // Default whatsapp-web session dir to ~/.asterisk/whatsapp-web-session if blank.
-  if (!config.bots.whatsapp.webJs.sessionDir) {
-    config.bots.whatsapp.webJs.sessionDir = paths.whatsappSession;
-  }
-
   return { config, secrets: readSecrets(db, paths.secretsFile) };
 }
 

@@ -4,7 +4,8 @@
 // sense over chat: meta + state inspection + reset.
 //
 // Telegram registers these via setMyCommands() so users see autocomplete.
-// WhatsApp has no equivalent autocomplete UI but parses the same prefixes.
+// The prefixes are parsed here regardless, so a transport without an
+// autocomplete UI still gets the same commands.
 
 import { currentSession, currentSessionId } from '../agent/context.ts';
 import type { AgentState } from '../agent/loop.ts';

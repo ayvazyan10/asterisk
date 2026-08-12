@@ -13,7 +13,6 @@ describe('settings registry', () => {
     expect(paths).toContain('provider');
     expect(paths).toContain('ollama.model');
     expect(paths).toContain('bots.telegram.allowedUserIds');
-    expect(paths).toContain('bots.whatsapp.metaCloud.webhookPort');
     expect(paths).toContain('web.port');
     expect(paths).toContain('outputStyle');
   });
@@ -68,7 +67,7 @@ describe('settings registry', () => {
   it('keeps acronyms uppercase in labels', () => {
     expect(describeField('ollama.baseUrl')?.label).toBe('Base URL');
     expect(describeField('bots.telegram.allowedUserIds')?.label).toBe('Allowed user IDs');
-    expect(describeField('bots.whatsapp.metaCloud.phoneNumberId')?.label).toBe('Phone number ID');
+    expect(describeField('bots.telegram.streamThrottleMs')?.label).toBe('Stream throttle (ms)');
   });
 
   it('surfaces schema descriptions as help text', () => {

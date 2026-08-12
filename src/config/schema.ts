@@ -141,42 +141,8 @@ const TelegramSchema = z.object({
   ),
 });
 
-const WhatsappTransport = z.enum(['meta-cloud', 'web-js']);
-
-const WhatsappMetaCloudSchema = z.object({
-  phoneNumberId: z.string().default('').describe('Phone number id from the Meta app dashboard.'),
-  businessAccountId: z.string().default('').describe('WhatsApp Business Account id.'),
-  webhookPath: z.string().default('/whatsapp/webhook').describe('Path Meta posts webhooks to.'),
-  webhookPort: z
-    .number()
-    .int()
-    .min(1)
-    .max(65535)
-    .default(8787)
-    .describe('Local port the webhook listener binds to.'),
-});
-
-const WhatsappWebJsSchema = z.object({
-  sessionDir: z
-    .string()
-    .default('')
-    .describe(
-      'Where the linked-device session is cached. Blank uses ~/.asterisk/whatsapp-web-session.',
-    ),
-});
-
-const WhatsappSchema = z.object({
-  enabled: z.boolean().default(false).describe('Run the WhatsApp bridge when the daemon starts.'),
-  transport: WhatsappTransport.default('meta-cloud').describe(
-    'meta-cloud uses the official Business API; web-js drives a linked WhatsApp Web session.',
-  ),
-  metaCloud: WhatsappMetaCloudSchema.default({}),
-  webJs: WhatsappWebJsSchema.default({}),
-});
-
 const BotsSchema = z.object({
   telegram: TelegramSchema.default({}),
-  whatsapp: WhatsappSchema.default({}),
 });
 
 const DaemonSchema = z.object({
@@ -425,8 +391,6 @@ export const SECRET_KEYS = [
   // local servers accept requests without one.
   'ASTERISK_OPENAI_API_KEY',
   'ASTERISK_TELEGRAM_BOT_TOKEN',
-  'ASTERISK_WHATSAPP_META_TOKEN',
-  'ASTERISK_WHATSAPP_VERIFY_TOKEN',
 ] as const;
 
 export type SecretKey = (typeof SECRET_KEYS)[number];

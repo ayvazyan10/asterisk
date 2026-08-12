@@ -53,7 +53,7 @@ Tools you have:
 - Web: WebFetch (load a URL as text), WebSearch (Brave / Tavily / SearXNG /
   DDG instant-answer; the first one with a configured key wins)
 - Sharing: Attach — send a file (image / video / audio / document) to the
-  user out-of-band. In the Telegram / WhatsApp daemon this becomes a real
+  user out-of-band. In the Telegram daemon this becomes a real
   media message; in the REPL, images render inline on supporting terminals
   and everything else is shown as "📎 path".
 - Planning: TaskCreate, TaskUpdate, TaskList, TaskGet, TaskStop — your own
@@ -187,7 +187,7 @@ export interface RunOptions {
   allowedTools?: readonly string[];
   /** Session that owns this turn's tool state. Tasks, plan mode, worktrees,
    *  browser pages, and monitors are keyed by session.id so Telegram /
-   *  WhatsApp users never see each other's stuff. The REPL passes
+   *  Telegram users never see each other's stuff. The REPL passes
    *  { id: 'repl', scope: 'repl' }; the daemon passes the chatId. */
   session?: AgentSession;
   /** Fired once per text block at the end of a model turn. Always set, but
@@ -207,7 +207,7 @@ export interface RunOptions {
   onRetry?(attempt: number, delayMs: number, reason: string): void;
   onHook?(result: HookResult): void;
   /** Called for every attachment a tool emitted during the turn. The bot
-   *  daemon collects these and ships them via Telegram / WhatsApp media
+   *  daemon collects these and ships them via Telegram media
    *  APIs; the REPL renders inline when the terminal supports it. */
   onAttachment?(attachment: { kind: string; path: string; caption?: string }): void;
 }

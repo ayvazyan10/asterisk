@@ -223,6 +223,36 @@ export const MIGRATIONS: readonly Migration[] = [
     `,
     optionalSql: [MEMORY_FTS_SQL],
   },
+  {
+    version: 6,
+    name: 'drop-whatsapp',
+    sql: `
+      -- WhatsApp support was removed from the product. Neither of these rows
+      -- can be reached by code any more, so nothing else would ever clear them.
+      --
+      -- Settings: readConfig() parses the settings table through ConfigSchema,
+      -- which strips unknown keys, so orphaned 'bots.whatsapp.*' rows are
+      -- harmless to read — but they only get pruned when something calls
+      -- writeConfig(), and an install that never saves a config change would
+      -- carry them forever.
+      --
+      -- Secrets: this is the half that actually matters. readSecrets() and
+      -- writeSecrets() both iterate SECRET_KEYS, and deleteSecrets() takes a
+      -- SecretKey[], so once the keys leave the schema a stored Meta Cloud
+      -- access token becomes unreadable, unlistable and undeletable — a live
+      -- credential sitting in the database with no code path that can reach
+      -- it. Deleting it here is the only chance we get.
+      --
+      -- Note this does NOT revoke anything upstream: a Meta token stays valid
+      -- until it is rotated in the Meta app dashboard, and a linked web-js
+      -- device stays linked until it is removed in WhatsApp itself.
+      DELETE FROM settings WHERE key = 'bots.whatsapp' OR key LIKE 'bots.whatsapp.%';
+      DELETE FROM secrets WHERE key IN (
+        'ASTERISK_WHATSAPP_META_TOKEN',
+        'ASTERISK_WHATSAPP_VERIFY_TOKEN'
+      );
+    `,
+  },
 ];
 
 /**

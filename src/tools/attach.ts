@@ -1,6 +1,6 @@
 // Attach tool — sends a file (image / video / audio / document) to the
 // user alongside the agent's text reply. In a bot context (Telegram /
-// WhatsApp) the daemon picks up the attachment and ships it via the
+// the daemon picks up the attachment and ships it via the
 // channel's media API. In the REPL, image attachments are rendered inline
 // when the terminal supports it; everything else gets a "📎 path" row.
 

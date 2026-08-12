@@ -1,5 +1,5 @@
 // Task tracker tools — give the agent its own todo list. State is per-
-// session: each Telegram chat / WhatsApp number / the REPL gets its own
+// session: each Telegram chat and the REPL gets its own
 // task list. Sub-agents inherit their parent's session so the parent's
 // list reflects what the sub-agent created.
 

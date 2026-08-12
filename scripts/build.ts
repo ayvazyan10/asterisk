@@ -72,7 +72,6 @@ const result = await Bun.build({
   external: [
     // Native deps stay external so Bun resolves them at runtime; Asterisk's
     // installer ships them via `bun install` so they're always present.
-    'whatsapp-web.js',
     'better-sqlite3',
     // Playwright pulls in browser drivers — keep external and let it lazy-
     // import the Chromium binary at runtime.

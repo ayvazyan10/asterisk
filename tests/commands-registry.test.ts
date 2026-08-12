@@ -265,7 +265,6 @@ describe('/status', () => {
   it('reports defaults: bots off, no MCP, no daemon, files not yet created', async () => {
     const out = await status();
     expect(out).toContain('Telegram   disabled');
-    expect(out).toContain('WhatsApp   disabled');
     expect(out).toContain('MCP        none configured');
     expect(out).toContain('Daemon     not running');
     expect(out).toContain('not yet created');
@@ -276,13 +275,11 @@ describe('/status', () => {
     const cfg = config();
     cfg.bots.telegram.enabled = true;
     cfg.bots.telegram.allowedUserIds = [1, 2];
-    cfg.bots.whatsapp.enabled = true;
     saveConfig(cfg);
 
     const before = await status();
     expect(before).toContain('2 allowlisted');
     expect(before).toContain('NO TOKEN');
-    expect(before).toContain(`WhatsApp   enabled · ${cfg.bots.whatsapp.transport}`);
 
     saveSecrets({ ASTERISK_TELEGRAM_BOT_TOKEN: '123:ABC' });
     const after = await status();

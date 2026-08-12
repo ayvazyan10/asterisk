@@ -183,7 +183,6 @@ describe('command registry', () => {
     expect(out).toMatch(/History/);
     expect(out).toMatch(/Daemon/);
     expect(out).toMatch(/Telegram/);
-    expect(out).toMatch(/WhatsApp/);
     expect(out).toMatch(/MCP/);
     // The status line must NOT report the unhelpful "none — run asterisk
     // configure" stub when the user is running on validated defaults.

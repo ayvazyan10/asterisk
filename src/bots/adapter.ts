@@ -1,5 +1,5 @@
-// Bot adapter contract — every transport (Telegram, WhatsApp, …) implements
-// this interface so the daemon can spin them up uniformly.
+// Bot adapter contract — every transport implements this interface so the
+// daemon can spin them up uniformly.
 
 export interface IncomingMessage {
   chatId: string;
@@ -24,8 +24,8 @@ export interface OutgoingMessage {
 
 /** Adapters that support progressive delivery (e.g. Telegram editMessageText)
  *  pass a StreamSink into the handler so it can emit status / partial-text
- *  events while the agent loop runs. Adapters that don't (REPL, WhatsApp web-js)
- *  simply omit the sink and consume the handler's eventual return value. */
+ *  events while the agent loop runs. Adapters that don't (the REPL) simply omit
+ *  the sink and consume the handler's eventual return value. */
 export type StreamEvent =
   /** Tool calls, retries, etc. — short single-line summary. */
   | { type: 'status'; text: string }

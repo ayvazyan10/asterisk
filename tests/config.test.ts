@@ -12,21 +12,15 @@ describe('config schema and persistence', () => {
   let prevHome: string | undefined;
   let prevAnthropicKey: string | undefined;
   let prevTelegramToken: string | undefined;
-  let prevWhatsappToken: string | undefined;
-  let prevWhatsappVerify: string | undefined;
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'asterisk-cfg-'));
     prevHome = process.env['ASTERISK_HOME'];
     prevAnthropicKey = process.env['ANTHROPIC_API_KEY'];
     prevTelegramToken = process.env['ASTERISK_TELEGRAM_BOT_TOKEN'];
-    prevWhatsappToken = process.env['ASTERISK_WHATSAPP_META_TOKEN'];
-    prevWhatsappVerify = process.env['ASTERISK_WHATSAPP_VERIFY_TOKEN'];
     process.env['ASTERISK_HOME'] = home;
     delete process.env['ANTHROPIC_API_KEY'];
     delete process.env['ASTERISK_TELEGRAM_BOT_TOKEN'];
-    delete process.env['ASTERISK_WHATSAPP_META_TOKEN'];
-    delete process.env['ASTERISK_WHATSAPP_VERIFY_TOKEN'];
   });
 
   afterEach(async () => {
@@ -36,10 +30,6 @@ describe('config schema and persistence', () => {
     if (prevAnthropicKey !== undefined) process.env['ANTHROPIC_API_KEY'] = prevAnthropicKey;
     if (prevTelegramToken !== undefined)
       process.env['ASTERISK_TELEGRAM_BOT_TOKEN'] = prevTelegramToken;
-    if (prevWhatsappToken !== undefined)
-      process.env['ASTERISK_WHATSAPP_META_TOKEN'] = prevWhatsappToken;
-    if (prevWhatsappVerify !== undefined)
-      process.env['ASTERISK_WHATSAPP_VERIFY_TOKEN'] = prevWhatsappVerify;
     await rm(home, { recursive: true, force: true });
   });
 
@@ -51,7 +41,6 @@ describe('config schema and persistence', () => {
     expect(config.bots.telegram.streamMode).toBe('final');
     expect(config.bots.telegram.streamThrottleMs).toBe(1000);
     expect(config.bots.telegram.parseMode).toBe('html');
-    expect(config.bots.whatsapp.transport).toBe('meta-cloud');
     expect(secrets).toEqual({});
   });
 
@@ -71,7 +60,6 @@ describe('config schema and persistence', () => {
       provider: 'anthropic',
       bots: {
         telegram: { enabled: true, allowedUserIds: [42] },
-        whatsapp: { enabled: true, transport: 'web-js' },
       },
     });
     saveConfig(draft);
@@ -79,7 +67,6 @@ describe('config schema and persistence', () => {
     const reloaded = loadConfig();
     expect(reloaded.config.provider).toBe('anthropic');
     expect(reloaded.config.bots.telegram.allowedUserIds).toEqual([42]);
-    expect(reloaded.config.bots.whatsapp.transport).toBe('web-js');
   });
 
   it('stores secrets in the database, which is chmod 600', async () => {

@@ -89,6 +89,41 @@ describe('migrations', () => {
     expect(migrate(db)).toBe(0);
     db.close();
   });
+
+  it('drops WhatsApp settings and secrets left behind by an older install', () => {
+    const db = openDriver(':memory:');
+    migrate(db);
+    // Rewind the removal so the rows an older build wrote can be recreated,
+    // then let the migration run against them the way an upgrade would.
+    db.run('DELETE FROM schema_migrations WHERE version = 6');
+
+    setSetting(db, 'bots.whatsapp.enabled', true);
+    setSetting(db, 'bots.whatsapp.metaCloud.phoneNumberId', 'pn-1');
+    setSetting(db, 'bots.telegram.enabled', true);
+    setSecret(db, 'ASTERISK_WHATSAPP_META_TOKEN', 'meta-secret');
+    setSecret(db, 'ASTERISK_TELEGRAM_BOT_TOKEN', 'tg-token');
+
+    expect(migrate(db)).toBe(1);
+
+    expect(allSettings(db).map(([key]) => key)).toEqual(['bots.telegram.enabled']);
+    // The credential is the point: once the key leaves SECRET_KEYS nothing
+    // else can read or delete it, so the migration is its only exit.
+    expect(getSecret(db, 'ASTERISK_WHATSAPP_META_TOKEN')).toBeUndefined();
+    expect(getSecret(db, 'ASTERISK_TELEGRAM_BOT_TOKEN')).toBe('tg-token');
+    db.close();
+  });
+
+  it('reads a config despite settings the schema no longer declares', () => {
+    // Belt and braces for the upgrade path: even if a stale row outlives the
+    // migration, ConfigSchema strips unknown keys rather than failing to parse.
+    const db = fresh();
+    setSetting(db, 'bots.whatsapp.enabled', true);
+
+    const config = readConfig(db);
+    expect(config.bots.telegram.enabled).toBe(false);
+    expect((config.bots as Record<string, unknown>)['whatsapp']).toBeUndefined();
+    db.close();
+  });
 });
 
 describe('settings store', () => {

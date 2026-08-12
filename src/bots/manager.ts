@@ -4,8 +4,6 @@
 import type { LoadedConfig } from '../config/load.ts';
 import type { BotAdapter, Handler } from './adapter.ts';
 import { createTelegramAdapter } from './telegram/index.ts';
-import { createWhatsappMetaCloudAdapter } from './whatsapp/meta-cloud.ts';
-import { createWhatsappWebJsAdapter } from './whatsapp/web-js.ts';
 
 export interface BotManager {
   start(handler: Handler): Promise<string[]>;
@@ -30,23 +28,6 @@ export function createBotManager(loaded: LoadedConfig): BotManager {
         parseMode: tg.parseMode,
       }),
     );
-  }
-
-  const wa = loaded.config.bots.whatsapp;
-  if (wa.enabled) {
-    if (wa.transport === 'meta-cloud') {
-      adapters.push(
-        createWhatsappMetaCloudAdapter({
-          accessToken: loaded.secrets.ASTERISK_WHATSAPP_META_TOKEN ?? '',
-          verifyToken: loaded.secrets.ASTERISK_WHATSAPP_VERIFY_TOKEN ?? '',
-          phoneNumberId: wa.metaCloud.phoneNumberId,
-          webhookPath: wa.metaCloud.webhookPath,
-          webhookPort: wa.metaCloud.webhookPort,
-        }),
-      );
-    } else {
-      adapters.push(createWhatsappWebJsAdapter({ sessionDir: wa.webJs.sessionDir }));
-    }
   }
 
   return {

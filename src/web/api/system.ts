@@ -48,7 +48,6 @@ export const getStatus: Handler = ({ db }) => {
     },
     bots: {
       telegram: config.bots.telegram.enabled,
-      whatsapp: config.bots.whatsapp.enabled,
     },
     logBytes,
   });

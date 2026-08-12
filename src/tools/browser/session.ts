@@ -1,6 +1,6 @@
 // Playwright session pool. One Chromium process is shared by every session
 // (cheap, just an extra OS process), but each session (each Telegram chat,
-// each WhatsApp number, the REPL) gets its own BrowserContext + Page. That
+// the REPL) gets its own BrowserContext + Page. That
 // way cookies / logged-in state / local storage / cache are isolated by
 // user, the way they would be on different physical machines.
 //

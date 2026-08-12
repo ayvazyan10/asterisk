@@ -177,51 +177,6 @@ const STEPS: Step[] = [
       };
     },
   },
-  {
-    key: 'whatsapp.enabled',
-    prompt: 'Enable WhatsApp bot? (y/n)',
-    initial: (s) => (s.config.bots.whatsapp.enabled ? 'y' : 'n'),
-    apply: (s, v) => ({
-      ...s,
-      config: {
-        ...s.config,
-        bots: { ...s.config.bots, whatsapp: { ...s.config.bots.whatsapp, enabled: yesno(v) } },
-      },
-    }),
-  },
-  {
-    key: 'whatsapp.transport',
-    prompt:
-      'WhatsApp transport — "meta-cloud" (official, recommended) or "web-js" (unofficial; violates WhatsApp ToS, personal use only)',
-    initial: (s) => s.config.bots.whatsapp.transport,
-    apply: (s, v) => {
-      const t = v.trim().toLowerCase() === 'web-js' ? 'web-js' : 'meta-cloud';
-      return {
-        ...s,
-        config: {
-          ...s.config,
-          bots: { ...s.config.bots, whatsapp: { ...s.config.bots.whatsapp, transport: t } },
-        },
-      };
-    },
-  },
-  {
-    key: 'ASTERISK_WHATSAPP_META_TOKEN',
-    prompt: 'WhatsApp Meta Cloud access token (blank to skip)',
-    initial: (s) => s.secrets['ASTERISK_WHATSAPP_META_TOKEN'] ?? '',
-    apply: (s, v) => ({ ...s, secrets: { ...s.secrets, ASTERISK_WHATSAPP_META_TOKEN: v.trim() } }),
-    optional: true,
-  },
-  {
-    key: 'ASTERISK_WHATSAPP_VERIFY_TOKEN',
-    prompt: 'WhatsApp webhook verify token (blank to skip)',
-    initial: (s) => s.secrets['ASTERISK_WHATSAPP_VERIFY_TOKEN'] ?? '',
-    apply: (s, v) => ({
-      ...s,
-      secrets: { ...s.secrets, ASTERISK_WHATSAPP_VERIFY_TOKEN: v.trim() },
-    }),
-    optional: true,
-  },
 ];
 
 function yesno(v: string): boolean {
