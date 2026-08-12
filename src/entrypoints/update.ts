@@ -3,7 +3,8 @@
 
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const BOLD = '\x1b[1m';
 const DIM = '\x1b[2m';
@@ -31,6 +32,24 @@ function run(cmd: string, cwd: string): string {
   return execSync(cmd, { cwd, encoding: 'utf8', timeout: 120_000 }).trim();
 }
 
+/** npm's name for the package, used only in the message below. */
+const NPM_PACKAGE = '@ayvazyan101/asterisk';
+
+/**
+ * How this copy of Asterisk was installed, and therefore how it updates.
+ *
+ * `install.sh` clones a git repository, so the self-update is a fetch and a
+ * rebuild. An `npm i -g` install has no repository at all, and telling that
+ * user to "run install.sh first" — which is what the git path's error said —
+ * sends them to install a *second* copy over the one that already works.
+ *
+ * The signal is the path this code is running from: npm puts a package under
+ * `node_modules`, a clone never is.
+ */
+export function installKind(selfDir: string): 'npm' | 'git' {
+  return selfDir.includes(`${sep}node_modules${sep}`) ? 'npm' : 'git';
+}
+
 function readVersion(root: string): string {
   try {
     const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
@@ -49,6 +68,17 @@ async function main(): Promise<void> {
   process.stdout.write('\n');
   process.stdout.write(`${BOLD}  ✱  Asterisk — self-update${RESET}\n`);
   process.stdout.write('\n');
+
+  // dist/update.js → the package root, or src/entrypoints/ when run from source.
+  const selfDir = dirname(fileURLToPath(import.meta.url));
+  if (installKind(selfDir) === 'npm') {
+    // Not a failure — this install simply updates through npm, and npm is
+    // better at it than we would be. Say the command and get out of the way.
+    ok(`Installed from npm (v${readVersion(resolve(selfDir, '..'))})`);
+    step(`Update with:  npm i -g ${NPM_PACKAGE}@latest`);
+    process.stdout.write('\n');
+    process.exit(0);
+  }
 
   try {
     run('git rev-parse --git-dir', installDir);
@@ -116,7 +146,15 @@ async function main(): Promise<void> {
   process.stdout.write('\n');
 }
 
-main().catch((e) => {
-  process.stderr.write(`asterisk update error: ${(e as Error).message}\n`);
-  process.exit(1);
-});
+// Only when this file is what was executed. Without the guard, *importing*
+// the module runs a real `git fetch` and a real `git reset --hard` against the
+// install directory — which is exactly what happened the first time a test
+// imported it for a pure helper. An entrypoint that updates the machine on
+// import is a trap for any future test or tool that reaches in here.
+const entry = process.argv[1];
+if (entry !== undefined && resolve(entry) === fileURLToPath(import.meta.url)) {
+  main().catch((e) => {
+    process.stderr.write(`asterisk update error: ${(e as Error).message}\n`);
+    process.exit(1);
+  });
+}
