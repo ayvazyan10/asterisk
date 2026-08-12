@@ -254,10 +254,15 @@ function mcpEditForm(ctx: CommandContext, name: string): FormSpec | string {
         const config = loadConfig().config;
         const idx = config.mcpServers.findIndex((s: McpServerConfig) => s.name === name);
         if (idx === -1) return `"${name}" was removed elsewhere; nothing to update`;
+        // addServer() guards these; the edit form did not, so a blank field
+        // threw a raw ZodError out of onSubmit and the REPL printed
+        // `form error: [{"validation":"url",…}]` at the user.
+        const command = (v['command'] ?? '').trim();
+        if (!command) return 'command is required';
         const stdioServer = {
           name,
           transport: 'stdio' as const,
-          command: (v['command'] ?? '').trim(),
+          command,
           args: parseArgs(v['args'] ?? ''),
           env: existing.env,
           enabled: (v['enabled'] ?? 'no') === 'yes',
@@ -290,10 +295,14 @@ function mcpEditForm(ctx: CommandContext, name: string): FormSpec | string {
       const config = loadConfig().config;
       const idx = config.mcpServers.findIndex((s: McpServerConfig) => s.name === name);
       if (idx === -1) return `"${name}" was removed elsewhere; nothing to update`;
+      const url = (v['url'] ?? '').trim();
+      if (!url) return 'url is required';
+      if (!/^https?:\/\//i.test(url))
+        return `url must start with http:// or https:// — got "${url}"`;
       const httpServer = {
         name,
         transport: 'http' as const,
-        url: (v['url'] ?? '').trim(),
+        url,
         headers: existing.headers,
         enabled: (v['enabled'] ?? 'no') === 'yes',
       };

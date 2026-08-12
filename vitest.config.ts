@@ -16,18 +16,18 @@ export default defineConfig({
       // even installed and `--coverage` errored out, so they had never been
       // checked once.
       //
-      // Measured now: 64.07 / 64.42 / 56.72 / 65.39, up from 49 / 47 / 41 / 50.
-      // `src/repl` went from 7.45% to 77.14% and was most of that gap.
+      // Measured now: 73.18 / 76.11 / 66.15 / 74.34, up from 49 / 47 / 41 / 50
+      // at the start of the day. `src/repl` went 7.45% → 77%, `src/commands`
+      // 18% → 97%, and the old 60/60/50/60 target is now clear on all four.
       //
-      // The old 60/60/50/60 target is met on statements, functions and lines.
-      // Branches at 56.72 is the one still short, and the remaining mass is
-      // nameable rather than mysterious: the bot transports (telegram ~25%,
-      // whatsapp ~12%) and the command modules.
+      // What is left is nameable rather than mysterious: the bot transports
+      // (whatsapp ~17%, telegram ~32%), which need a fake Bot API to test
+      // properly.
       thresholds: {
-        lines: 64,
-        functions: 63,
-        branches: 55,
-        statements: 63,
+        lines: 73,
+        functions: 75,
+        branches: 65,
+        statements: 72,
       },
     },
   },

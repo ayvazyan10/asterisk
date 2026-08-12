@@ -19,6 +19,11 @@ export const doctorCommand: SlashCommand = {
   async execute(ctx) {
     const lines: string[] = ['Asterisk diagnostics', ''];
     const paths = asteriskPaths();
+    // Recorded before anything calls loadConfig(): the first load absorbs a
+    // legacy config.json and renames it config.json.migrated, so checking later
+    // always reported "using defaults" on exactly the install that had one.
+    // /status gets this right by checking first; /doctor did not.
+    const hadConfigFile = existsSync(paths.configFile);
 
     // Provider
     const current = parseProviderName(ctx.provider.name);
@@ -115,7 +120,7 @@ export const doctorCommand: SlashCommand = {
     lines.push('');
     lines.push('Config files');
     lines.push(
-      existsSync(paths.configFile)
+      hadConfigFile
         ? `  ✓ config     ${paths.configFile}`
         : `  · config     ${paths.configFile} (using defaults)`,
     );

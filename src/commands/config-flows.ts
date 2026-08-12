@@ -5,6 +5,7 @@
 // 800-line limit. Pure move — no behaviour changed.
 
 import { loadConfig, saveConfig, saveSecrets } from '../config/load.ts';
+import type { AsteriskConfig } from '../config/schema.ts';
 import type { FormSpec, ListSpec } from '../repl/forms/types.ts';
 import { listAnthropicModels } from './models.ts';
 import type { CommandContext, CommandResult, SlashCommand } from './registry.ts';
@@ -64,8 +65,13 @@ const CONFIG_SECTIONS: ConfigSection[] = [
             kind: 'select',
             key: 'provider',
             label: 'Provider',
+            // All three, because SelectRow clamps an out-of-options value to
+            // index 0 — so omitting openai-compatible did not merely hide it,
+            // it silently moved anyone using it onto Ollama the moment they
+            // touched the arrow keys.
             options: [
               { value: 'ollama', label: 'Ollama (local)' },
+              { value: 'openai-compatible', label: 'OpenAI-compatible (llama.cpp, LM Studio, …)' },
               { value: 'anthropic', label: 'Anthropic API' },
             ],
             defaultValue: cfg.provider,
@@ -73,7 +79,7 @@ const CONFIG_SECTIONS: ConfigSection[] = [
         ],
         onSubmit: (v) => {
           const next = loadConfig().config;
-          next.provider = (v['provider'] ?? next.provider) as 'ollama' | 'anthropic';
+          next.provider = (v['provider'] ?? next.provider) as AsteriskConfig['provider'];
           saveConfig(next);
           return `✓ default provider set to ${next.provider} (restart REPL or use /reset to apply)`;
         },

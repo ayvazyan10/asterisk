@@ -17,6 +17,27 @@ export async function listOllamaModels(baseUrl: string): Promise<string[]> {
   }
 }
 
+/**
+ * Model ids an OpenAI-compatible endpoint advertises.
+ *
+ * llama.cpp, LM Studio and vLLM all serve `/v1/models`, and the ids they return
+ * are the ones their own `/v1/chat/completions` accepts. Asking them beats
+ * offering a list from a different vendor — which is what `/model` used to do
+ * on this provider, writing Claude ids into `openaiCompatible.model`.
+ */
+export async function listOpenAiCompatibleModels(baseUrl: string): Promise<string[]> {
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/models`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { data?: Array<{ id?: string }> };
+    return (data.data ?? []).map((m) => m.id).filter((id): id is string => typeof id === 'string');
+  } catch {
+    return [];
+  }
+}
+
 // Static fallback used when /v1/models can't be reached (no key, network
 // error, or the endpoint is throttled). Ordered newest-first so the visible
 // default lands on a current model.

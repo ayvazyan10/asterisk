@@ -138,8 +138,18 @@ async function runCodeCommand(raw: string): Promise<string> {
 
 function rgCommand(pattern: string): string {
   const cmd = `rg --line-number --no-heading --color=never --glob '!node_modules' --glob '!dist' ${quote(pattern)} .`;
-  const out = execSync(cmd, { encoding: 'utf8', timeout: 30000 });
-  return truncate(out || '(no matches)', 30000);
+  try {
+    const out = execSync(cmd, { encoding: 'utf8', timeout: 30000 });
+    return truncate(out || '(no matches)', 30000);
+  } catch (e) {
+    // rg exits 1 when nothing matched, which execSync raises. The `|| '(no
+    // matches)'` above was unreachable, so a search with no hits reported
+    // "Command failed: rg …" as if the tool were broken. Exit 2 is a real
+    // error — a bad pattern, an unreadable path — and still surfaces.
+    const status = (e as { status?: number }).status;
+    if (status === 1) return '(no matches)';
+    throw e;
+  }
 }
 
 function definitionPattern(query: string): string {

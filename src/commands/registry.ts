@@ -44,6 +44,7 @@ import {
   type AnthropicModel,
   listAnthropicModels,
   listOllamaModels,
+  listOpenAiCompatibleModels,
 } from './models.ts';
 import { permissionsCommand } from './permissions.ts';
 import { pluginsCommand } from './plugins.ts';
@@ -127,6 +128,29 @@ export const COMMANDS: SlashCommand[] = [
           kind: 'list',
           title: 'Pick a model',
           items,
+          onPick: async (value) => switchModel(ctx, value),
+          onCancel: () => null,
+        };
+        return list;
+      }
+
+      if (current?.kind === 'openai-compatible') {
+        // Ask the endpoint what it serves. Falling through to the Anthropic
+        // list here used to write a Claude id into openaiCompatible.model,
+        // because switchModel keys off the *current* provider kind.
+        const cfg = loadConfig().config.openaiCompatible;
+        const models = await listOpenAiCompatibleModels(cfg.baseUrl);
+        if (models.length === 0) {
+          return `(could not reach ${cfg.baseUrl}/models — pass a model name: /model <id>)`;
+        }
+        const list: ListSpec = {
+          kind: 'list',
+          title: 'Pick a model',
+          items: models.map((m) => ({
+            value: m,
+            label: m,
+            ...(m === current.model ? { badge: '* current' } : {}),
+          })),
           onPick: async (value) => switchModel(ctx, value),
           onCancel: () => null,
         };
