@@ -21,6 +21,12 @@ import type {
   ToolUseBlock,
 } from '../types/messages.ts';
 import { ProviderError, classifyHttpError, parseRetryAfter } from './errors.ts';
+import {
+  type RepetitionOptions,
+  createRepetitionGuard,
+  findRunawayRepetition,
+} from './repetition.ts';
+import { parseToolArguments } from './tool-repair.ts';
 
 export interface OpenAiCompatibleConfig {
   /** Endpoint root including the version segment, e.g. http://127.0.0.1:8080/v1 */
@@ -33,6 +39,9 @@ export interface OpenAiCompatibleConfig {
   contextWindow: number;
   modelTimeoutMs: number;
   modelIdleTimeoutMs: number;
+  /** Thresholds for the runaway-repetition detector. Left at the defaults
+   *  unless a caller has a reason; see providers/repetition.ts. */
+  repetition?: RepetitionOptions;
 }
 
 export const OPENAI_COMPATIBLE_DEFAULTS: OpenAiCompatibleConfig = {
@@ -54,12 +63,27 @@ interface WireToolCall {
   function?: { name?: string; arguments?: string };
 }
 
+interface WireContentPart {
+  type?: string;
+  text?: string;
+}
+
 interface WireMessage {
   role?: string;
-  content?: string | null;
+  /** The spec says string, and most servers oblige. Some proxies mirror the
+   *  multimodal request shape back and answer with an array of parts, which
+   *  used to reach `.trim()` and take the whole turn down with a TypeError. */
+  content?: string | null | WireContentPart[];
   /** Emitted by llama.cpp under `--reasoning-format deepseek`, and by others. */
   reasoning_content?: string | null;
   tool_calls?: WireToolCall[];
+}
+
+/** Flattens either accepted content shape to plain text. */
+function contentText(content: WireMessage['content']): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('');
 }
 
 interface WireChoice {
@@ -169,21 +193,6 @@ export function toOpenAiTools(tools: readonly ToolDefinition[]): unknown[] {
   }));
 }
 
-/** Tool-call arguments arrive as JSON text; a malformed one must not kill the turn. */
-function parseArguments(raw: string, toolName: string): Record<string, unknown> {
-  const trimmed = raw.trim();
-  if (!trimmed) return {};
-  try {
-    const parsed = JSON.parse(trimmed);
-    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : { value: parsed };
-  } catch {
-    // Surfaced to the model as a tool error rather than thrown, so it can retry.
-    return { __malformed_arguments: trimmed, __tool: toolName };
-  }
-}
-
 /** Accumulates streamed tool-call fragments, which arrive keyed by index. */
 class ToolCallBuffer {
   private readonly byIndex = new Map<number, { id: string; name: string; args: string }>();
@@ -205,7 +214,10 @@ class ToolCallBuffer {
         type: 'tool_use' as const,
         id: call.id || `call_${index}`,
         name: call.name,
-        input: parseArguments(call.args, call.name),
+        // parseToolArguments never throws: a call it cannot read comes back
+        // carrying the malformed sentinel, which the agent loop turns into a
+        // tool_result the model can correct from.
+        input: parseToolArguments(call.args, call.name),
       }));
   }
 
@@ -214,9 +226,9 @@ class ToolCallBuffer {
   }
 }
 
-function blocksFrom(message: WireMessage): ContentBlock[] {
+function blocksFrom(message: WireMessage, repetition?: RepetitionOptions): ContentBlock[] {
   const blocks: ContentBlock[] = [];
-  const text = (message.content ?? '').trim();
+  const text = collapseRunaway(contentText(message.content), repetition).trim();
   if (text) blocks.push({ type: 'text', text });
 
   const buffer = new ToolCallBuffer();
@@ -224,6 +236,13 @@ function blocksFrom(message: WireMessage): ContentBlock[] {
   blocks.push(...buffer.blocks());
 
   return blocks;
+}
+
+/** Non-streaming counterpart to the streaming guard: a looping model that
+ *  answers in one shot still bloats history with kilobytes of the same line. */
+function collapseRunaway(text: string, options?: RepetitionOptions): string {
+  const hit = findRunawayRepetition(text, options ?? {});
+  return hit === null ? text : text.slice(0, hit.start + hit.unit.length);
 }
 
 function mapStopReason(
@@ -326,7 +345,7 @@ export function createOpenAiCompatibleProvider(
         const reasoning = (message.reasoning_content ?? '').trim();
         if (reasoning) req.onThinking?.(reasoning);
 
-        const content = blocksFrom(message);
+        const content = blocksFrom(message, cfg.repetition);
         return {
           content,
           stopReason: mapStopReason(
@@ -360,6 +379,8 @@ async function readStream(
   let text = '';
   let finish: string | null | undefined;
   const toolCalls = new ToolCallBuffer();
+  const repetition = createRepetitionGuard(cfg.repetition ?? {});
+  let runaway = false;
 
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   const resetIdle = () => {
@@ -393,10 +414,12 @@ async function readStream(
     if (choice.finish_reason) finish = choice.finish_reason;
 
     const delta = choice.delta ?? {};
-    if (delta.content) {
-      text += delta.content;
+    const deltaText = contentText(delta.content);
+    if (deltaText) {
+      text += deltaText;
+      if (repetition.push(deltaText)) runaway = true;
       try {
-        req.onText?.(delta.content);
+        req.onText?.(deltaText);
       } catch {
         // a throwing UI callback must not abort generation
       }
@@ -425,6 +448,14 @@ async function readStream(
         buf = buf.slice(nl + 1);
         nl = buf.indexOf('\n');
       }
+      // Stop pulling once the model is only repeating itself. Cancelling the
+      // reader closes the connection, which is what actually stops the server
+      // generating — otherwise this runs to the total timeout.
+      if (runaway) {
+        buf = '';
+        await reader.cancel().catch(() => {});
+        break;
+      }
     }
   } finally {
     if (idleTimer !== undefined) clearTimeout(idleTimer);
@@ -437,6 +468,8 @@ async function readStream(
 
   // The last frame may arrive without a trailing newline.
   if (buf.trim()) handleFrame(buf);
+
+  if (runaway) text = text.slice(0, repetition.keepLength());
 
   if (ctrl.signal.aborted) {
     const reason = ctrl.signal.reason;
@@ -453,6 +486,9 @@ async function readStream(
 
   return {
     content,
-    stopReason: mapStopReason(finish, toolCalls.size > 0),
+    // A stream we cut short did not stop for the model's own reason, and
+    // reporting it as end_turn would let a truncated loop look like a
+    // finished answer.
+    stopReason: runaway ? 'stop_sequence' : mapStopReason(finish, toolCalls.size > 0),
   };
 }

@@ -11,6 +11,16 @@ import { getDb } from '../db/index.ts';
 import { type HookResult, fireHooks } from '../hooks/runner.ts';
 import { type OutputStyle, outputStyleToPromptSection } from '../output-styles/styles.ts';
 import { ProviderError, isAbort, isRetryable, retryAfterMs } from '../providers/errors.ts';
+import { recoverToolCallsFromText } from '../providers/text-tool-calls.ts';
+import {
+  canonicalToolName,
+  coerceToolInput,
+  malformedArgumentsMessage,
+  missingArgumentsMessage,
+  missingRequired,
+  readMalformedArguments,
+  suggestToolNames,
+} from '../providers/tool-repair.ts';
 import { type Rule, rulesToPromptSection } from '../rules/loader.ts';
 import { type Soul, soulsToPromptSection } from '../soul/loader.ts';
 import { isConcurrencySafe } from '../tools/concurrency.ts';
@@ -121,6 +131,20 @@ const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
 // which is what used to happen: a 5-minute Ask under a 2-minute deadline
 // could never receive an answer.
 const INTERACTIVE_TOOL_TIMEOUT_MS = 15 * 60_000;
+
+// Stand-in pushed to history when a model returns nothing at all. The turn
+// still has to continue — we are about to ask it to try again — and both the
+// Anthropic API and the tool_use pairing rules need a well-formed assistant
+// message with content in it. An empty content array is a 400.
+const EMPTY_ASSISTANT_PLACEHOLDER = '(no reply)';
+
+// A quantised model that loses the thread re-issues the same call forever.
+// The cap is per turn and counts *identical* arguments, so a legitimate
+// re-read of a changed file or a second TaskList is untouched; only a call
+// that provably cannot produce a new answer is refused. Set well above any
+// plausible deliberate repeat, because the cost of a false positive is a
+// blocked real call and the cost of a miss is only the turn cap.
+const MAX_IDENTICAL_TOOL_CALLS = 5;
 
 export type TerminalReason =
   | 'end-turn'
@@ -252,6 +276,14 @@ async function runAgentTurnInner(
   // cooperates.
   let summaryProdsUsed = 0;
   const MAX_SUMMARY_PRODS = 1;
+  // Same idea for a model that returns nothing before doing any work at all —
+  // observed on llama.cpp when a reasoning model spends its whole token budget
+  // in reasoning_content and finishes with finish_reason "length" and empty
+  // content. Without a prod the user gets a blank reply and no explanation.
+  let emptyProdsUsed = 0;
+  const MAX_EMPTY_PRODS = 1;
+  // How many times each (tool, arguments) pair has been dispatched this turn.
+  const callCounts = new Map<string, number>();
   let reason: TerminalReason = 'unknown-error';
 
   try {
@@ -343,9 +375,19 @@ async function runAgentTurnInner(
         throw error;
       }
 
-      state.history.push({ role: 'assistant', content: response.content });
+      const available = visibleToolNames(opts.allowedTools);
+      const content = normaliseResponseContent(response.content, available);
 
-      const textBlocks = response.content.filter((b): b is TextBlock => b.type === 'text');
+      // Never push an empty assistant message: the turn may continue below
+      // with a prod, and a message with no content blocks is rejected outright
+      // by the Anthropic API and strands the pairing invariant elsewhere.
+      state.history.push({
+        role: 'assistant',
+        content:
+          content.length > 0 ? content : [{ type: 'text', text: EMPTY_ASSISTANT_PLACEHOLDER }],
+      });
+
+      const textBlocks = content.filter((b): b is TextBlock => b.type === 'text');
       for (const t of textBlocks) {
         if (t.text) opts.onAssistantText?.(t.text);
       }
@@ -356,7 +398,7 @@ async function runAgentTurnInner(
         .trim();
       if (turnText) lastNonEmptyText = turnText;
 
-      const toolUses = response.content.filter((b): b is ToolUseBlock => b.type === 'tool_use');
+      const toolUses = content.filter((b): b is ToolUseBlock => b.type === 'tool_use');
 
       if (toolUses.length === 0) {
         // No tool calls this turn — model is done. Three sub-cases:
@@ -371,6 +413,25 @@ async function runAgentTurnInner(
           break;
         }
         const ranToolsThisTurn = Object.values(toolTally).some((n) => n > 0);
+        if (!ranToolsThisTurn && emptyProdsUsed < MAX_EMPTY_PRODS) {
+          // Nothing happened at all: no text, no tools, nothing to fall back
+          // on. One re-ask costs a round trip and usually lands, where the
+          // alternative is handing the user a blank turn.
+          emptyProdsUsed++;
+          state.history.push({
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text:
+                  response.stopReason === 'max_tokens'
+                    ? 'Your reply was cut off by the token limit before any visible text — the whole budget went into reasoning. Answer now, briefly and directly, with no preamble.'
+                    : 'Your reply was empty. Answer my last message now, in plain text.',
+              },
+            ],
+          });
+          continue;
+        }
         if (ranToolsThisTurn && summaryProdsUsed < MAX_SUMMARY_PRODS) {
           // Force one more turn with an explicit "now summarise" hint.
           summaryProdsUsed++;
@@ -411,13 +472,33 @@ async function runAgentTurnInner(
         }
 
         const executeSingle = async (use: ToolUseBlock): Promise<ToolResultBlock> => {
-          toolTally[use.name] = (toolTally[use.name] ?? 0) + 1;
+          // Already canonical: normaliseResponseContent folded any casing or
+          // namespace slip onto the registered name before the block got here.
+          const name = use.name;
+          toolTally[name] = (toolTally[name] ?? 0) + 1;
           let toolInput = { ...use.input };
-          opts.onToolUse?.(use.name, toolInput);
+          opts.onToolUse?.(name, toolInput);
+
+          const fail = (why: string): ToolResultBlock => {
+            opts.onToolResult?.(name, why, true);
+            return { type: 'tool_result', tool_use_id: use.id, content: why, is_error: true };
+          };
+
+          // Arguments the provider could not parse never reached a tool. The
+          // tool would have answered "path is required", which says nothing
+          // about the actual fault and gets the same broken JSON back next
+          // turn; the model needs to be told its JSON was the problem.
+          const malformed = readMalformedArguments(toolInput);
+          if (malformed) {
+            return fail(
+              malformedArgumentsMessage(name, malformed.raw, getTool(name)?.input_schema),
+            );
+          }
+
           if (hooks.length > 0) {
             const before = await fireHooks(
               hooks,
-              { event: 'before_tool', tool: use.name, toolInput },
+              { event: 'before_tool', tool: name, toolInput },
               signal,
             );
             for (const r of before) {
@@ -441,7 +522,7 @@ async function runAgentTurnInner(
                 const why =
                   r.decision?.reason ||
                   (r.exitCode !== 0 ? `hook exited ${r.exitCode}` : 'blocked by hook');
-                opts.onToolResult?.(use.name, why, true);
+                opts.onToolResult?.(name, why, true);
                 return {
                   type: 'tool_result',
                   tool_use_id: use.id,
@@ -460,23 +541,32 @@ async function runAgentTurnInner(
           // list has to be enforced here too. Without this a read-only
           // sub-agent — explore, planner, code-reviewer — whose allowedTools
           // excludes Write could still write to disk.
-          if (opts.allowedTools?.length && !opts.allowedTools.includes(use.name)) {
-            const why = `tool "${use.name}" is not available to this agent`;
-            opts.onToolResult?.(use.name, why, true);
-            return {
-              type: 'tool_result',
-              tool_use_id: use.id,
-              content: why,
-              is_error: true,
-            };
+          if (opts.allowedTools?.length && !opts.allowedTools.includes(name)) {
+            return fail(`tool "${name}" is not available to this agent`);
           }
-          const tool = getTool(use.name);
+          const tool = getTool(name);
           let output: string;
           let isError: boolean;
           if (!tool) {
-            output = `tool not found: ${use.name}`;
+            // A bare "tool not found" gives an inventive model nothing to
+            // correct towards, and it invents the same name again next turn.
+            output = unknownToolMessage(name, available);
             isError = true;
           } else {
+            // Repair the shape before validating it — a double-wrapped or
+            // stringified argument is the model's formatting, not a missing
+            // parameter, and reporting it as one would be a lie.
+            toolInput = coerceToolInput(toolInput, tool.input_schema);
+            const missing = missingRequired(toolInput, tool.input_schema);
+            if (missing.length > 0) {
+              return fail(missingArgumentsMessage(name, missing, toolInput, tool.input_schema));
+            }
+            const repeats = countCall(callCounts, name, toolInput);
+            if (repeats > MAX_IDENTICAL_TOOL_CALLS) {
+              return fail(
+                `${name} has already run ${MAX_IDENTICAL_TOOL_CALLS} times this turn with exactly these arguments and returned the same thing each time. Running it again cannot help — change the arguments, use a different tool, or reply to the user with what you have.`,
+              );
+            }
             const deadlineMs = tool.interactive
               ? Math.max(toolTimeoutMs, INTERACTIVE_TOOL_TIMEOUT_MS)
               : toolTimeoutMs;
@@ -495,13 +585,13 @@ async function runAgentTurnInner(
             }
           }
           // Callback receives the ORIGINAL output, not the persisted version.
-          opts.onToolResult?.(use.name, output, isError);
+          opts.onToolResult?.(name, output, isError);
           if (hooks.length > 0) {
             const after = await fireHooks(
               hooks,
               {
                 event: 'after_tool',
-                tool: use.name,
+                tool: name,
                 toolInput,
                 toolOutput: output,
                 toolError: isError,
@@ -513,7 +603,7 @@ async function runAgentTurnInner(
           // Persist large non-error outputs to disk and replace content
           // with a summary + preview for the model's context window.
           const persistedOutput =
-            !isError && shouldPersistOutput(output) ? persistOutput(use.name, output) : output;
+            !isError && shouldPersistOutput(output) ? persistOutput(name, output) : output;
           return {
             type: 'tool_result',
             tool_use_id: use.id,
@@ -591,6 +681,76 @@ async function runAgentTurnInner(
   }
 
   return { finalText, reason };
+}
+
+/** Tool names this turn is allowed to dispatch, in registry order. */
+function visibleToolNames(allowed?: readonly string[]): string[] {
+  const all = toolDefinitions().map((t) => t.name);
+  if (!allowed || allowed.length === 0) return all;
+  return all.filter((n) => allowed.includes(n));
+}
+
+/**
+ * Cleans up the two things small local models get wrong about *how* they ask
+ * for a tool, before anything in the loop reads the response.
+ *
+ * 1. Names that differ from a real tool only in casing or punctuation are
+ *    folded onto the real one. Doing it here rather than at dispatch means
+ *    concurrency classification, history and the provider echo all see the
+ *    canonical name.
+ * 2. A model with no native tool support writes its calls into the text. Those
+ *    are recovered — but only when the response carried no tool calls on the
+ *    proper channel, so a model that used the channel correctly never has its
+ *    prose re-read as a call.
+ */
+function normaliseResponseContent(
+  content: readonly ContentBlock[],
+  available: readonly string[],
+): ContentBlock[] {
+  const canonical = content.map((block) =>
+    block.type === 'tool_use'
+      ? { ...block, name: canonicalToolName(block.name, available) ?? block.name }
+      : block,
+  );
+  if (canonical.some((b) => b.type === 'tool_use')) return canonical;
+
+  const spoken = canonical
+    .filter((b): b is TextBlock => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n');
+  const recovered = recoverToolCallsFromText(spoken, available);
+  if (!recovered) return canonical;
+
+  const blocks: ContentBlock[] = [];
+  if (recovered.text) blocks.push({ type: 'text', text: recovered.text });
+  blocks.push(...recovered.calls);
+  return blocks;
+}
+
+/** Message for a tool name that matched nothing, with the candidates a model
+ *  needs in order to fix it rather than invent again. */
+function unknownToolMessage(name: string, available: readonly string[]): string {
+  const suggestions = suggestToolNames(name, available);
+  const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(', ')}?` : '';
+  return `tool not found: ${name}.${hint} Available tools: ${available.join(', ')}`;
+}
+
+/** Bumps and returns the count of dispatches of this exact call this turn. */
+function countCall(
+  counts: Map<string, number>,
+  name: string,
+  input: Record<string, unknown>,
+): number {
+  let signature: string;
+  try {
+    signature = `${name}:${JSON.stringify(input)}`;
+  } catch {
+    // Unserialisable input cannot be compared, so it is never "identical".
+    return 1;
+  }
+  const next = (counts.get(signature) ?? 0) + 1;
+  counts.set(signature, next);
+  return next;
 }
 
 // Partition tool_use blocks into sequential/parallel batches.

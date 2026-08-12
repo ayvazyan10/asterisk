@@ -11,6 +11,12 @@ import type {
   ToolUseBlock,
 } from '../types/messages.ts';
 import { ProviderError, classifyHttpError, parseRetryAfter } from './errors.ts';
+import {
+  type RepetitionOptions,
+  createRepetitionGuard,
+  findRunawayRepetition,
+} from './repetition.ts';
+import { parseToolArguments } from './tool-repair.ts';
 
 interface OllamaConfig {
   baseUrl: string;
@@ -19,12 +25,18 @@ interface OllamaConfig {
   think: boolean;
   modelTimeoutMs: number;
   modelIdleTimeoutMs: number;
+  /** Thresholds for the runaway-repetition detector; see repetition.ts. */
+  repetition?: RepetitionOptions;
 }
 
 interface OllamaToolCall {
-  function: {
-    name: string;
-    arguments: Record<string, unknown>;
+  function?: {
+    name?: string;
+    /** Documented as an object, and that is what Ollama sends for models with
+     *  a tool-aware template. Models whose template emits the arguments as a
+     *  JSON string get that string passed straight through, and spreading a
+     *  string into the tool input used to produce `{0:'{',1:'"',…}`. */
+    arguments?: unknown;
   };
 }
 
@@ -148,26 +160,50 @@ export function stripThinkTags(text: string): string {
   return out.trim();
 }
 
-function blocksFromOllama(msg: OllamaMessage): ContentBlock[] {
+function blocksFromOllama(
+  msg: OllamaMessage | undefined,
+  repetition?: RepetitionOptions,
+): ContentBlock[] {
   const blocks: ContentBlock[] = [];
-  const cleaned = stripThinkTags(msg.content ?? '');
+  // A response without a `message` is not something Ollama documents, but a
+  // proxy sitting in front of it can produce one, and reading `.content` off
+  // undefined took the whole turn down with a TypeError.
+  if (!msg) return blocks;
+  const cleaned = stripThinkTags(collapseRunaway(msg.content ?? '', repetition));
   if (cleaned.length > 0) {
     blocks.push({ type: 'text', text: cleaned });
   }
   if (msg.tool_calls) {
     for (let i = 0; i < msg.tool_calls.length; i++) {
       const call = msg.tool_calls[i];
-      if (!call) continue;
+      const name = call?.function?.name;
+      // A call with no name cannot be dispatched or usefully reported — the
+      // model named nothing, so there is nothing to correct it towards.
+      if (typeof name !== 'string' || !name.trim()) continue;
       const tu: ToolUseBlock = {
         type: 'tool_use',
         id: `ollama_call_${Date.now()}_${i}`,
-        name: call.function.name,
-        input: call.function.arguments,
+        name,
+        input: parseToolArguments(call?.function?.arguments, name),
       };
       blocks.push(tu);
     }
   }
   return blocks;
+}
+
+/** Truncates a completion that degenerated into a repeating loop back to one
+ *  copy of the repeated unit. See providers/repetition.ts for the thresholds.
+ *
+ *  Cutting the text short can leave a <think> block open, and stripThinkTags
+ *  treats an orphan opener as visible text — which would publish exactly the
+ *  reasoning the filter exists to hide. Close it on the way out. */
+function collapseRunaway(text: string, options?: RepetitionOptions): string {
+  const hit = findRunawayRepetition(text, options ?? {});
+  if (hit === null) return text;
+  const kept = text.slice(0, hit.start + hit.unit.length);
+  const lower = kept.toLowerCase();
+  return lower.lastIndexOf('<think>') > lower.lastIndexOf('</think>') ? `${kept}</think>` : kept;
 }
 
 export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Provider {
@@ -237,7 +273,8 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
           throw classifyHttpError(res.status, text, retryAfterSeconds);
         }
 
-        let finalMessage: OllamaMessage;
+        let finalMessage: OllamaMessage | undefined;
+        let runaway = false;
         if (onText) {
           const streamed = await readStreamingChat(
             res,
@@ -245,19 +282,23 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
             req.onThinking,
             cfg.modelIdleTimeoutMs,
             ctrl,
+            cfg.repetition,
           );
           finalMessage = streamed.message;
+          runaway = streamed.runaway;
         } else {
-          const parsed = (await res.json()) as OllamaChatResponse;
-          finalMessage = parsed.message;
+          const parsed = (await res.json()) as OllamaChatResponse | null;
+          finalMessage = parsed?.message;
         }
 
-        const content = blocksFromOllama(finalMessage);
+        const content = blocksFromOllama(finalMessage, cfg.repetition);
         const stopReason: ProviderResponse['stopReason'] = content.some(
           (b) => b.type === 'tool_use',
         )
           ? 'tool_use'
-          : 'end_turn';
+          : runaway
+            ? 'stop_sequence'
+            : 'end_turn';
         return { content, stopReason };
       } finally {
         clearTimeout(totalTimer);
@@ -279,10 +320,11 @@ async function readStreamingChat(
   onThinking?: (delta: string) => void,
   idleTimeoutMs?: number,
   ctrl?: AbortController,
-): Promise<{ message: OllamaMessage }> {
+  repetitionOptions?: RepetitionOptions,
+): Promise<{ message: OllamaMessage; runaway: boolean }> {
   if (!res.body) {
-    const data = (await res.json()) as OllamaChatResponse;
-    return { message: data.message };
+    const data = (await res.json()) as OllamaChatResponse | null;
+    return { message: data?.message ?? { role: 'assistant', content: '' }, runaway: false };
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -290,6 +332,8 @@ async function readStreamingChat(
   let aggregatedContent = '';
   let toolCalls: OllamaToolCall[] | undefined;
   const filter = createThinkFilter();
+  const repetition = createRepetitionGuard(repetitionOptions ?? {});
+  let runaway = false;
 
   // Idle timeout: abort if no chunk arrives for idleTimeoutMs.
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -337,6 +381,7 @@ async function readStreamingChat(
         const delta = ev.message?.content ?? '';
         if (delta) {
           aggregatedContent += delta;
+          if (repetition.push(delta)) runaway = true;
           const out = filter.feed(delta);
           if (out.visible) {
             try {
@@ -368,6 +413,14 @@ async function readStreamingChat(
         if (ev.message?.tool_calls && ev.message.tool_calls.length > 0) {
           toolCalls = ev.message.tool_calls;
         }
+      }
+      // A model repeating itself will not stop on its own; cancelling the
+      // reader closes the connection so Ollama stops generating, instead of
+      // filling the context window and running down the total timeout.
+      if (runaway) {
+        buf = '';
+        await reader.cancel().catch(() => {});
+        break;
       }
     }
   } finally {
@@ -415,7 +468,7 @@ async function readStreamingChat(
 
   const out: OllamaMessage = { role: 'assistant', content: aggregatedContent };
   if (toolCalls) out.tool_calls = toolCalls;
-  return { message: out };
+  return { message: out, runaway };
 }
 
 /** Split the chain-of-thought block (<think>…</think>) out from the visible
