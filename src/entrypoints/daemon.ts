@@ -17,6 +17,7 @@ import { setExtraTools } from '../tools/registry.ts';
 import type { Provider } from '../types/messages.ts';
 import type { AgentState } from '../agent/loop.ts';
 import { saveConversation, loadConversation } from '../agent/persistence.ts';
+import { KeyedQueue } from '../utils/keyed-queue.ts';
 
 const paths = asteriskPaths();
 ensurePaths(paths);
@@ -62,18 +63,48 @@ function formatToolStatus(name: string, input: Record<string, unknown>): string 
   return trimmed ? `${name} · ${trimmed}` : name;
 }
 
+/**
+ * Chats kept resident. Every chat that has ever messaged the bot used to stay
+ * in memory for the daemon's lifetime, which on a busy bot is unbounded growth.
+ * Evicted chats are re-hydrated from disk on their next message — the restore
+ * path below already exists for exactly that.
+ */
+const MAX_RESIDENT_CHATS = 100;
+
 const conversations = new Map<string, AgentState>();
+
+/** Serialises turns per chat. See src/utils/keyed-queue.ts for why. */
+const turnQueue = new KeyedQueue();
+
 function stateFor(chatId: string): AgentState {
-  let state = conversations.get(chatId);
-  if (!state) {
-    state = createAgentState();
-    const restored = loadConversation(chatId);
-    if (restored.length > 0) {
-      state.history = restored;
-      log.info({ chatId, messages: restored.length }, 'restored conversation');
-    }
-    conversations.set(chatId, state);
+  const existing = conversations.get(chatId);
+  if (existing) {
+    // Refresh recency: Map preserves insertion order, so re-inserting moves
+    // this chat to the end and makes the first key the least recently used.
+    conversations.delete(chatId);
+    conversations.set(chatId, existing);
+    return existing;
   }
+
+  const state = createAgentState();
+  const restored = loadConversation(chatId);
+  if (restored.length > 0) {
+    state.history = restored;
+    log.info({ chatId, messages: restored.length }, 'restored conversation');
+  }
+  conversations.set(chatId, state);
+
+  while (conversations.size > MAX_RESIDENT_CHATS) {
+    const oldest = conversations.keys().next();
+    if (oldest.done) break;
+    // Never evict a chat mid-turn — its state is being mutated.
+    if (turnQueue.isBusy(oldest.value)) break;
+    const evicted = conversations.get(oldest.value);
+    if (evicted) saveConversation(oldest.value, evicted.history);
+    conversations.delete(oldest.value);
+    log.debug({ chatId: oldest.value }, 'evicted idle conversation');
+  }
+
   return state;
 }
 
@@ -83,7 +114,11 @@ const { tryHandleBotCommand } = await import('../bots/commands.ts');
 const { runWithSession } = await import('../agent/context.ts');
 
 manager
-  .start(async (msg, hopts) => {
+  // Serialised per chat. grammy dispatches updates concurrently, so two
+  // messages arriving in one chat within a second used to run runAgentTurn
+  // against the same mutable AgentState, interleaving their history pushes and
+  // stranding tool_use blocks between another turn's pairs.
+  .start(async (msg, hopts) => turnQueue.run(msg.chatId, async () => {
     log.debug({ chatId: msg.chatId }, 'incoming message');
     const state = stateFor(msg.chatId);
     const sessionId = `bot:${msg.chatId}`;
@@ -177,7 +212,10 @@ manager
         };
       })(),
       onToolUse: (name, input) => {
-        log.debug({ tool: name, input }, 'tool_use');
+        // Summary only. Logging the raw input put whole Write payloads and
+        // every Bash command line into daemon.log — which the control panel
+        // then serves over /api/logs.
+        log.debug({ tool: name, summary: formatToolStatus(name, input) }, 'tool_use');
         sink?.({ type: 'status', text: formatToolStatus(name, input) });
       },
       onToolResult: (name, _output, isError) =>
@@ -214,7 +252,7 @@ manager
         return out;
       }),
     };
-  })
+  }))
   .then((started) => log.info({ adapters: started }, 'adapters started'))
   .catch((e) => log.error({ err: e }, 'failed to start adapters'));
 
@@ -270,5 +308,19 @@ async function shutdown(signal: string): Promise<void> {
 
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
-process.on('uncaughtException', (e) => log.error({ err: e }, 'uncaught'));
-process.on('unhandledRejection', (e) => log.error({ err: e }, 'unhandled rejection'));
+// Fail fast rather than serving from an unknown state. Logging and continuing
+// meant the daemon kept answering messages after, say, an EPIPE from a hook
+// unwound the middle of a turn — the project's own rule is that errors are
+// never silently swallowed. A supervisor (systemd, pm2, Docker) restarts us;
+// where there is none, exiting is still better than replying from a corrupted
+// conversation.
+function fatal(kind: string, e: unknown): void {
+  log.error({ err: e }, kind);
+  void shutdown(kind).finally(() => process.exit(1));
+  // shutdown() gives the WAL a chance to checkpoint, but never let a hung
+  // shutdown keep a broken daemon alive.
+  setTimeout(() => process.exit(1), 3000).unref();
+}
+
+process.on('uncaughtException', (e) => fatal('uncaught', e));
+process.on('unhandledRejection', (e) => fatal('unhandled rejection', e));
