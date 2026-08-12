@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -206,5 +206,41 @@ describe('command registry', () => {
       'gpt-banana',
     )) as string;
     expect(out).toMatch(/unknown provider/);
+  });
+
+  const skills = async (args: string): Promise<string> => {
+    const c = ctx(createOllamaProvider());
+    return (await COMMANDS.find((c2) => c2.name === '/skills')?.execute(c, args)) as string;
+  };
+
+  it('/skills lists the bundled set with no problem footer', async () => {
+    const out = await skills('');
+    expect(out).toMatch(/^Skills {2}\d+ loaded/);
+    expect(out).toContain('bundled  simplify');
+    expect(out).not.toContain('/skills validate');
+  });
+
+  it('/skills validate checks the bundled set', async () => {
+    const out = await skills('validate');
+    expect(out).toContain('0 errors · 0 warnings');
+    expect(out).toContain('bundled skills: all valid');
+  });
+
+  it('/skills validate names a broken user skill, and the listing points at it', async () => {
+    const dir = join(home, 'skills', 'broken');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'SKILL.md'), '---\nname: broken\n---\nNo description.');
+
+    const listing = await skills('');
+    expect(listing).toContain('run /skills validate');
+    expect(listing).not.toContain('bundled  broken');
+
+    const report = await skills('validate');
+    expect(report).toContain(join(dir, 'SKILL.md'));
+    expect(report).toContain('description is required');
+  });
+
+  it('/skills rejects an unknown argument instead of listing anyway', async () => {
+    expect(await skills('validte')).toMatch(/unknown argument: validte/);
   });
 });

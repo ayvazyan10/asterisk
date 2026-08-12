@@ -24,7 +24,8 @@ import { OUTPUT_STYLES, findOutputStyle } from '../output-styles/styles.ts';
 import { chooseProvider } from '../providers/factory.ts';
 import type { CommandResult, FormSpec, ListSpec } from '../repl/forms/types.ts';
 import { loadRules } from '../rules/loader.ts';
-import { type Skill, loadSkills } from '../skills/loader.ts';
+import { type Skill, loadSkills, loadSkillsWithIssues } from '../skills/loader.ts';
+import { formatSkillReport, skillIssueSummary } from '../skills/report.ts';
 import { DEFAULT_SOUL_TEMPLATE, type Soul, loadSouls } from '../soul/loader.ts';
 import { codeIntelTool } from '../tools/code-intel.ts';
 import { isPlanMode, setPlanMode } from '../tools/planmode.ts';
@@ -351,9 +352,17 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/skills',
-    description: 'List installed skills',
-    execute() {
-      const skills = loadSkills();
+    description: 'List installed skills, or check them with /skills validate',
+    usage: '/skills [validate]',
+    execute(_ctx, args) {
+      const verb = args.trim().toLowerCase();
+      if (verb && verb !== 'validate' && verb !== 'list') {
+        return `unknown argument: ${verb} — usage: /skills [validate]`;
+      }
+      const load = loadSkillsWithIssues();
+      if (verb === 'validate') return formatSkillReport(load);
+
+      const { skills, issues } = load;
       if (skills.length === 0) {
         return [
           'No skills installed.',
@@ -377,6 +386,10 @@ export const COMMANDS: SlashCommand[] = [
         if (s.description) lines.push(`    ${s.description}`);
       }
       lines.push('');
+      // Broken skills are invisible in the listing above — they never loaded —
+      // so the count has to be said out loud or it is lost.
+      const summary = skillIssueSummary(issues);
+      if (summary) lines.push(summary);
       lines.push('Run one with /skill');
       return lines.join('\n');
     },
