@@ -1,0 +1,82 @@
+name: Release
+
+# Cutting a release is `git tag vX.Y.Z && git push origin vX.Y.Z`. Everything
+# below is derived from the tag: the version is checked against package.json,
+# the notes come out of CHANGELOG.md, and the artifact is whatever `npm pack`
+# produces from the `files` list — the same tarball a publish would upload, so
+# what people download is what they would have installed.
+#
+# Publishing to npm and building container images are deliberately not here.
+# Add them when there is a token and a decision to stand behind them.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: verify / build / publish release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.2.0'
+
+      - name: Resolve version from tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # A tag that disagrees with package.json produces a release whose
+      # artifact is named after a different version than the release itself.
+      # Cheaper to stop here than to explain it afterwards.
+      - name: Check the tag matches package.json
+        run: |
+          tagged='${{ steps.version.outputs.value }}'
+          packaged="$(bun --print 'require("./package.json").version')"
+          if [ "$tagged" != "$packaged" ]; then
+            echo "tag v$tagged does not match package.json $packaged" >&2
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The same gates as ci.yml. A tag is not a reason to skip them; it is the
+      # one time they matter most.
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Test
+        run: bun run test
+
+      - name: Coverage
+        run: bun run test:coverage
+
+      - name: Build
+        run: bun run build
+
+      - name: Extract release notes
+        run: bun scripts/release-notes.ts '${{ steps.version.outputs.value }}' > RELEASE_NOTES.md
+
+      # `files` in package.json decides what lands here; dist/ is gitignored,
+      # so this has to run after the build step above.
+      - name: Pack the tarball
+        run: npm pack --pack-destination .
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file RELEASE_NOTES.md \
+            ./*.tgz

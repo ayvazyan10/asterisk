@@ -17,6 +17,23 @@ while [[ -L "$SOURCE" ]]; do
   fi
 done
 ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+
+# The bundles are built with `target: bun` and every entrypoint below execs
+# `bun`, so a missing Bun is a hard stop rather than a fallback to node. Worth
+# saying out loud: installing from npm does not bring Bun with it.
+if ! command -v bun >/dev/null 2>&1; then
+  cat >&2 <<'MISSING_BUN'
+asterisk: Bun is required but was not found on PATH.
+
+Asterisk's bundles target the Bun runtime, so Node cannot run them.
+Install Bun and try again:
+
+  curl -fsSL https://bun.sh/install | bash
+
+Other install methods: https://bun.sh
+MISSING_BUN
+  exit 127
+fi
 DIST_CLI="$ROOT/dist/cli.js"
 DIST_DAEMON="$ROOT/dist/daemon.js"
 DIST_CONTROL="$ROOT/dist/control.js"

@@ -1,6 +1,6 @@
 {
-  "name": "asterisk",
-  "version": "0.1.0",
+  "name": "@ayvazyan10/asterisk",
+  "version": "0.2.0",
   "description": "Asterisk \u2014 lightweight, personal AI assistant with Ollama-first model support, daemon controls, and Telegram/WhatsApp bot bridges.",
   "license": "Apache-2.0",
   "type": "module",
@@ -8,6 +8,32 @@
   "bin": {
     "asterisk": "./bin/asterisk"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ayvazyan10/asterisk.git"
+  },
+  "homepage": "https://github.com/ayvazyan10/asterisk#readme",
+  "bugs": {
+    "url": "https://github.com/ayvazyan10/asterisk/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "!dist/**/*.map",
+    "src/",
+    "scripts/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "PROVENANCE.md"
+  ],
+  "os": [
+    "linux",
+    "darwin"
+  ],
   "scripts": {
     "build": "bun scripts/build.ts",
     "typecheck": "tsc --noEmit",
@@ -17,7 +43,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "bun src/entrypoints/cli.tsx",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "bun run build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",

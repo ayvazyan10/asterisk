@@ -15,3 +15,6 @@ bun.lockb
 # Local-only Claude Code project memory (per-machine; not for the public repo)
 CLAUDE.md
 .claude/
+
+# npm pack output
+*.tgz

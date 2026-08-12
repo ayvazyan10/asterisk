@@ -60,6 +60,22 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ayvazyan10/asterisk/master/u
 
 Your `~/.asterisk/` config is preserved unless you delete it explicitly.
 
+### From npm
+
+```bash
+npm install -g @ayvazyan10/asterisk
+```
+
+Published under a scope because the bare `asterisk` name on npm belongs to an
+unrelated package. **Bun must already be installed** — the bundles target the
+Bun runtime, and npm will not bring it along; the `asterisk` command stops with
+an install hint if it can't find Bun. Browser tools also need a one-off
+`bun playwright install chromium`. The one-line installer above handles both
+for you, which is why it stays the recommended path.
+
+macOS and Linux only, including WSL. The `asterisk` command is a bash
+dispatcher, so Windows without WSL is not supported.
+
 ### From source
 
 ```bash
