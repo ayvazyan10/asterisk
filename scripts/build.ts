@@ -1,4 +1,4 @@
-// Bun bundler entry — produces dist/{cli,daemon,control,configure,update,web}.js.
+// Bun bundler entry — produces dist/{cli,daemon,control,configure,update,web,acp,eval}.js.
 // Reference: https://bun.sh/docs/bundler
 
 import { mkdir } from 'node:fs/promises';
@@ -44,6 +44,8 @@ const result = await Bun.build({
     resolve(root, 'src/entrypoints/configure.tsx'),
     resolve(root, 'src/entrypoints/update.ts'),
     resolve(root, 'src/entrypoints/web.ts'),
+    resolve(root, 'src/entrypoints/acp.ts'),
+    resolve(root, 'src/entrypoints/eval.ts'),
   ],
   outdir,
   target: 'bun',
