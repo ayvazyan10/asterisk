@@ -116,17 +116,35 @@ export function readSecrets(
   return out;
 }
 
-/** Writes secrets to the database. Empty values delete the key. */
+/**
+ * Upserts the secrets present in `secrets`. An explicit empty string deletes
+ * that key; a key that is simply absent is left alone.
+ *
+ * The distinction matters. This used to iterate SECRET_KEYS and delete every
+ * key the caller had not supplied, which made a partial update silently
+ * destroy the other credentials — saving an Anthropic key from a form that
+ * did not also carry the Telegram and WhatsApp tokens wiped them. Callers
+ * happened to be safe only because they spread the full existing set back in.
+ * Use `deleteSecrets` to remove keys deliberately.
+ */
 export function writeSecrets(
   db: SqliteDriver,
   secrets: Partial<Record<SecretKey, string>>,
 ): void {
   db.transaction(() => {
     for (const key of SECRET_KEYS) {
+      if (!(key in secrets)) continue;
       const value = secrets[key];
       if (value === undefined || value === '') deleteSecret(db, key);
       else setSecret(db, key, value);
     }
+  });
+}
+
+/** Removes `keys` from the secret store. The explicit counterpart to writeSecrets. */
+export function deleteSecrets(db: SqliteDriver, keys: readonly SecretKey[]): void {
+  db.transaction(() => {
+    for (const key of keys) deleteSecret(db, key);
   });
 }
 

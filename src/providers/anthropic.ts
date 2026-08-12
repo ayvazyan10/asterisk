@@ -114,23 +114,34 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
   };
 }
 
-function mapAnthropicError(e: unknown): ProviderError {
+export function mapAnthropicError(e: unknown): ProviderError {
   if ((e as Error)?.name === 'AbortError') {
     return new ProviderError('aborted', 'request aborted', { cause: e });
+  }
+  // APIConnectionError extends APIError in the SDK, so this check has to come
+  // first. With the order reversed the connection branch below was unreachable
+  // and every DNS failure, TLS reset and refused connection fell through to
+  // classifyHttpError(0, …) → kind 'unknown', which is not in RETRYABLE_KINDS.
+  // The most common transient failure there is bypassed the retry machinery
+  // entirely and failed the turn on the first attempt.
+  if (e instanceof Anthropic.APIConnectionError) {
+    return new ProviderError('network', e.message ?? 'network error', { cause: e });
   }
   if (e instanceof Anthropic.APIError) {
     const headers = (e.headers ?? {}) as Record<string, string>;
     const retryAfterRaw = headers['retry-after'] ?? headers['Retry-After'];
     const retryAfterSeconds = retryAfterRaw ? Number.parseInt(retryAfterRaw, 10) : undefined;
     const body = typeof e.message === 'string' ? e.message : '';
+    // A status of 0/undefined means the request never reached the API, so it is
+    // a network failure regardless of which error class carried it.
+    if (!e.status) {
+      return new ProviderError('network', e.message ?? 'network error', { cause: e });
+    }
     return classifyHttpError(
-      e.status ?? 0,
+      e.status,
       body,
       Number.isFinite(retryAfterSeconds) ? retryAfterSeconds : undefined,
     );
-  }
-  if (e instanceof Anthropic.APIConnectionError) {
-    return new ProviderError('network', e.message ?? 'network error', { cause: e });
   }
   return new ProviderError('unknown', (e as Error)?.message ?? 'unknown error', { cause: e });
 }

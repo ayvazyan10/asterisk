@@ -23,6 +23,53 @@ export interface ConnectedMcpServer {
   close(): Promise<void>;
 }
 
+/**
+ * Variables a spawned MCP server needs to function at all.
+ *
+ * Everything else is withheld. An MCP server is third-party code the user
+ * installed by name, and it runs with the user's privileges; handing it the
+ * whole environment handed it ANTHROPIC_API_KEY, the Telegram bot token,
+ * GITHUB_TOKEN, AWS_* and every other credential in the shell that started
+ * Asterisk. A server that genuinely needs a secret should be given it
+ * explicitly through the server's own `env` block, where it is visible in
+ * `/mcp` and in the control panel.
+ */
+const STDIO_ENV_ALLOWLIST = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'LC_ALL',
+  'TMPDIR',
+  'TEMP',
+  'TMP',
+  'TZ',
+  'TERM',
+  // Windows needs these to resolve interpreters and temp storage at all.
+  'SystemRoot',
+  'COMSPEC',
+  'PATHEXT',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'USERPROFILE',
+  'ProgramData',
+  'ProgramFiles',
+] as const;
+
+/** Builds the environment for a stdio MCP server: allowlist plus its own env. */
+export function stdioEnv(configured: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of STDIO_ENV_ALLOWLIST) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  // The server's declared env wins — that is the supported way to pass a
+  // credential to one specific server.
+  return { ...env, ...configured };
+}
+
 export async function connectMcpServer(
   config: McpServerConfig,
 ): Promise<ConnectedMcpServer> {
@@ -32,7 +79,7 @@ export async function connectMcpServer(
     const transport = new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env: { ...process.env, ...config.env } as Record<string, string>,
+      env: stdioEnv(config.env),
     });
     await client.connect(transport);
   } else {

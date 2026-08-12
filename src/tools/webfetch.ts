@@ -6,6 +6,7 @@
 
 import { request } from 'undici';
 
+import { checkOutboundUrl } from './ssrf-guard.ts';
 import { type Tool, ok, err } from './types.ts';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -35,7 +36,11 @@ export const webFetchTool: Tool = {
   async execute(input, opts) {
     const url = typeof input['url'] === 'string' ? input['url'] : '';
     if (!url) return err('url is required');
-    if (!/^https?:\/\//i.test(url)) return err('url must be http(s)');
+    // The URL can originate from a page the agent just read or a message a
+    // stranger sent the bot, so it is untrusted input aimed at the host's own
+    // network. See ssrf-guard.ts.
+    const guard = checkOutboundUrl(url);
+    if (guard.reason) return err(guard.reason);
 
     const timeoutMs = Math.min(
       Math.max(typeof input['timeoutMs'] === 'number' ? input['timeoutMs'] : DEFAULT_TIMEOUT_MS, 1_000),
