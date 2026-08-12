@@ -145,6 +145,24 @@ export const MIGRATIONS: readonly Migration[] = [
       DROP TABLE IF EXISTS model_pricing;
     `,
   },
+  {
+    version: 4,
+    name: 'command-permissions',
+    sql: `
+      -- Bash rules the user answered "always allow" to. Kept out of the
+      -- settings table because these are grants, not preferences: they are
+      -- append-only in practice, carry their own provenance, and want to be
+      -- listable and revocable one at a time.
+      --
+      -- The rule text is the matcher from tools/bash-permissions.ts — words
+      -- matched positionally against [bin, ...args], e.g. 'npm test'.
+      CREATE TABLE command_permissions (
+        rule       TEXT PRIMARY KEY,
+        granted_by TEXT NOT NULL DEFAULT 'repl',
+        created_at INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 interface MigrationRow {

@@ -14,6 +14,7 @@ import type { McpManager } from '../mcp/manager.ts';
 import { findOutputStyle } from '../output-styles/styles.ts';
 import { loadRules } from '../rules/loader.ts';
 import { loadSouls } from '../soul/loader.ts';
+import { type ApprovalRequest, onApprovalRequest, resolveApproval } from '../tools/approval.ts';
 import {
   type AskQuestion,
   answerAskQuestion,
@@ -68,6 +69,7 @@ export function App({ initialProvider, state, mcp }: Props) {
   const [workingSince, setWorkingSince] = useState<number | null>(null);
   const [workingStatus, setWorkingStatus] = useState<string>('thinking');
   const [askQuestion, setAskQuestion] = useState<AskQuestion | null>(null);
+  const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   // Side-question queue: messages the user typed while the agent was busy.
   // Drained automatically when the current turn ends.
   const queueRef = useRef<string[]>([]);
@@ -80,6 +82,13 @@ export function App({ initialProvider, state, mcp }: Props) {
   // the tool's promise via answerAskQuestion.
   useEffect(() => {
     return onAskQuestion((q) => setAskQuestion(q));
+  }, []);
+
+  // Bash permission requests. Subscribing here is also what tells the gate a
+  // human is reachable at all — with no listener it stops asking and applies
+  // the headless default instead.
+  useEffect(() => {
+    return onApprovalRequest((req) => setApproval(req));
   }, []);
 
   const menuOpen = !modal && input.startsWith('/');
@@ -571,7 +580,61 @@ export function App({ initialProvider, state, mcp }: Props) {
         </Box>
       ) : null}
       <Box flexDirection="column" marginTop={1}>
-        {askQuestion ? (
+        {approval ? (
+          <ListPicker
+            key={approval.id}
+            spec={{
+              kind: 'list',
+              title: [
+                '🔒  Approve this command?',
+                '',
+                `    ${approval.command}`,
+                '',
+                `    Needs approval because ${approval.reason}.`,
+                '    Approving runs it with your full privileges — this is a consent',
+                '    check, not a sandbox.',
+              ].join('\n'),
+              items: [
+                {
+                  value: 'allow-once',
+                  label: 'Allow once',
+                  description: 'Run it this time only.',
+                },
+                {
+                  value: 'allow-always',
+                  label: 'Allow always',
+                  description:
+                    approval.rules.length > 0
+                      ? `Remember ${approval.rules.join(', ')} and stop asking.`
+                      : 'Remember this command and stop asking.',
+                },
+                {
+                  value: 'deny',
+                  label: 'Deny',
+                  description: 'Refuse, and tell the agent not to retry.',
+                },
+              ],
+              onPick: (v) => {
+                resolveApproval(approval.id, v as 'allow-once' | 'allow-always' | 'deny');
+                setApproval(null);
+                return null;
+              },
+              onCancel: () => {
+                resolveApproval(approval.id, 'deny');
+                setApproval(null);
+                return null;
+              },
+            }}
+            onPick={(v) => {
+              resolveApproval(approval.id, v as 'allow-once' | 'allow-always' | 'deny');
+              setApproval(null);
+            }}
+            onCancel={() => {
+              resolveApproval(approval.id, 'deny');
+              setApproval(null);
+            }}
+          />
+        ) : askQuestion ? (
           askQuestion.options && askQuestion.options.length > 0 ? (
             <ListPicker
               key={askQuestion.id}

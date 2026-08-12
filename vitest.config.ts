@@ -16,11 +16,13 @@ export default defineConfig({
       // points below what was declared. They now sit just under the measured
       // values so the gate is real and blocks regressions; raise them as
       // coverage improves. Target remains 60/60/50/60.
+      // Ratcheted up with the Bash permission work (measured 49.01 / 47.51 /
+      // 41.54 / 50.08); the new modules sit at 87–100%.
       thresholds: {
-        lines: 47,
-        functions: 44,
-        branches: 38,
-        statements: 46,
+        lines: 48,
+        functions: 46,
+        branches: 40,
+        statements: 49,
       },
     },
   },

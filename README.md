@@ -23,7 +23,7 @@ layered multi-language rules, switchable output styles
 (default / concise / explanatory / learning), a SOUL.md persona
 system that bot users can manage per-chat, and an agent loop
 hardened with tool concurrency, context compaction, prompt caching,
-bash safety guards, file history, and conversation persistence.
+a Bash permission boundary, file history, and conversation persistence.
 
 ## Install
 
@@ -176,6 +176,7 @@ authentication is refused outright.
 | `/plan`            | Toggle Plan Mode (read-only research mode)                  |
 | `/tasks`           | List the agent's in-flight tasks for this session           |
 | `/hooks`           | Manage agent-loop lifecycle hooks (visual)                  |
+| `/permissions`     | Inspect and edit what `Bash` may run without asking         |
 | `/doctor`          | Diagnostics — checks Ollama, Anthropic, system tools, MCP   |
 | `/quit`            | Exit the REPL                                               |
 
@@ -485,7 +486,8 @@ src/
 │                    # browser/ (Playwright) · webfetch · websearch ·
 │                    # tasks · subagent · planmode · worktree · notify ·
 │                    # monitor · ask · schedule · tool-search ·
-│                    # bash-safety · concurrency
+│                    # approval · bash-gate · bash-permissions ·
+│                    # command-parse · bash-safety · concurrency
 ├── commands/        # slash command registry (visual flows)
 ├── config/          # zod schema · loader · interactive wizard
 ├── daemon/          # pidfile · logger · lifecycle · scheduler
@@ -550,6 +552,13 @@ the panel's **Download JSON** button produces and **Upload JSON** accepts:
     }
   },
   "daemon": { "logLevel": "info", "heartbeatSeconds": 60 },
+  "permissions": {                            // what Bash may run — see "Permissions"
+    "mode": "ask",                            // "ask" | "allowlist" | "unrestricted"
+    "allow": [],                              // extra rules, e.g. ["npm test", "docker ps"]
+    "deny": [],                               // refused outright, beats every allow
+    "headless": "deny",                       // daemon / bots, where nobody can answer
+    "timeoutSeconds": 90
+  },
   "web": {
     "host": "127.0.0.1",
     "port": 4321,
@@ -584,6 +593,64 @@ behaviour, where `secrets.env` won.
 
 Override the config root with `ASTERISK_HOME=/path/to/dir`.
 
+## Permissions
+
+**This is a consent boundary, not a sandbox.** An approved command runs as
+a normal child process with the full privileges of the user who started
+Asterisk. What the boundary buys is that nothing with unreviewed effects
+runs without someone saying yes — it is not containment, and a command you
+approve can do anything you could do.
+
+Read-only commands run immediately. Anything else prompts:
+
+```
+🔒  Approve this command?
+
+    npm test -- --coverage
+
+    Needs approval because "npm test -- --coverage" is not on the allowlist.
+
+  › Allow once      Run it this time only.
+    Allow always    Remember npm test and stop asking.
+    Deny            Refuse, and tell the agent not to retry.
+```
+
+Commands are split into the segments the shell would actually run before any
+rule is consulted, so `git status && rm -rf ~` needs approval even though
+`git status` alone does not. Anything the parser cannot statically resolve —
+command substitution, backticks, variable expansion, here-docs, subshells,
+redirection to a real path — is never auto-approved, whatever the rules say.
+Rules are matched positionally and are path-sensitive: a rule for `git` does
+not hand approval to `./git`.
+
+| `permissions.mode` | Behaviour                                              |
+| ------------------ | ------------------------------------------------------ |
+| `ask` (default)    | Allowlisted commands run; everything else prompts       |
+| `allowlist`        | Anything not allowlisted is refused, never prompted     |
+| `unrestricted`     | No boundary — the pre-0.4 behaviour, opt in explicitly  |
+
+**Unattended runs.** The daemon and the bot bridges have nobody to prompt, so
+`permissions.headless` decides for them. It defaults to `deny`: a command that
+would have prompted is refused, with a message telling the user which rule to
+add. Set it to `allow` only if you accept that unattended sessions then have
+no boundary at all.
+
+Manage it with `/permissions` in the REPL, or the **Permissions** section of
+`asterisk web`:
+
+```bash
+/permissions                    # effective policy, config rules, remembered grants
+/permissions builtin            # the built-in read-only set
+/permissions allow "npm test"   # add a rule
+/permissions deny  "git push"   # refuse outright, ahead of every allow
+/permissions revoke             # pick a remembered grant to forget
+```
+
+The 14-regex denylist in `bash-safety.ts` still runs first, but it is defence
+in depth rather than the boundary: `rm -r -f /`, `$(echo rm) -rf /` and
+`sh -c '…'` all walk straight through it. The permission gate is what stops
+them.
+
 ## Reliability
 
 The agent loop wraps every model call in retry logic with exponential
@@ -603,15 +670,16 @@ and clear the message queue.
 - **Tool concurrency** — concurrency-safe tools (Read, Grep, Glob,
   WebFetch, WebSearch, …) run in parallel via `Promise.all` when the
   model emits multiple in one turn.
-- **Context compaction** — when estimated tokens exceed 80k, old tool
-  results and long text blocks are truncated while keeping the 6 most
-  recent messages intact.
+- **Context compaction** — the budget is 60% of the context window the
+  active provider reports. Over it, old tool results and long text blocks
+  are truncated while keeping the 6 most recent messages intact.
 - **Large result persistence** — tool outputs > 8 KB are saved to
   `~/.asterisk/outputs/` with a 500-char preview kept in context.
 - **Prompt caching** — Anthropic provider sends the system prompt with
   `cache_control: { type: 'ephemeral' }` for cross-turn caching.
-- **Bash safety** — dangerous command patterns (rm -rf /, fork bombs,
-  curl|bash, secrets in args) are blocked before execution.
+- **Bash permissions** — read-only commands run; anything else needs the
+  user's approval. See [Permissions](#permissions), including what it
+  deliberately does not promise.
 - **File history** — Write/Edit tools snapshot files before overwriting;
   stored in `~/.asterisk/file-history/`.
 - **Conversation persistence** — daemon saves per-chat history to
@@ -631,6 +699,11 @@ coordinator, and others.
   (7-day expiry), but task lists do not.
 - No image content blocks back to the model, so it can't *see* the
   screenshots it captures (tracked).
+- **No sandbox.** [Permissions](#permissions) gate *whether* a command runs;
+  nothing constrains what it does once approved. `Read`, `Write` and `Edit`
+  are outside that gate entirely — they are bounded only by the workspace
+  guard (`ASTERISK_NO_WORKSPACE_GUARD` disables it). An OS-level sandbox
+  backend is still open work.
 
 ## Provenance
 

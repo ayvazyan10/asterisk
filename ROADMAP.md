@@ -3,11 +3,12 @@
 Forward-looking work, ranked by priority within each tier. Items move from
 here into commits as they ship.
 
-## Tier 1 — cleared
+## Tier 1
 
-Everything that was in Tier 1 has either shipped or been dropped. The next
-items to promote come from Tier 2 — image content blocks and the multi-agent
-coordinator are the two with real demand behind them.
+The original Tier 1 has shipped or been dropped. What remains at this tier is
+the **OS-level sandbox** below — the permission boundary that shipped covers
+consent, not containment. After that, the next items to promote come from
+Tier 2: image content blocks and the multi-agent coordinator.
 
 ### ~~Skill marketplace~~ — dropped
 Cut on 2026-07-31. The bundled set stays the whole story; skills are still
@@ -53,21 +54,40 @@ Keeps the catalogue navigable without losing reach.
 
 </details>
 
-### ~~Token / cost tracking~~ ✓ shipped
-Both providers now report usage — Ollama's `prompt_eval_count` /
-`eval_count` were previously discarded. The agent loop sums usage across
-every model call in a turn and writes one row to the `usage` table.
+### ~~Token / cost tracking~~ — shipped, then removed
+Shipped as `/cost`, `/usage`, a Telegram command and a web panel tab, then
+removed wholesale in `bdbd2b7` along with the `usage` and `model_pricing`
+tables (migration 3 drops them). The numbers were estimates dressed as
+accounting: local models are free, hosted rates drift, and nothing in the
+product acted on the figure. Not planned for return.
 
-- `/cost` — session, today, last 7d, lifetime, plus a per-model split.
-- `/usage [days]` — day / week / month rollups and a daily chart.
-- Telegram `/cost`, scoped to the calling chat.
-- Web panel **Usage & cost** tab, with an editable per-model rate table
-  seeded from Anthropic's published prices.
-- Local models are recorded at zero cost; a paid model with no configured
-  rate is counted in tokens and flagged `unpriced` rather than silently
-  treated as free.
+### ~~Bash permission boundary~~ ✓ shipped
+The Bash tool now runs read-only commands directly and asks the user about
+everything else. Commands are split into the segments bash would actually
+run before any rule is consulted, so a chained command is judged as a whole
+and constructs that defeat static analysis — command substitution, variable
+expansion, here-docs, subshells, redirection to a real path — are never
+auto-approved. `permissions.mode` picks between `ask`, `allowlist` and
+`unrestricted`; unattended runs answer from `permissions.headless`, which
+defaults to refusing. Manage it with `/permissions`.
 
-Not done: the optional alert hook for crossing a spend threshold.
+This is a consent boundary and nothing more. See **OS-level sandbox** below
+for the half that is still open.
+
+### OS-level sandbox for tool execution
+**Status:** not started · **Effort:** large
+
+The permission gate decides *whether* a command runs. Nothing constrains
+what it does once approved, and `Read` / `Write` / `Edit` bypass the gate
+entirely because they execute in-process — only the workspace guard bounds
+them, and `ASTERISK_NO_WORKSPACE_GUARD=1` turns that off.
+
+A real boundary needs a kernel-level backend: `bubblewrap` on Linux,
+`sandbox-exec` (seatbelt) on macOS, with `none` as an explicit opt-out and
+graceful degradation when neither is installed. Read-only bind of `/`,
+writable binds for the workspace plus `~/.asterisk/outputs` and a temp dir,
+and an optional network unshare. The in-process file tools need a path
+policy over the same rules, since no child-process sandbox can cover them.
 
 ### ~~Streaming for the REPL~~ ✓ shipped
 Provider streaming wired into the REPL transcript via `onAssistantDelta`.
@@ -99,9 +119,20 @@ content blocks (and Ollama's vision models when present) so the agent
 can *read* its own screenshots.
 
 ### ~~Model-side context compaction~~ ✓ shipped
-`compactHistory()` runs at the top of each turn. When estimated tokens
-exceed 80k, compacts old tool results and long text blocks while
-keeping the 6 most recent messages intact.
+`compactHistory()` runs at the top of each turn against a budget of 60% of
+the window the active provider reports, compacting old tool results and long
+text blocks while keeping the 6 most recent messages intact. The original
+hard-coded 80k threshold sat above Ollama's default 65,536 window, so on a
+stock install the feature could never fire; `53ce875` fixed that.
+
+### Real tokenizer for the compaction budget
+**Status:** not started · **Effort:** medium
+
+The budget is still computed from a `chars/4` estimate, which under-counts
+code and badly under-counts CJK — exactly the inputs most likely to overflow
+a window. The 60% budget absorbs some of the error, but the honest fix is to
+count with the model's own tokenizer where one is available and fall back to
+the estimate elsewhere.
 
 ### ~~Ctrl+C / ESC abort in the REPL~~ ✓ shipped
 ESC key aborts in-flight turns, clears the message queue. AbortSignal

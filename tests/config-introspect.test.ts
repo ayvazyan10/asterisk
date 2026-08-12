@@ -84,6 +84,7 @@ describe('settings registry', () => {
       'bots',
       'daemon',
       'web',
+      'permissions',
       'outputStyle',
     ]);
   });

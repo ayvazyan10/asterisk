@@ -216,6 +216,45 @@ const WebSchema = z.object({
     .describe('Open the panel in the default browser on start.'),
 });
 
+// Who may run what through the Bash tool. This is a consent boundary, not a
+// sandbox: an approved command runs with the full privileges of the user who
+// started Asterisk. See tools/bash-permissions.ts for the rule syntax.
+const PermissionsSchema = z.object({
+  mode: z
+    .enum(['ask', 'allowlist', 'unrestricted'])
+    .default('ask')
+    .describe(
+      'ask — run allowlisted commands, prompt for the rest. allowlist — refuse anything not allowlisted, never prompt. unrestricted — no boundary at all.',
+    ),
+  allow: z
+    .array(z.string())
+    .default([])
+    .describe(
+      'Extra rules that run without asking, on top of the built-in read-only set. Words are matched positionally against the command, e.g. "npm test" or "docker ps".',
+    ),
+  deny: z
+    .array(z.string())
+    .default([])
+    .describe(
+      'Rules that are refused outright, without a prompt. Overrides every allow rule, including the built-in ones.',
+    ),
+  headless: z
+    .enum(['deny', 'allow'])
+    .default('deny')
+    .describe(
+      'What to do when nobody can answer — the daemon and the bot bridges. "deny" keeps the boundary; "allow" removes it for every unattended run.',
+    ),
+  timeoutSeconds: z
+    .number()
+    .int()
+    .min(5)
+    .max(110)
+    .default(90)
+    .describe(
+      'How long an approval prompt waits before refusing. Must stay under the agent loop tool deadline of 120s.',
+    ),
+});
+
 // Hooks fire at agent-loop lifecycle events. Each hook is a shell command
 // run with the event payload on stdin (JSON). Stdout is logged into the
 // transcript as a system note; non-zero exit logs the stderr too.
@@ -279,6 +318,7 @@ export const ConfigSchema = z.object({
   bots: BotsSchema.default({}),
   daemon: DaemonSchema.default({}),
   web: WebSchema.default({}),
+  permissions: PermissionsSchema.default({}),
   outputStyle: OutputStyleSchema.default('default').describe(
     'Behaviour modifier spliced into the system prompt.',
   ),

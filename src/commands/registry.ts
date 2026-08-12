@@ -32,6 +32,7 @@ import { listTools, setExtraTools } from '../tools/registry.ts';
 import { _allTasks } from '../tools/tasks.ts';
 import type { Provider } from '../types/messages.ts';
 import { getVersion } from '../version.ts';
+import { permissionsCommand } from './permissions.ts';
 
 export type { CommandResult } from '../repl/forms/types.ts';
 
@@ -555,6 +556,7 @@ export const COMMANDS: SlashCommand[] = [
       return `unknown /hooks verb: ${verb}`;
     },
   },
+  permissionsCommand,
   {
     name: '/agents',
     description: 'List specialised sub-agent types you can dispatch via the Agent tool',
