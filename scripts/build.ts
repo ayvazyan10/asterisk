@@ -1,4 +1,5 @@
-// Bun bundler entry — produces dist/{cli,daemon,control,configure,update,web,acp,eval}.js.
+// Bun bundler entry — produces
+// dist/{cli,daemon,control,configure,update,web,acp,eval,mcp-server}.js.
 // Reference: https://bun.sh/docs/bundler
 
 import { mkdir } from 'node:fs/promises';
@@ -46,8 +47,16 @@ const result = await Bun.build({
     resolve(root, 'src/entrypoints/web.ts'),
     resolve(root, 'src/entrypoints/acp.ts'),
     resolve(root, 'src/entrypoints/eval.ts'),
+    resolve(root, 'src/entrypoints/mcp-server.ts'),
   ],
   outdir,
+  // Pinned, not inferred. Bun derives the output root from the entrypoints,
+  // and from the ninth one onwards (measured on 1.3.13) it stops flattening
+  // and mirrors the source tree instead — dist/src/entrypoints/cli.js rather
+  // than dist/cli.js, which is every path in bin/asterisk missing at once.
+  // Naming it makes the layout a property of this file instead of a property
+  // of how many entrypoints happen to be listed above.
+  root: resolve(root, 'src/entrypoints'),
   target: 'bun',
   format: 'esm',
   minify,

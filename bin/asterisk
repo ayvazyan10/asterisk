@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Asterisk dispatcher — REPL by default, daemon subcommands handled here.
-# Subcommands: start | stop | restart | status | logs | configure | web | update
+# Subcommands: start | stop | restart | status | logs | configure | web |
+#              acp | eval | mcp-server | update
 # No subcommand → interactive REPL.
 
 set -euo pipefail
@@ -42,6 +43,7 @@ DIST_UPDATE="$ROOT/dist/update.js"
 DIST_WEB="$ROOT/dist/web.js"
 DIST_ACP="$ROOT/dist/acp.js"
 DIST_EVAL="$ROOT/dist/eval.js"
+DIST_MCP_SERVER="$ROOT/dist/mcp-server.js"
 SRC_CLI="$ROOT/src/entrypoints/cli.tsx"
 SRC_CONTROL="$ROOT/src/entrypoints/control.ts"
 SRC_CONFIGURE="$ROOT/src/entrypoints/configure.tsx"
@@ -49,6 +51,7 @@ SRC_UPDATE="$ROOT/src/entrypoints/update.ts"
 SRC_WEB="$ROOT/src/entrypoints/web.ts"
 SRC_ACP="$ROOT/src/entrypoints/acp.ts"
 SRC_EVAL="$ROOT/src/entrypoints/eval.ts"
+SRC_MCP_SERVER="$ROOT/src/entrypoints/mcp-server.ts"
 
 # Sensible defaults — local Ollama, telemetry off.
 export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
@@ -109,6 +112,13 @@ run_eval() {
   exec bun "$SRC_EVAL" "$@"
 }
 
+run_mcp_server() {
+  if [[ -f "$DIST_MCP_SERVER" ]]; then
+    exec bun "$DIST_MCP_SERVER" "$@"
+  fi
+  exec bun "$SRC_MCP_SERVER" "$@"
+}
+
 case "$cmd" in
   repl|"")
     run_cli "$@"
@@ -128,6 +138,9 @@ case "$cmd" in
   eval)
     run_eval "$@"
     ;;
+  mcp-server)
+    run_mcp_server "$@"
+    ;;
   update)
     run_update "$@"
     ;;
@@ -146,7 +159,11 @@ Usage:
   asterisk web [flags]    Web control panel for every setting
   asterisk acp            Serve the Agent Client Protocol on stdio (for editors)
   asterisk eval [flags]   Run the scenario evals (--live to use a real model)
+  asterisk mcp-server     Serve memory, skills and rules over MCP (stdio)
   asterisk update         Self-update to the latest version
+
+MCP server flags:
+  --read-only             Serve memory for search only; no writes or deletes
 
 Web panel flags:
   --port <n>              Override the configured port (default 4321)
