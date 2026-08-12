@@ -21,23 +21,35 @@ import type { Provider, ProviderResponse } from '../src/types/messages.ts';
  * permitted there. Without this the guard refuses every write to a temp path
  * and the gate under test is never reached — the tests would pass for the
  * wrong reason.
+ *
+ * ASTERISK_HOME is redirected too. These tests drive the real Write tool, which
+ * snapshots through file-history; without the redirect they wrote into the
+ * developer's actual ~/.asterisk.
  */
 function useTempWorkspace(): () => string {
   let dir = '';
-  let saved: string | undefined;
+  let home = '';
+  let savedWorkspace: string | undefined;
+  let savedHome: string | undefined;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'asterisk-gate-'));
-    saved = process.env['ASTERISK_WORKSPACE'];
+    home = mkdtempSync(join(tmpdir(), 'asterisk-gate-home-'));
+    savedWorkspace = process.env['ASTERISK_WORKSPACE'];
+    savedHome = process.env['ASTERISK_HOME'];
     process.env['ASTERISK_WORKSPACE'] = dir;
+    process.env['ASTERISK_HOME'] = home;
     _resetWorkspaceForTesting();
   });
 
   afterEach(() => {
-    if (saved === undefined) delete process.env['ASTERISK_WORKSPACE'];
-    else process.env['ASTERISK_WORKSPACE'] = saved;
+    if (savedWorkspace === undefined) delete process.env['ASTERISK_WORKSPACE'];
+    else process.env['ASTERISK_WORKSPACE'] = savedWorkspace;
+    if (savedHome === undefined) delete process.env['ASTERISK_HOME'];
+    else process.env['ASTERISK_HOME'] = savedHome;
     _resetWorkspaceForTesting();
     rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
   });
 
   return () => dir;

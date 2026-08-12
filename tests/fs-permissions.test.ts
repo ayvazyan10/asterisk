@@ -95,7 +95,15 @@ describe('owner-only state files', () => {
     expect(isExposed(join(home, 'conversations'))).toBe(false);
   });
 
-  it('leaves no group- or world-readable file anywhere under the state dir', () => {
+  it('leaves no group- or world-readable file anywhere under the state dir', async () => {
+    // Include file-history: copyFileSync carries the source file's mode, so a
+    // snapshot of a world-readable file used to stay world-readable.
+    const { recordFileChange } = await import('../src/agent/file-history.ts');
+    const loose = join(home, 'loose-source.txt');
+    writeFileSync(loose, 'API_KEY=sk-secret', { mode: 0o644 });
+    recordFileChange(loose, 'Write');
+    rmSync(loose, { force: true });
+
     const db = getDb();
     db.run('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)', [
       'probe',

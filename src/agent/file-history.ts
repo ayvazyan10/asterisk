@@ -1,6 +1,8 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
+
+import { OWNER_ONLY_FILE, ensureOwnerOnlyDir } from '../utils/fs-safe.ts';
 
 interface FileSnapshot {
   path: string;
@@ -14,7 +16,7 @@ let seqCounter = 0;
 
 function historyDir(): string {
   const dir = join(process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'), 'file-history');
-  mkdirSync(dir, { recursive: true });
+  ensureOwnerOnlyDir(dir);
   return dir;
 }
 
@@ -25,7 +27,11 @@ export function recordFileChange(filePath: string, tool: string): void {
   const safe = basename(filePath).replace(/[^a-zA-Z0-9._-]/g, '_');
   const backupPath = join(dir, `${ts}-${seqCounter++}-${safe}`);
   try {
+    // copyFileSync carries the *source* file's mode, so a snapshot of a
+    // world-readable file stayed world-readable — and these are verbatim copies
+    // of whatever the agent was about to overwrite, including .env files.
     copyFileSync(filePath, backupPath);
+    chmodSync(backupPath, OWNER_ONLY_FILE);
     snapshots.push({ path: filePath, timestamp: ts, tool, backupPath });
     if (snapshots.length > 200) snapshots.shift();
   } catch {
