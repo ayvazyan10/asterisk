@@ -41,12 +41,14 @@ DIST_CONFIGURE="$ROOT/dist/configure.js"
 DIST_UPDATE="$ROOT/dist/update.js"
 DIST_WEB="$ROOT/dist/web.js"
 DIST_ACP="$ROOT/dist/acp.js"
+DIST_EVAL="$ROOT/dist/eval.js"
 SRC_CLI="$ROOT/src/entrypoints/cli.tsx"
 SRC_CONTROL="$ROOT/src/entrypoints/control.ts"
 SRC_CONFIGURE="$ROOT/src/entrypoints/configure.tsx"
 SRC_UPDATE="$ROOT/src/entrypoints/update.ts"
 SRC_WEB="$ROOT/src/entrypoints/web.ts"
 SRC_ACP="$ROOT/src/entrypoints/acp.ts"
+SRC_EVAL="$ROOT/src/entrypoints/eval.ts"
 
 # Sensible defaults — local Ollama, telemetry off.
 export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
@@ -100,6 +102,13 @@ run_acp() {
   exec bun "$SRC_ACP" "$@"
 }
 
+run_eval() {
+  if [[ -f "$DIST_EVAL" ]]; then
+    exec bun "$DIST_EVAL" "$@"
+  fi
+  exec bun "$SRC_EVAL" "$@"
+}
+
 case "$cmd" in
   repl|"")
     run_cli "$@"
@@ -115,6 +124,9 @@ case "$cmd" in
     ;;
   acp)
     run_acp "$@"
+    ;;
+  eval)
+    run_eval "$@"
     ;;
   update)
     run_update "$@"
@@ -133,6 +145,7 @@ Usage:
   asterisk configure      Interactive config wizard
   asterisk web [flags]    Web control panel for every setting
   asterisk acp            Serve the Agent Client Protocol on stdio (for editors)
+  asterisk eval [flags]   Run the scenario evals (--live to use a real model)
   asterisk update         Self-update to the latest version
 
 Web panel flags:
