@@ -21,8 +21,6 @@ const state = {
   audit: [],
   logText: '',
   doctor: null,
-  usage: null,
-  pricing: [],
   editor: { kind: null, path: null, content: '', original: '' },
   loaded: new Set(),
 };
@@ -99,7 +97,6 @@ async function guard(fn, successMessage) {
 const TABS = [
   { group: 'Monitor', items: [
     { id: 'overview', label: 'Overview' },
-    { id: 'usage', label: 'Usage & cost' },
     { id: 'doctor', label: 'Diagnostics' },
     { id: 'logs', label: 'Daemon log' },
     { id: 'audit', label: 'Audit trail' },

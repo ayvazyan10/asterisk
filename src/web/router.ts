@@ -33,7 +33,6 @@ import {
   getTokens,
   postToken,
 } from './api/system.ts';
-import { deleteUsage, getPricing, getUsage, putPricing, removePricing } from './api/usage.ts';
 import type { Handler } from './http.ts';
 
 export interface Route {
@@ -47,12 +46,6 @@ export const ROUTES: readonly Route[] = [
   { method: 'GET', pattern: '/api/doctor', handler: getDoctor },
   { method: 'GET', pattern: '/api/logs', handler: getLogs },
   { method: 'GET', pattern: '/api/audit', handler: getAudit },
-
-  { method: 'GET', pattern: '/api/usage', handler: getUsage },
-  { method: 'DELETE', pattern: '/api/usage', handler: deleteUsage },
-  { method: 'GET', pattern: '/api/pricing', handler: getPricing },
-  { method: 'PUT', pattern: '/api/pricing', handler: putPricing },
-  { method: 'DELETE', pattern: '/api/pricing/:model', handler: removePricing },
 
   { method: 'GET', pattern: '/api/settings', handler: getSettings },
   { method: 'PATCH', pattern: '/api/settings', handler: patchSettings },

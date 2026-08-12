@@ -17,7 +17,6 @@ import type {
   Provider,
   ProviderRequest,
   ProviderResponse,
-  TokenUsage,
   ToolDefinition,
   ToolUseBlock,
 } from '../types/messages.ts';
@@ -61,12 +60,6 @@ interface WireMessage {
   tool_calls?: WireToolCall[];
 }
 
-interface WireUsage {
-  prompt_tokens?: number;
-  completion_tokens?: number;
-  prompt_tokens_details?: { cached_tokens?: number };
-}
-
 interface WireChoice {
   index?: number;
   message?: WireMessage;
@@ -76,7 +69,6 @@ interface WireChoice {
 
 interface WireResponse {
   choices?: WireChoice[];
-  usage?: WireUsage;
   error?: { message?: string };
 }
 
@@ -153,19 +145,6 @@ export function toOpenAiTools(tools: readonly ToolDefinition[]): unknown[] {
       parameters: t.input_schema,
     },
   }));
-}
-
-function usageFrom(usage: WireUsage | undefined): TokenUsage | undefined {
-  if (!usage) return undefined;
-  const input = usage.prompt_tokens;
-  const output = usage.completion_tokens;
-  const cached = usage.prompt_tokens_details?.cached_tokens;
-  if (typeof input !== 'number' && typeof output !== 'number') return undefined;
-  return {
-    ...(typeof input === 'number' ? { inputTokens: input } : {}),
-    ...(typeof output === 'number' ? { outputTokens: output } : {}),
-    ...(typeof cached === 'number' && cached > 0 ? { cacheReadInputTokens: cached } : {}),
-  };
 }
 
 /** Tool-call arguments arrive as JSON text; a malformed one must not kill the turn. */
@@ -257,7 +236,6 @@ export function createOpenAiCompatibleProvider(
         ...(maxTokens ? { max_tokens: maxTokens } : {}),
         // Without this the final SSE frame carries no usage, and cost
         // tracking silently records nothing for every streamed turn.
-        ...(streaming ? { stream_options: { include_usage: true } } : {}),
       };
 
       const ctrl = new AbortController();
@@ -325,14 +303,12 @@ export function createOpenAiCompatibleProvider(
         if (reasoning) req.onThinking?.(reasoning);
 
         const content = blocksFrom(message);
-        const usage = usageFrom(parsed.usage);
         return {
           content,
           stopReason: mapStopReason(
             choice?.finish_reason,
             content.some((b) => b.type === 'tool_use'),
           ),
-          ...(usage ? { usage } : {}),
         };
       } finally {
         clearTimeout(totalTimer);
@@ -359,7 +335,6 @@ async function readStream(
   let buf = '';
   let text = '';
   let finish: string | null | undefined;
-  let usage: TokenUsage | undefined;
   const toolCalls = new ToolCallBuffer();
 
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -388,8 +363,6 @@ async function readStream(
     } catch {
       return; // a truncated frame is not worth failing the turn over
     }
-
-    if (event.usage) usage = usageFrom(event.usage) ?? usage;
 
     const choice = event.choices?.[0];
     if (!choice) return;
@@ -457,6 +430,5 @@ async function readStream(
   return {
     content,
     stopReason: mapStopReason(finish, toolCalls.size > 0),
-    ...(usage ? { usage } : {}),
   };
 }

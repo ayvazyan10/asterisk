@@ -7,29 +7,8 @@ import type {
   Provider,
   ProviderRequest,
   ProviderResponse,
-  TokenUsage,
 } from '../types/messages.ts';
 import { ProviderError, classifyHttpError } from './errors.ts';
-
-/** Prompt-caching counters the API returns but the pinned SDK does not type. */
-interface CacheUsage {
-  cache_creation_input_tokens?: number | null;
-  cache_read_input_tokens?: number | null;
-}
-
-/** Present-only cache counters, shaped for exactOptionalPropertyTypes. */
-function cacheCounters(
-  usage: CacheUsage,
-): Pick<TokenUsage, 'cacheCreationInputTokens' | 'cacheReadInputTokens'> {
-  const out: Pick<TokenUsage, 'cacheCreationInputTokens' | 'cacheReadInputTokens'> = {};
-  if (typeof usage.cache_creation_input_tokens === 'number') {
-    out.cacheCreationInputTokens = usage.cache_creation_input_tokens;
-  }
-  if (typeof usage.cache_read_input_tokens === 'number') {
-    out.cacheReadInputTokens = usage.cache_read_input_tokens;
-  }
-  return out;
-}
 
 interface AnthropicConfig {
   apiKey: string;
@@ -122,20 +101,7 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
                 ? 'stop_sequence'
                 : 'unknown';
 
-      // The cache counters are returned by the API but absent from the pinned
-      // SDK's Usage type. Narrow structurally rather than with `any`, which the
-      // project's own style rules ban — and add the optional keys only when
-      // they are present, because exactOptionalPropertyTypes rejects an
-      // explicit undefined.
-      const usage: TokenUsage | undefined = response.usage
-        ? {
-            inputTokens: response.usage.input_tokens,
-            outputTokens: response.usage.output_tokens,
-            ...cacheCounters(response.usage as CacheUsage),
-          }
-        : undefined;
-
-      return { content, stopReason, ...(usage ? { usage } : {}) };
+      return { content, stopReason };
     },
   };
 }

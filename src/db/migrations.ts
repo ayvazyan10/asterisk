@@ -129,6 +129,22 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 3,
+    name: 'drop-usage-and-pricing',
+    sql: `
+      -- Token accounting and cost estimation were removed from the product.
+      -- Migration 2 is left in place because it has already been applied on
+      -- existing installs and migrations are never rewritten; this drops what
+      -- it created. Existing rows go with the tables — they described a
+      -- feature that no longer exists, and keeping per-turn token counts
+      -- around would be retaining data nothing reads.
+      DROP INDEX IF EXISTS idx_usage_at;
+      DROP INDEX IF EXISTS idx_usage_session;
+      DROP TABLE IF EXISTS usage;
+      DROP TABLE IF EXISTS model_pricing;
+    `,
+  },
 ];
 
 interface MigrationRow {

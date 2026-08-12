@@ -8,7 +8,6 @@
 import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
 import { type SqliteDriver, openDriver, restrictSidecars } from './driver.ts';
 import { migrate } from './migrations.ts';
-import { seedBuiltinPricing } from './pricing.ts';
 
 const open = new Map<string, SqliteDriver>();
 
@@ -33,7 +32,6 @@ export function getDb(file?: string): SqliteDriver {
   // WAL, which can recreate them, so re-restrict once the schema is settled.
   const db = openDriver(target);
   migrate(db);
-  seedBuiltinPricing(db);
   if (target !== ':memory:') restrictSidecars(target);
 
   open.set(target, db);

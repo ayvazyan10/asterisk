@@ -10,9 +10,7 @@ import { ConfigSchema } from '../src/config/schema.ts';
 import { readConfig, writeConfig } from '../src/config/store.ts';
 import { type SqliteDriver, openDriver } from '../src/db/driver.ts';
 import { migrate } from '../src/db/migrations.ts';
-import { seedBuiltinPricing } from '../src/db/pricing.ts';
 import { getSecret } from '../src/db/settings.ts';
-import { recordUsage } from '../src/db/usage.ts';
 import { issueToken, verifyToken } from '../src/web/auth.ts';
 import { matchRoute } from '../src/web/router.ts';
 import { createRequestHandler } from '../src/web/server.ts';
@@ -37,7 +35,6 @@ beforeEach(async () => {
 
   db = openDriver(':memory:');
   migrate(db);
-  seedBuiltinPricing(db);
   writeConfig(db, ConfigSchema.parse({}));
 
   const handler = createRequestHandler({ db, host: '127.0.0.1', port: 0, authRequired: false });
@@ -355,75 +352,6 @@ describe('config export and import', () => {
     expect(
       (await call('/api/config/import', send('POST', { config: { provider: 'nope' } }))).status,
     ).toBe(422);
-  });
-});
-
-describe('usage and pricing API', () => {
-  const seedTurn = () =>
-    recordUsage(db, {
-      sessionScope: 'repl',
-      sessionId: 'repl',
-      provider: 'anthropic',
-      model: 'claude-opus-5',
-      tokens: { inputTokens: 1_000_000, outputTokens: 1_000_000 },
-      modelCalls: 2,
-    });
-
-  it('reports totals, per-model rows and a daily series', async () => {
-    seedTurn();
-    const { status, body } = await call('/api/usage?days=7');
-
-    expect(status).toBe(200);
-    expect(body.days).toBe(7);
-    expect(body.byDay).toHaveLength(7);
-    expect(body.totals.lifetime).toMatchObject({ turns: 1, modelCalls: 2 });
-    expect(body.totals.lifetime.costUsd).toBeCloseTo(30, 6);
-    expect(body.byModel[0]).toMatchObject({ provider: 'anthropic', model: 'claude-opus-5' });
-  });
-
-  it('clamps the day window', async () => {
-    expect((await call('/api/usage?days=9999')).body.days).toBe(90);
-    expect((await call('/api/usage?days=0')).body.days).toBe(1);
-  });
-
-  it('serves seeded pricing and accepts an override', async () => {
-    const seeded = await call('/api/pricing');
-    expect(
-      seeded.body.pricing.find((p: { model: string }) => p.model === 'claude-opus-5'),
-    ).toMatchObject({ inputPerMTok: 5, outputPerMTok: 25, source: 'builtin' });
-
-    const saved = await call(
-      '/api/pricing',
-      send('PUT', { model: 'local/mixtral', inputPerMTok: 0.4, outputPerMTok: 0.9 }),
-    );
-    expect(saved.status).toBe(200);
-    // Cache rates are derived when not supplied.
-    expect(saved.body.pricing).toMatchObject({
-      cacheWritePerMTok: 0.5,
-      cacheReadPerMTok: 0.04000000000000001,
-      source: 'user',
-    });
-  });
-
-  it('rejects an invalid rate', async () => {
-    expect((await call('/api/pricing', send('PUT', { model: 'x' }))).status).toBe(400);
-    expect(
-      (await call('/api/pricing', send('PUT', { model: 'x', inputPerMTok: -1, outputPerMTok: 1 })))
-        .status,
-    ).toBe(400);
-  });
-
-  it('deletes a rate and 404s the second time', async () => {
-    await call('/api/pricing', send('PUT', { model: 'gone', inputPerMTok: 1, outputPerMTok: 2 }));
-    expect((await call('/api/pricing/gone', { method: 'DELETE' })).status).toBe(200);
-    expect((await call('/api/pricing/gone', { method: 'DELETE' })).status).toBe(404);
-  });
-
-  it('clears usage history', async () => {
-    seedTurn();
-    const cleared = await call('/api/usage', { method: 'DELETE' });
-    expect(cleared.body).toMatchObject({ ok: true, removed: 1 });
-    expect((await call('/api/usage')).body.totals.lifetime.turns).toBe(0);
   });
 });
 

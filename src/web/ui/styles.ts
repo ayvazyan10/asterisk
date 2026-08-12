@@ -385,7 +385,7 @@ pre.log {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
 
-/* --- usage chart + layout helpers (no inline styles; see CSP note) ------ */
+/* --- layout helpers (no inline styles; see CSP note) -------------------- */
 
 .bar-row { gap: 0.75rem; }
 .bar-label { width: 3.5rem; flex: none; }
@@ -395,7 +395,6 @@ pre.log {
 }
 .bar-fill { height: 100%; background: var(--signal); }
 .bar-tokens { width: 5rem; text-align: right; flex: none; }
-.bar-cost { width: 6rem; text-align: right; flex: none; }
 
 .pad { padding: 1.15rem; }
 .mt { margin-top: 0.75rem; }

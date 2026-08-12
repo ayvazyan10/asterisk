@@ -123,7 +123,7 @@ describe('message conversion', () => {
 });
 
 describe('non-streaming responses', () => {
-  it('returns text and usage', async () => {
+  it('returns text', async () => {
     respond(
       JSON.stringify({
         choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'hello' } }],
@@ -134,22 +134,6 @@ describe('non-streaming responses', () => {
     const res = await createOpenAiCompatibleProvider({ model: 'm' }).send(base);
     expect((res.content[0] as TextBlock).text).toBe('hello');
     expect(res.stopReason).toBe('end_turn');
-    expect(res.usage).toEqual({ inputTokens: 12, outputTokens: 3 });
-  });
-
-  it('maps cached prompt tokens to the cache-read counter', async () => {
-    respond(
-      JSON.stringify({
-        choices: [{ finish_reason: 'stop', message: { content: 'x' } }],
-        usage: {
-          prompt_tokens: 100,
-          completion_tokens: 5,
-          prompt_tokens_details: { cached_tokens: 64 },
-        },
-      }),
-    );
-    const res = await createOpenAiCompatibleProvider({ model: 'm' }).send(base);
-    expect(res.usage).toMatchObject({ cacheReadInputTokens: 64 });
   });
 
   it('converts tool_calls into tool_use blocks', async () => {
@@ -248,16 +232,6 @@ describe('requests', () => {
     expect(headers.authorization).toBe('Bearer sk-local');
   });
 
-  it('requests usage on streamed turns', async () => {
-    sse(['{"choices":[{"delta":{"content":"a"}}]}', '[DONE]']);
-    await createOpenAiCompatibleProvider({ model: 'm' }).send({ ...base, onText: () => {} });
-    const body = JSON.parse(String(lastRequest?.init.body));
-    // Without stream_options the final frame carries no usage and cost
-    // tracking records nothing for every streamed turn.
-    expect(body.stream_options).toEqual({ include_usage: true });
-    expect(body.stream).toBe(true);
-  });
-
   it('omits the tools key when there are none', async () => {
     respond(JSON.stringify({ choices: [{ message: { content: 'x' } }] }));
     await createOpenAiCompatibleProvider({ model: 'm' }).send(base);
@@ -291,7 +265,6 @@ describe('streaming', () => {
 
     expect(seen).toEqual(['Hel', 'lo']);
     expect((res.content[0] as TextBlock).text).toBe('Hello');
-    expect(res.usage).toEqual({ inputTokens: 18, outputTokens: 2 });
     expect(res.stopReason).toBe('end_turn');
   });
 

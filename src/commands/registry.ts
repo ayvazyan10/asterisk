@@ -32,7 +32,6 @@ import { listTools, setExtraTools } from '../tools/registry.ts';
 import { _allTasks } from '../tools/tasks.ts';
 import type { Provider } from '../types/messages.ts';
 import { getVersion } from '../version.ts';
-import { renderCost, renderUsage } from './usage-report.ts';
 
 export type { CommandResult } from '../repl/forms/types.ts';
 
@@ -262,23 +261,6 @@ export const COMMANDS: SlashCommand[] = [
         (t) => `  ${t.name.padEnd(24)} ${t.description.split('\n')[0]}`,
       );
       return ['Tools:', ...lines].join('\n');
-    },
-  },
-  {
-    name: '/cost',
-    description: 'Token spend for this session, today, and lifetime',
-    execute() {
-      return renderCost('repl', 'repl');
-    },
-  },
-  {
-    name: '/usage',
-    description: 'Token usage broken down by day, week, and month',
-    usage: '/usage [days]',
-    execute(_ctx, args) {
-      const requested = Number(args.trim());
-      const days = Number.isInteger(requested) && requested > 0 ? Math.min(requested, 90) : 14;
-      return renderUsage(days);
     },
   },
   {

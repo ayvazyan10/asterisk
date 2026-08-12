@@ -12,7 +12,7 @@ import { createAnthropicProvider } from './anthropic.ts';
 import { createOllamaProvider } from './ollama.ts';
 import { createOpenAiCompatibleProvider } from './openai-compatible.ts';
 
-export { isLocalProvider, type ProviderKind } from './kinds.ts';
+export type { ProviderKind } from './kinds.ts';
 
 export interface ProviderChoice {
   provider: Provider;

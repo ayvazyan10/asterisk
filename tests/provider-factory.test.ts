@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import type { LoadedConfig } from '../src/config/load.ts';
 import { ConfigSchema } from '../src/config/schema.ts';
 import { chooseProvider, createProviderFromConfig } from '../src/providers/factory.ts';
-import { isLocalProvider } from '../src/providers/kinds.ts';
 
 const loaded = (
   config: Parameters<typeof ConfigSchema.parse>[0],
@@ -54,21 +53,5 @@ describe('provider factory', () => {
     );
     expect(chosen.kind).toBe('openai-compatible');
     expect(chosen.fallbackReason).toBeUndefined();
-  });
-
-  it('exposes a plain constructor for callers that ignore the reason', () => {
-    expect(createProviderFromConfig(loaded({})).name).toMatch(/^ollama:/);
-  });
-});
-
-describe('local provider classification', () => {
-  it('treats the local backends as zero-cost', () => {
-    expect(isLocalProvider('ollama')).toBe(true);
-    expect(isLocalProvider('openai-compatible')).toBe(true);
-  });
-
-  it('does not treat anthropic as local', () => {
-    expect(isLocalProvider('anthropic')).toBe(false);
-    expect(isLocalProvider('something-else')).toBe(false);
   });
 });

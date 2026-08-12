@@ -94,7 +94,7 @@ asterisk configure       # answer "openai-compatible", then the base URL + model
 A llama.cpp server started with `--alias gemma-4-26b --port 8080` is reached
 at `http://127.0.0.1:8080/v1`. Tool calling, streaming, and reasoning output
 (`--reasoning-format deepseek`) are all supported; local turns are recorded at
-zero cost in `/cost`. Set `ASTERISK_OPENAI_API_KEY` only if the endpoint is a
+Set `ASTERISK_OPENAI_API_KEY` only if the endpoint is a
 hosted service that needs one.
 
 ```bash
@@ -122,8 +122,6 @@ whole configuration surface in one place:
 - **MCP servers** and **hooks** — add, edit, enable, delete.
 - **Rules & skills** — a markdown editor for your rules, skills, sub-agent
   definitions and persona files.
-- **Usage & cost** — token spend per day and per model, with an editable
-  rate table seeded from Anthropic's published prices.
 - **Diagnostics, daemon control, log tail, audit trail** — the same ground
   as `/doctor`, `asterisk start|stop`, and `asterisk logs`.
 
@@ -166,8 +164,6 @@ authentication is refused outright.
 | `/provider [name]` | Switch between `ollama` and `anthropic` at runtime          |
 | `/tools`           | List registered tools (built-ins + MCP)                     |
 | `/status`          | Live runtime view: provider, bots, MCP, daemon              |
-| `/cost`            | Token spend: session, today, last 7d, lifetime, by model    |
-| `/usage [days]`    | Day / week / month rollups plus a daily chart               |
 | `/config`          | Interactive forms for each config section                   |
 | `/reset`           | Clear history and rebuild the provider from config          |
 | `/mcp`             | Manage MCP servers — list/add/edit/remove/reload (visual)   |
@@ -625,7 +621,7 @@ and clear the message queue.
 ## Roadmap
 
 See [ROADMAP.md](./ROADMAP.md) for the prioritised list of upcoming work
-— skill marketplace, token/cost tracking, image content blocks, multi-agent
+— skill marketplace, image content blocks, multi-agent
 coordinator, and others.
 
 ## Limitations
