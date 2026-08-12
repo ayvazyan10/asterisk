@@ -10,6 +10,7 @@ import { type AgentState, runAgentTurn } from '../agent/loop.ts';
 import { saveConversation } from '../agent/persistence.ts';
 import { lookupCommand } from '../commands/registry.ts';
 import { loadConfig } from '../config/load.ts';
+import { t } from '../i18n/index.ts';
 import type { McpManager } from '../mcp/manager.ts';
 import { findOutputStyle } from '../output-styles/styles.ts';
 import { loadRules } from '../rules/loader.ts';
@@ -602,32 +603,31 @@ export function App({ initialProvider, state, mcp }: Props) {
             spec={{
               kind: 'list',
               title: [
-                '🔒  Approve this command?',
+                `🔒  ${t('approval.title')}`,
                 '',
                 `    ${approval.command}`,
                 '',
-                `    Needs approval because ${approval.reason}.`,
-                '    Approving runs it with your full privileges — this is a consent',
-                '    check, not a sandbox.',
+                `    ${t('approval.because', { reason: approval.reason })}`,
+                `    ${t('approval.notASandbox')}`,
               ].join('\n'),
               items: [
                 {
                   value: 'allow-once',
-                  label: 'Allow once',
-                  description: 'Run it this time only.',
+                  label: t('approval.allowOnce'),
+                  description: t('approval.allowOnceHelp'),
                 },
                 {
                   value: 'allow-always',
-                  label: 'Allow always',
+                  label: t('approval.allowAlways'),
                   description:
                     approval.rules.length > 0
-                      ? `Remember ${approval.rules.join(', ')} and stop asking.`
-                      : 'Remember this command and stop asking.',
+                      ? t('approval.allowAlwaysHelp', { rules: approval.rules.join(', ') })
+                      : t('approval.allowAlwaysHelpGeneric'),
                 },
                 {
                   value: 'deny',
-                  label: 'Deny',
-                  description: 'Refuse, and tell the agent not to retry.',
+                  label: t('approval.deny'),
+                  description: t('approval.denyHelp'),
                 },
               ],
               // ListPicker answers through the props below; the spec's copies

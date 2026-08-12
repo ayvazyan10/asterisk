@@ -1,4 +1,5 @@
 // Transcript entries and the pure decisions about them: how a tool call and
+import { t } from '../i18n/index.ts';
 // its result are summarised into a one-line entry, when the full payload is
 // kept behind a collapse hint, what Ctrl+O appends, and which system lines
 // look like "Label   value" pairs.
@@ -89,8 +90,8 @@ export function summariseToolResult(
 /** The "[+N more …]" line under a collapsed entry. */
 export function renderCollapseHint(short: string, full: string): string {
   const hiddenLines = Math.max(0, full.split('\n').length - short.split('\n').length);
-  if (hiddenLines > 0) return `[+${hiddenLines} more lines · Ctrl+O to expand]`;
-  return `[+${full.length - short.length} more chars · Ctrl+O to expand]`;
+  if (hiddenLines > 0) return t('transcript.expandHintLines', { count: hiddenLines });
+  return t('transcript.expandHintChars', { count: full.length - short.length });
 }
 
 /**
