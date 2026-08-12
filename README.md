@@ -688,10 +688,15 @@ and clear the message queue.
   model emits multiple in one turn.
 - **Context compaction** — the budget is 60% of the context window the
   active provider reports. Over it, old tool results and long text blocks
-  are truncated while keeping the 6 most recent messages intact. Token
-  counting is a character-class estimate, not `chars / 4`: CJK counts near
-  one token per character and punctuation-dense code above the prose rate,
-  because under-counting those is what silently overflows a window.
+  are truncated while keeping the 6 most recent messages intact. If that is
+  not enough, the oldest messages are dropped — and **replaced by a summary
+  the model writes of what they contained**, so a long session keeps the
+  decisions that shaped it instead of just a count of what was lost. A
+  summariser that fails costs context and nothing else; the turn continues
+  with the plain notice. Token counting is a character-class estimate, not
+  `chars / 4`: CJK counts near one token per character and punctuation-dense
+  code above the prose rate, because under-counting those is what silently
+  overflows a window.
 - **Large result persistence** — tool outputs > 8 KB are saved to
   `~/.asterisk/outputs/` with a 500-char preview kept in context.
 - **Prompt caching** — Anthropic provider sends the system prompt with

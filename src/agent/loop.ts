@@ -25,10 +25,11 @@ import type {
   ToolUseBlock,
 } from '../types/messages.ts';
 import { retry } from '../utils/retry.ts';
-import { compactHistory } from './compaction.ts';
+import { compactHistory, compactHistoryWithSummary } from './compaction.ts';
 import { type AgentSession, runWithSession } from './context.ts';
 import { completeToolResults, repairHistory } from './history.ts';
 import { persistOutput, shouldPersistOutput } from './output-store.ts';
+import { summariseMessages } from './summarise.ts';
 
 const SYSTEM_PROMPT = `You are Asterisk, a personal AI assistant running on the user's machine.
 
@@ -141,6 +142,10 @@ export interface RunOptions {
   maxTurns?: number;
   maxRetries?: number;
   toolTimeoutMs?: number;
+  /** Replace dropped history with a model-written summary. Defaults to true;
+   *  set false to keep the cheap "N messages dropped" notice, which costs no
+   *  model call. Sub-agents and tests generally want false. */
+  summariseDropped?: boolean;
   signal?: AbortSignal;
   rules?: readonly Rule[];
   /** SOUL.md content — persona + user-context block prepended to the
@@ -260,7 +265,17 @@ async function runAgentTurnInner(
       // well-formed history; it earns its place on the first turn after a
       // conversation is restored from disk, which is where an unanswered
       // tool_use written by an older build would otherwise fail every turn.
-      state.history = repairHistory(compactHistory(state.history, provider.contextWindow));
+      // Summarising costs one model call, so it only runs when compaction is
+      // actually about to discard messages; compactHistoryWithSummary decides
+      // that internally and skips the callback otherwise. A summariser that
+      // fails returns null and the plain drop notice is used instead.
+      state.history = repairHistory(
+        opts.summariseDropped === false
+          ? compactHistory(state.history, provider.contextWindow)
+          : await compactHistoryWithSummary(state.history, provider.contextWindow, (dropped) =>
+              summariseMessages(dropped, provider, signal),
+            ),
+      );
 
       let response: ProviderResponse;
       try {

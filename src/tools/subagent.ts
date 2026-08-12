@@ -117,6 +117,11 @@ export const subAgentTool: Tool = {
         maxRetries: DEFAULT_SUB_MAX_RETRIES,
         rules,
         hooks,
+        // A sub-agent starts with an empty history and is capped at a handful
+        // of turns, so it rarely compacts at all — and when it does, paying for
+        // a summarising model call nested inside the parent's turn buys very
+        // little for the latency it adds.
+        summariseDropped: false,
         ...(opts?.signal !== undefined ? { signal: opts.signal } : {}),
       };
       // Inject the agent type's specialised prompt as a soul block so it

@@ -125,6 +125,19 @@ text blocks while keeping the 6 most recent messages intact. The original
 hard-coded 80k threshold sat above Ollama's default 65,536 window, so on a
 stock install the feature could never fire; `53ce875` fixed that.
 
+### ~~Summarise dropped history instead of only counting it~~ ✓ shipped
+When shortening is not enough and messages have to go, the dropped span is now
+replaced by a summary the model writes of it, rather than
+"[N earlier message(s) dropped]". A long session used to lose the decisions
+that shaped it — which approach was rejected and why, the paths already
+touched — and the model would re-derive them wrongly and confidently.
+
+One model call, made only when messages are genuinely being discarded;
+shortening alone never triggers it. Every failure path returns null and falls
+back to the plain notice, because a summary is an improvement on dropping, not
+a precondition for it. Off via `summariseDropped: false`; sub-agents opt out
+already.
+
 ### ~~Token counting for the compaction budget~~ ✓ shipped
 `agent/tokens.ts` replaces `chars / 4` with a character-class model. The old
 estimate reported Chinese at 0.27x its real size, so a CJK conversation

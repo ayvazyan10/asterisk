@@ -39,6 +39,16 @@ const TOOL_RESULT_MAX = 200;
 const TEXT_MAX = 500;
 
 /**
+ * Room left for a summary that has not been written yet.
+ *
+ * The drop point is chosen before the summariser runs, so its output has to be
+ * budgeted for in advance. Sized to match the summariser's own token ceiling
+ * in summarise.ts — under-reserving would put the compacted history back over
+ * budget and make compaction fire again on the very next turn.
+ */
+const SUMMARY_TOKEN_RESERVE = 700;
+
+/**
  * Per-message cost, memoised on the message object.
  *
  * `dropOldest` re-estimates the remaining history on every iteration, which is
@@ -114,13 +124,13 @@ function answersToolCall(msg: Message): boolean {
  * a `tool_use` from the `tool_result` that answers it and never touching the
  * most recent `KEEP_RECENT`.
  */
-function dropOldest(messages: Message[], budget: number): Message[] {
+function findDropPoint(messages: Message[], budget: number, reserve: number): number {
   const floor = Math.max(KEEP_RECENT, 0);
-  // The notice prepended below is itself part of the history, so the loop has
-  // to fit inside the budget minus its cost. Without this reserve the result
-  // came back a few tokens over, which also made compaction non-idempotent:
-  // the next turn saw an over-budget history and compacted all over again.
-  const reserve = estimateTokens([noticeFor(0)]);
+  // The notice prepended in place of the dropped span is itself part of the
+  // history, so the loop has to fit inside the budget minus its cost. Without
+  // this reserve the result came back a few tokens over, which also made
+  // compaction non-idempotent: the next turn saw an over-budget history and
+  // compacted all over again.
   const target = Math.max(0, budget - reserve);
   let start = 0;
 
@@ -136,8 +146,12 @@ function dropOldest(messages: Message[], budget: number): Message[] {
     start += 1;
   }
 
-  if (start === 0) return messages;
+  return start;
+}
 
+function dropOldest(messages: Message[], budget: number): Message[] {
+  const start = findDropPoint(messages, budget, estimateTokens([noticeFor(0)]));
+  if (start === 0) return messages;
   return [noticeFor(start), ...messages.slice(start)];
 }
 
@@ -161,15 +175,83 @@ function noticeFor(count: number): Message {
 }
 
 /**
+ * The same marker, carrying a summary of what was dropped.
+ *
+ * Labelled as a summary rather than presented as conversation, so the model
+ * does not quote it back as something the user said.
+ */
+function summaryNoticeFor(count: number, summary: string): Message {
+  return {
+    role: 'user',
+    content: [
+      {
+        type: 'text',
+        text: [
+          `[${count} earlier message(s) were dropped to fit the context window.`,
+          'This is a summary of them, not a verbatim record — treat it as notes,',
+          'and ask the user rather than guessing at anything it does not cover.]',
+          '',
+          summary,
+        ].join('\n'),
+      },
+    ],
+  };
+}
+
+/** Room reserved for the notice, whichever kind ends up being used. */
+function noticeReserve(): number {
+  return estimateTokens([summaryNoticeFor(0, '')]) + SUMMARY_TOKEN_RESERVE;
+}
+
+/**
  * Returns a history that fits the provider's context window.
  *
  * `contextWindow` should be what the active provider reports; omit it and a
  * conservative default is used.
  */
 export function compactHistory(messages: Message[], contextWindow?: number): Message[] {
+  const staged = shortenForBudget(messages, contextWindow);
+  if (staged.done) return staged.messages;
+  return dropOldest(staged.messages, staged.budget);
+}
+
+/**
+ * `compactHistory`, but the dropped span is replaced by a model-written
+ * summary instead of a bare count.
+ *
+ * `summarise` is called only when messages are actually being dropped, and
+ * only with the span about to go. Returning null — which
+ * `summariseMessages` does for every failure — falls back to the plain notice,
+ * so an unreachable model costs context, never the turn.
+ */
+export async function compactHistoryWithSummary(
+  messages: Message[],
+  contextWindow: number | undefined,
+  summarise: (dropped: Message[]) => Promise<string | null>,
+): Promise<Message[]> {
+  const staged = shortenForBudget(messages, contextWindow);
+  if (staged.done) return staged.messages;
+
+  const shortened = staged.messages;
+  const start = findDropPoint(shortened, staged.budget, noticeReserve());
+  if (start === 0) return shortened;
+
+  const summary = await summarise(shortened.slice(0, start));
+  const notice = summary ? summaryNoticeFor(start, summary) : noticeFor(start);
+  return [notice, ...shortened.slice(start)];
+}
+
+/**
+ * The half of compaction both entry points share: shorten oversized blocks and
+ * report whether that was enough.
+ */
+function shortenForBudget(
+  messages: Message[],
+  contextWindow?: number,
+): { done: boolean; messages: Message[]; budget: number } {
   const budget = compactionThreshold(contextWindow);
   if (estimateTokens(messages) <= budget || messages.length <= KEEP_RECENT) {
-    return messages;
+    return { done: true, messages, budget };
   }
 
   const keep = messages.slice(messages.length - KEEP_RECENT);
@@ -178,6 +260,5 @@ export function compactHistory(messages: Message[], contextWindow?: number): Mes
 
   // Shortening is cheap and lossy-but-recoverable; dropping is neither, so it
   // only happens when shortening was not enough.
-  if (estimateTokens(shortened) <= budget) return shortened;
-  return dropOldest(shortened, budget);
+  return { done: estimateTokens(shortened) <= budget, messages: shortened, budget };
 }
