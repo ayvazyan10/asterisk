@@ -9,6 +9,8 @@ import { currentSession } from '../agent/context.ts';
 import { getDb } from '../db/index.ts';
 import {
   type MemoryRecord,
+  forgetMemory,
+  getMemory,
   queryTerms,
   recallMemories,
   recentMemories,
@@ -122,4 +124,38 @@ export const recallTool: Tool = {
   },
 };
 
-export const MEMORY_TOOLS: Tool[] = [rememberTool, recallTool];
+export const forgetTool: Tool = {
+  name: 'Forget',
+  description:
+    'Delete one note from long-term memory by its id. Ids come from Recall, so recall first ' +
+    'and quote the id you mean — there is no delete-by-search, because a fuzzy match is a bad ' +
+    'thing to hand a delete. Use when a note has become wrong or the user asks you to forget ' +
+    'something.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      id: { type: 'number', description: 'Id of the note to delete, as shown by Recall.' },
+    },
+    required: ['id'],
+    additionalProperties: false,
+  },
+  async execute(input) {
+    const raw = input['id'];
+    const id = typeof raw === 'number' ? raw : Number.NaN;
+    if (!Number.isInteger(id) || id <= 0) return err('id must be a positive integer from Recall');
+
+    try {
+      const db = getDb();
+      // Read it back before deleting so the confirmation says what actually
+      // went, not what the model believed it was deleting.
+      const existing = getMemory(db, id);
+      if (!existing) return err(`no memory with id ${id}`);
+      forgetMemory(db, id);
+      return ok(`forgot #${id}: ${existing.content.slice(0, 120)}`);
+    } catch (e) {
+      return err(`could not forget memory: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  },
+};
+
+export const MEMORY_TOOLS: Tool[] = [rememberTool, recallTool, forgetTool];

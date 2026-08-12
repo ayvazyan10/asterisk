@@ -258,3 +258,59 @@ function likeSearch(db: SqliteDriver, terms: readonly string[], limit: number): 
     )
     .map(toRecord);
 }
+
+/**
+ * Deletes one memory, or false when there was nothing with that id.
+ *
+ * An external-content FTS5 index is un-indexed with
+ * `INSERT INTO … VALUES('delete', rowid, …)`, handing back the exact values
+ * that were indexed. Measured behaviour of the alternatives, against
+ * bun:sqlite:
+ *
+ *   * a plain `DELETE FROM memories_fts WHERE rowid = ?` works only while the
+ *     base row still exists — FTS5 reads it to learn which terms to remove.
+ *     Run it after the row is gone and it neither throws nor removes anything.
+ *   * the `'delete'` command given values that differ from what was indexed
+ *     also does not throw, and leaves the terms behind.
+ *
+ * So the explicit form is used with the row's own columns, read inside the
+ * transaction. That makes correctness independent of statement order rather
+ * than resting on the fact that this function happens to touch the index
+ * first — a later edit reordering these two statements would otherwise start
+ * leaking index entries silently.
+ */
+export function forgetMemory(db: SqliteDriver, id: number): boolean {
+  return db.transaction(() => {
+    const row = db.get<MemoryRow>(`SELECT ${COLUMNS} FROM memories WHERE id = ?`, [id]);
+    if (!row) return false;
+
+    if (searchIndexReady(db)) {
+      db.run(
+        `INSERT INTO memories_fts (memories_fts, rowid, content, tags) VALUES ('delete', ?, ?, ?)`,
+        [row.id, row.content, row.tags],
+      );
+    }
+    db.run('DELETE FROM memories WHERE id = ?', [id]);
+    return true;
+  });
+}
+
+/** Drops every memory. Exposed for `/memory clear`, never as a model tool. */
+export function forgetAllMemories(db: SqliteDriver): number {
+  return db.transaction(() => {
+    const count = countMemories(db);
+    db.run('DELETE FROM memories');
+    // 'delete-all' is the external-content table's own reset command; dropping
+    // rows from the base table leaves the index fully populated otherwise.
+    if (searchIndexReady(db)) {
+      db.run(`INSERT INTO memories_fts (memories_fts) VALUES ('delete-all')`);
+    }
+    return count;
+  });
+}
+
+/** One memory by id, for confirming what a delete is about to remove. */
+export function getMemory(db: SqliteDriver, id: number): MemoryRecord | null {
+  const row = db.get<MemoryRow>(`SELECT ${COLUMNS} FROM memories WHERE id = ?`, [id]);
+  return row ? toRecord(row) : null;
+}
