@@ -28,6 +28,8 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
 
   return {
     name: `anthropic:${model}`,
+    // Every current Claude model exposes at least a 200k window.
+    contextWindow: 200_000,
     async send(req: ProviderRequest): Promise<ProviderResponse> {
       let response: Anthropic.Messages.Message;
       try {

@@ -166,6 +166,7 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
 
   return {
     name: `ollama:${cfg.model}`,
+    contextWindow: cfg.contextWindow,
     async send(req: ProviderRequest): Promise<ProviderResponse> {
       const streaming = !!req.onText;
       const body: Record<string, unknown> = {

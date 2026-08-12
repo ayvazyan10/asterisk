@@ -253,7 +253,7 @@ async function runAgentTurnInner(
       // well-formed history; it earns its place on the first turn after a
       // conversation is restored from disk, which is where an unanswered
       // tool_use written by an older build would otherwise fail every turn.
-      state.history = repairHistory(compactHistory(state.history));
+      state.history = repairHistory(compactHistory(state.history, provider.contextWindow));
 
       let response: ProviderResponse;
       try {

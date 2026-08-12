@@ -30,6 +30,7 @@ export interface OpenAiCompatibleConfig {
   apiKey: string;
   /** Upper bound on generated tokens. 0 leaves it to the server. */
   maxTokens: number;
+  contextWindow: number;
   modelTimeoutMs: number;
   modelIdleTimeoutMs: number;
 }
@@ -39,6 +40,7 @@ export const OPENAI_COMPATIBLE_DEFAULTS: OpenAiCompatibleConfig = {
   model: process.env['OPENAI_MODEL'] ?? '',
   apiKey: process.env['OPENAI_API_KEY'] ?? '',
   maxTokens: Number(process.env['OPENAI_MAX_TOKENS'] ?? 0),
+  contextWindow: 0,
   modelTimeoutMs: Number(process.env['OPENAI_MODEL_TIMEOUT_MS'] ?? 300_000),
   modelIdleTimeoutMs: Number(process.env['OPENAI_MODEL_IDLE_TIMEOUT_MS'] ?? 90_000),
 };
@@ -224,6 +226,8 @@ export function createOpenAiCompatibleProvider(
 
   return {
     name: `openai-compatible:${cfg.model || 'default'}`,
+    // 0 means "unknown"; compaction falls back to its own default.
+    ...(cfg.contextWindow > 0 ? { contextWindow: cfg.contextWindow } : {}),
     async send(req: ProviderRequest): Promise<ProviderResponse> {
       const streaming = !!req.onText;
       const maxTokens = req.maxTokens ?? (cfg.maxTokens > 0 ? cfg.maxTokens : undefined);

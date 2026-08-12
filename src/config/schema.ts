@@ -67,6 +67,15 @@ const OpenAiCompatibleSchema = z.object({
     .max(1_000_000)
     .default(0)
     .describe('Cap on generated tokens. 0 lets the server decide.'),
+  contextWindow: z
+    .number()
+    .int()
+    .min(0)
+    .max(10_000_000)
+    .default(0)
+    .describe(
+      'Tokens the model can hold. Compaction budgets history against this; 0 falls back to a conservative default.',
+    ),
   modelTimeoutMs: z
     .number()
     .int()

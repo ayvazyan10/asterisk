@@ -75,6 +75,7 @@ function buildOpenAiCompatible(loaded: LoadedConfig): Provider {
     model: cfg.model,
     apiKey: loaded.secrets.ASTERISK_OPENAI_API_KEY ?? '',
     maxTokens: cfg.maxTokens,
+    contextWindow: cfg.contextWindow,
     modelTimeoutMs: cfg.modelTimeoutMs,
     modelIdleTimeoutMs: cfg.modelIdleTimeoutMs,
   });

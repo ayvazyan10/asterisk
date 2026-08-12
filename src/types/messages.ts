@@ -62,5 +62,11 @@ export interface ProviderResponse {
 
 export interface Provider {
   name: string;
+  /**
+   * Tokens the model can hold, when the provider knows it. Compaction derives
+   * its budget from this; a hardcoded threshold sat above the default Ollama
+   * window, so a default install overflowed before compaction ever fired.
+   */
+  contextWindow?: number;
   send(request: ProviderRequest): Promise<ProviderResponse>;
 }
