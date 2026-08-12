@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cover.
 - **Dropped history is summarised** rather than replaced by a bare count.
 - **`/permissions`** and the Bash permission boundary.
+- **Persistent memory** — `Remember` / `Recall` backed by SQLite FTS5, with a
+  substring fallback where the build lacks it. No delete path yet, and memory
+  is install-wide.
+- **`AgentBatch`** — dispatch several sub-agents for one turn. Read-only agent
+  types run concurrently; anything that can write runs sequentially, because
+  sub-agents share one filesystem view.
+- **A SKILL.md contract** — frontmatter validation with actionable errors, plus
+  `/skills validate`. Previously a malformed skill was silently skipped.
 - **Provider fallback chain** (`providerFallback`) — try another backend when
   the primary is unreachable, without replaying a rejected request or
   restarting a reply that has already begun streaming.

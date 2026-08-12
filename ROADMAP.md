@@ -173,11 +173,27 @@ precise for one vendor and wrong for the other two.
 ESC key aborts in-flight turns, clears the message queue. AbortSignal
 plumbing was already end-to-end; wired via `useInput` in App.tsx.
 
-### Multi-agent coordinator mode
-Today `Agent` is single-shot per call. Coordinator mode would let the
-parent dispatch N agents and orchestrate them — fork-join semantics with
-shared task list, results merged on collection. Like `batch` skill but
-parallelised across actual sub-agents instead of sequential.
+### ~~Multi-agent coordinator mode~~ ✓ shipped as `AgentBatch`
+Dispatches several sub-agents for one parent turn, results merged in input
+order. Concurrency is derived rather than promised: worktrees are
+process-global and sub-agents share the parent's tool state, so a batch
+containing any agent type that can write runs sequentially. Tolerating `Bash`
+in the read-only classification rests on the permission gate — its allowlist is
+read-only commands and anything else needs approval.
+
+Still open from the original sketch: a worktree per sub-agent, which needs
+`activeWorktree()` to stop being process-global.
+
+### ~~Persistent memory with FTS5~~ ✓ shipped
+`Remember` / `Recall` over a `memories` table with an external-content FTS5
+index, degrading to substring search where the SQLite build lacks FTS5. No
+`Forget` yet, no dedupe, and memory is install-wide — two people talking to the
+same bot share it.
+
+### ~~A real SKILL.md contract~~ ✓ shipped
+Frontmatter is validated against a schema derived from what the loader actually
+consumes. `/skills validate` reports what failed to load and why; the 29
+bundled skills are machine-checked.
 
 ### ~~Provider fallback chain~~ ✓ shipped
 `providerFallback` is an ordered list of backends to try when the primary one

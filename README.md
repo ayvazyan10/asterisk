@@ -186,7 +186,7 @@ authentication is refused outright.
 | `/agents`          | List specialised sub-agent types you can dispatch           |
 | `/output-style`    | Switch reply style — default / concise / explanatory / learning |
 | `/rules`           | List the rules currently loaded into the system prompt      |
-| `/skills`          | List installed skills (bundled + user + project)            |
+| `/skills`          | List installed skills; `validate` reports broken ones        |
 | `/skill [name]`    | Run a skill — picker if no name given                       |
 | `/soul [verb]`     | Show / `init` / `where` your SOUL.md persona                |
 | `/plan`            | Toggle Plan Mode (read-only research mode)                  |
@@ -214,6 +214,10 @@ by the `vision` settings. Turn it off for a text-only model.
 **Web research**
 `WebFetch` (URL → readable text) · `WebSearch` (Brave / Tavily / SearXNG /
 DDG instant-answer, picks the first backend you've configured a key for)
+
+**Memory**
+`Remember` · `Recall` — notes that survive across sessions, searched with
+SQLite FTS5 (falling back to substring search on a build without it).
 
 **Planning**
 `TaskCreate` · `TaskUpdate` · `TaskList` · `TaskGet` · `TaskStop` — the
