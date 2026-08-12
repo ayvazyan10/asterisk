@@ -192,3 +192,35 @@ describeConfined(`containment via ${status.backend}`, () => {
     expect(r.exitCode).not.toBe(0);
   });
 });
+
+describe('probe design', () => {
+  it('requires a backend to run a harmless command, not just refuse a bad one', async () => {
+    // A backend that cannot start fails everything, including the write the
+    // probe wants refused — so a negative-only probe reads total breakage as
+    // perfect confinement. GitHub's runners are exactly that case: bubblewrap
+    // installed, user namespaces denied, every invocation dying with
+    // "setting up uid map: Permission denied".
+    const { execa } = await import('execa');
+    const broken = await execa('bwrap', ['--nonexistent-flag', 'true'], {
+      reject: false,
+      timeout: 10_000,
+    }).catch(() => ({ exitCode: 127 }));
+    expect(broken.exitCode).not.toBe(0);
+
+    // The live status must not have certified a backend that cannot run
+    // `exit 0`, which is what the positive control checks.
+    if (status.backend !== 'none') {
+      const wrapped = await wrapCommand('exit 0', {
+        writablePaths: [process.cwd()],
+        network: false,
+        cwd: process.cwd(),
+      });
+      try {
+        const r = await execa(wrapped.file, wrapped.args, { reject: false, timeout: 20_000 });
+        expect(r.exitCode).toBe(0);
+      } finally {
+        wrapped.cleanup?.();
+      }
+    }
+  });
+});

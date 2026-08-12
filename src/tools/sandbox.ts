@@ -85,34 +85,44 @@ async function binaryExists(file: string): Promise<boolean> {
 }
 
 /**
- * Runs a probe through `backend` and reports whether it actually confined it.
+ * Runs two probes through `backend` and reports whether it is usable.
  *
- * The probe writes to a directory deliberately left out of the writable set.
- * A backend that lets it through is rejected.
+ * Both halves are required, and the positive one is not decoration. A backend
+ * that cannot start at all fails every command, including the write that is
+ * supposed to be refused — so a negative-only probe reads total breakage as
+ * perfect confinement. That is not hypothetical: GitHub's runners have
+ * bubblewrap installed but cannot create user namespaces, so every invocation
+ * dies with "setting up uid map: Permission denied", and the earlier probe
+ * cheerfully certified it.
  */
 async function verifyBackend(backend: Exclude<SandboxBackend, 'none'>): Promise<boolean> {
   const outside = mkdtempSync(join(tmpdir(), 'asterisk-probe-'));
-  try {
-    const target = join(outside, 'breach');
-    const policy: SandboxPolicy = {
-      // Deliberately excludes `outside`, and excludes /tmp so the probe target
-      // is genuinely off-limits rather than caught by the usual /tmp bind.
-      writablePaths: [workspaceRoot()],
-      network: false,
-      cwd: workspaceRoot(),
-    };
-    const wrapped = wrapWithBackend(backend, policy, `touch ${JSON.stringify(target)}`);
+  const policy: SandboxPolicy = {
+    // Deliberately excludes `outside`, and excludes /tmp so the probe target is
+    // genuinely off-limits rather than caught by the usual /tmp bind.
+    writablePaths: [workspaceRoot()],
+    network: false,
+    cwd: workspaceRoot(),
+  };
+
+  const run = async (command: string): Promise<number | null> => {
+    const wrapped = wrapWithBackend(backend, policy, command);
     try {
       const result = await execa(wrapped.file, wrapped.args, {
         reject: false,
         timeout: PROBE_TIMEOUT_MS,
       });
-      // The write must have failed. A zero exit means the sandbox let it
-      // through, whatever the backend claims to do.
-      if (result.exitCode === 0) return false;
+      return result.exitCode ?? null;
     } finally {
       wrapped.cleanup?.();
     }
+  };
+
+  try {
+    // Positive control: the backend can run something harmless.
+    if ((await run('exit 0')) !== 0) return false;
+    // Negative control: a write outside the writable set is refused.
+    if ((await run(`touch ${JSON.stringify(join(outside, 'breach'))}`)) === 0) return false;
     return true;
   } catch {
     return false;

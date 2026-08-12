@@ -24,8 +24,18 @@ jobs:
 
       # Without this the sandbox containment tests skip, and a test that passes
       # by not running is exactly what tests/sandbox.test.ts warns about.
+      #
+      # Ubuntu 24.04 blocks unprivileged user namespaces via AppArmor, so
+      # bubblewrap installs fine but dies with "setting up uid map: Permission
+      # denied" on every invocation. Relaxing the sysctl is what makes the
+      # containment tests real rather than skipped. If it stops working the
+      # probe reports no backend and the tests skip again — the suite stays
+      # green either way, which is why `|| true` is acceptable here.
       - name: Install bubblewrap
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          bwrap --ro-bind / / --dev /dev -- /bin/true && echo "bwrap functional" || echo "bwrap present but not functional"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
