@@ -21,7 +21,15 @@ export function workspaceRoot(): string {
   return cachedRoot;
 }
 
-/** Test-only: reset the cached root. Production code never calls this. */
+/**
+ * Drops the cached root so the next call re-reads `ASTERISK_WORKSPACE`.
+ *
+ * Was documented as test-only, which stopped being true when the eval harness
+ * started calling it: `asterisk eval` ships in `dist/eval.js` and re-points the
+ * guard at a temp fixture. The `_` prefix stays as a warning — the REPL, the
+ * daemon and the bots must never call this, because moving the boundary
+ * mid-conversation would silently widen where the agent may write.
+ */
 export function _resetWorkspaceForTesting(): void {
   cachedRoot = null;
 }
