@@ -148,6 +148,9 @@ function rgCommand(pattern: string): string {
     // error — a bad pattern, an unreadable path — and still surfaces.
     const status = (e as { status?: number }).status;
     if (status === 1) return '(no matches)';
+    // 127 is the shell's "command not found". Saying so beats surfacing
+    // `/bin/sh: 1: rg: not found` and leaving the user to work it out.
+    if (status === 127) return 'ripgrep (rg) is not installed — /code needs it. See /doctor.';
     throw e;
   }
 }

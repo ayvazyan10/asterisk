@@ -61,9 +61,11 @@ jobs:
       # containment tests real rather than skipped. If it stops working the
       # probe reports no backend and the tests skip again — the suite stays
       # green either way, which is why `|| true` is acceptable here.
-      - name: Install bubblewrap
+      - name: Install bubblewrap and ripgrep
         run: |
-          sudo apt-get update && sudo apt-get install -y bubblewrap
+          # ripgrep backs /code; without it those tests skip or fail on CI and
+          # the feature is only ever exercised on a developer's machine.
+          sudo apt-get update && sudo apt-get install -y bubblewrap ripgrep
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           bwrap --ro-bind / / --dev /dev -- /bin/true && echo "bwrap functional" || echo "bwrap present but not functional"
 
