@@ -44,6 +44,11 @@ jobs:
             exit 1
           fi
 
+      # Without this the sandbox containment tests skip, and a test that passes
+      # by not running is exactly what tests/sandbox.test.ts warns about.
+      - name: Install bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
