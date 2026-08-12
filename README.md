@@ -16,7 +16,7 @@ same assistant to Telegram and WhatsApp.
   API, [Model Context Protocol](https://modelcontextprotocol.io), Playwright.
 - **Apache 2.0** licensed.
 
-Status `0.2.0` — early but real. 40 built-in tools, 28 slash commands,
+Status `0.3.0` — early but real. 44 built-in tools, 28 slash commands,
 14 daemon-managed scheduling/lifecycle features, **29 bundled skills**,
 **27 specialised sub-agent types** the agent can dispatch on demand,
 layered multi-language rules, switchable output styles

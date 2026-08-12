@@ -5,7 +5,11 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-08-12
+
+Everything that turned the permission boundary into a real one, gave the agent
+eyes and a memory, and made it survive the small local models it was always
+meant to run on.
 
 ### Added
 
@@ -219,5 +223,6 @@ Initial public release.
 - 25 tests (Vitest) covering tools, agent loop, daemon lifecycle, config
   persistence, and bot manager wiring.
 
+[0.3.0]: https://github.com/ayvazyan10/asterisk/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ayvazyan10/asterisk/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ayvazyan10/asterisk/releases/tag/v0.1.0
