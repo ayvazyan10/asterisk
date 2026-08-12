@@ -36,5 +36,7 @@ describe('Plan Mode', () => {
     expect(during).toContain('Grep');
     expect(during).toContain('WebFetch');
     expect(during).toContain('Agent');
+    expect(during).toContain('Recall');
+    expect(during).not.toContain('Remember');
   });
 });

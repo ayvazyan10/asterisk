@@ -22,6 +22,7 @@ describe('tool registry', () => {
     expect(names).toEqual(
       [
         'Agent',
+        'AgentBatch',
         'AskUserQuestion',
         'Attach',
         'Bash',
@@ -50,7 +51,9 @@ describe('tool registry', () => {
         'McpReadResource',
         'PushNotification',
         'Read',
+        'Recall',
         'RemoteTrigger',
+        'Remember',
         'ScheduleWakeup',
         'TaskCreate',
         'TaskGet',

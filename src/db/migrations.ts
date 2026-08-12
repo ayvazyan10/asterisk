@@ -11,7 +11,38 @@ export interface Migration {
   readonly version: number;
   readonly name: string;
   readonly sql: string;
+  /** Statements applied after `sql`, each allowed to fail without failing the
+   *  migration. One statement per entry — see applyOptionalSql. */
+  readonly optionalSql?: readonly string[];
 }
+
+/**
+ * The FTS5 index over `memories`, kept out of migration 5's `sql` because it
+ * is the one piece of the schema a healthy SQLite build can legitimately
+ * refuse: FTS5 is a compile-time option, so `CREATE VIRTUAL TABLE … USING
+ * fts5` fails with "no such module" wherever it was left out. Failing the
+ * migration over that would take the whole database — the config, the secrets,
+ * the permission grants — down with it.
+ *
+ * External content (`content='memories'`), not a plain or contentless FTS5
+ * table. A plain one would hold the only copy of the text, so a build without
+ * FTS5 would have nowhere to put memories at all and the LIKE fallback would
+ * have nothing to scan. A contentless one cannot return column values, so
+ * recall would need the base table anyway and the index would just be a second
+ * place to keep in step. External content indexes the terms and reads the text
+ * back from `memories`, which stores it exactly once.
+ *
+ * src/memory/store.ts retries this on first use, so an install that later
+ * moves to an FTS5-capable build picks the index up without a new migration.
+ */
+export const MEMORY_FTS_SQL = `
+  CREATE VIRTUAL TABLE memories_fts USING fts5(
+    content,
+    tags,
+    content='memories',
+    content_rowid='id',
+    tokenize='unicode61 remove_diacritics 2'
+  )`;
 
 export const MIGRATIONS: readonly Migration[] = [
   {
@@ -163,7 +194,60 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 5,
+    name: 'agent-memory',
+    sql: `
+      -- Durable agent memory: notes the model writes for itself and reads back
+      -- in later sessions. This table is the record of truth — the FTS5 index
+      -- beside it (MEMORY_FTS_SQL) only makes search fast, and recall falls
+      -- back to LIKE over these same rows when it is absent.
+      --
+      -- Tags are one space-separated string, not a join table. They are
+      -- free-form labels the model invents, never joined on, and only read
+      -- back whole or matched as text; a second table would buy nothing and
+      -- the FTS tokeniser already splits the column the way we want.
+      --
+      -- source records the channel that wrote the note ('repl', 'telegram', …)
+      -- rather than a chat id: memory is install-wide by design, and a chat id
+      -- would put a phone number in a column nothing filters on.
+      CREATE TABLE memories (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        content    TEXT NOT NULL,
+        tags       TEXT NOT NULL DEFAULT '',
+        source     TEXT NOT NULL DEFAULT 'unknown',
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX idx_memories_created ON memories (created_at DESC);
+    `,
+    optionalSql: [MEMORY_FTS_SQL],
+  },
 ];
+
+/**
+ * Runs one statement the database is allowed to reject, reporting whether it
+ * stuck. For schema that is an optimisation rather than a requirement, where
+ * going without is better than refusing to open the database at all.
+ *
+ * One statement per call, deliberately. bun:sqlite 1.3 does not surface the
+ * "no such module" error from a `CREATE VIRTUAL TABLE` when it leads a
+ * multi-statement exec(): it swallows it and runs the rest, so a batch would
+ * report success while leaving everything that depended on the virtual table
+ * half-built. Alone, both bun:sqlite and node:sqlite throw. A caught failure
+ * does not poison the surrounding transaction on either runtime — the
+ * statement never gets past prepare.
+ *
+ * The boolean is a hint, not proof; callers that care confirm by querying.
+ */
+export function applyOptionalSql(db: SqliteDriver, sql: string): boolean {
+  try {
+    db.exec(sql);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 interface MigrationRow {
   version: number;
@@ -200,6 +284,7 @@ export function migrate(db: SqliteDriver): number {
 
     for (const m of pending) {
       db.exec(m.sql);
+      for (const optional of m.optionalSql ?? []) applyOptionalSql(db, optional);
       db.run('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)', [
         m.version,
         m.name,

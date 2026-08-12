@@ -13,7 +13,7 @@ import { loadConfig } from '../config/load.ts';
 import { createProviderFromConfig } from '../providers/factory.ts';
 import { loadRules } from '../rules/loader.ts';
 import type { Provider } from '../types/messages.ts';
-import { type Tool, err, ok } from './types.ts';
+import { type Tool, type ToolExecuteOptions, type ToolResult, err, ok } from './types.ts';
 
 const DEFAULT_SUB_MAX_TURNS = 32;
 const DEFAULT_SUB_MAX_RETRIES = 3;
@@ -81,73 +81,102 @@ export const subAgentTool: Tool = {
     if (!prompt) return err('prompt is required');
     const requestedType =
       typeof input['subagent_type'] === 'string' ? input['subagent_type'].trim() : '';
-
-    const agentType = requestedType ? findAgent(requestedType) : findAgent('general-purpose');
-    if (requestedType && !agentType) {
-      const available = loadAgents()
-        .map((a) => a.name)
-        .slice(0, 20)
-        .join(', ');
-      return err(
-        `unknown subagent_type "${requestedType}". Available: ${available} (and more — check /agents).`,
-      );
-    }
-
-    const turnsCap = agentType?.maxTurns ?? DEFAULT_SUB_MAX_TURNS;
-    const maxTurns = Math.min(
-      Math.max(typeof input['maxTurns'] === 'number' ? input['maxTurns'] : turnsCap, 1),
-      20,
+    const maxTurns = typeof input['maxTurns'] === 'number' ? input['maxTurns'] : undefined;
+    return await runSubAgent(
+      {
+        prompt,
+        ...(requestedType ? { type: requestedType } : {}),
+        ...(maxTurns !== undefined ? { maxTurns } : {}),
+      },
+      opts,
     );
-
-    const provider = pickProviderForSub();
-    const state: AgentState = createAgentState();
-    const rules = loadRules();
-    const hooks = loadConfig().config.hooks;
-
-    // Sub-agents inherit the parent's session so any tasks they create,
-    // worktrees they enter, etc. show up in the parent's view too. The
-    // sub-agent runs in a fresh AgentState so the parent's conversation
-    // history isn't polluted, but tool state stays shared.
-    const parent = currentSession();
-    try {
-      const allowedTools = agentType?.allowedTools;
-      const runOpts: Parameters<typeof runAgentTurn>[3] = {
-        session: { id: parent.id, scope: 'sub-agent' },
-        maxTurns,
-        maxRetries: DEFAULT_SUB_MAX_RETRIES,
-        rules,
-        hooks,
-        // A sub-agent starts with an empty history and is capped at a handful
-        // of turns, so it rarely compacts at all — and when it does, paying for
-        // a summarising model call nested inside the parent's turn buys very
-        // little for the latency it adds.
-        summariseDropped: false,
-        ...(opts?.signal !== undefined ? { signal: opts.signal } : {}),
-      };
-      // Inject the agent type's specialised prompt as a soul block so it
-      // composes with the standard system prompt + rules instead of
-      // replacing them. Simpler than threading a separate parameter.
-      if (agentType?.prompt) {
-        runOpts.souls = [
-          {
-            scope: 'session',
-            path: agentType.path,
-            content: `# Sub-agent role: ${agentType.name}\n${agentType.prompt}`,
-          },
-        ];
-      }
-      if (allowedTools && allowedTools.length > 0) {
-        runOpts.allowedTools = allowedTools;
-      }
-      const result = await runAgentTurn(provider, state, prompt, runOpts);
-      const label = agentType ? `[${agentType.name}] ` : '';
-      const tag =
-        result.reason === 'end-turn'
-          ? `${label}✓ sub-agent completed`
-          : `${label}sub-agent ended: ${result.reason}`;
-      return ok(`${tag}\n---\n${result.finalText || '(no text returned)'}`);
-    } catch (e) {
-      return err(`sub-agent failed: ${(e as Error).message}`);
-    }
   },
 };
+
+export interface SubAgentRequest {
+  prompt: string;
+  /** Specialised agent type; general-purpose when omitted. */
+  type?: string;
+  maxTurns?: number;
+}
+
+/**
+ * Runs one sub-agent to completion.
+ *
+ * Extracted from the `Agent` tool so `AgentBatch` can dispatch several without
+ * duplicating the provider, rules, hooks and session plumbing — the kind of
+ * duplication that produced four drifting copies of `pickProvider` before
+ * providers/factory.ts existed.
+ */
+export async function runSubAgent(
+  req: SubAgentRequest,
+  opts?: ToolExecuteOptions,
+): Promise<ToolResult> {
+  const prompt = req.prompt;
+  const requestedType = req.type ?? '';
+
+  const agentType = requestedType ? findAgent(requestedType) : findAgent('general-purpose');
+  if (requestedType && !agentType) {
+    const available = loadAgents()
+      .map((a) => a.name)
+      .slice(0, 20)
+      .join(', ');
+    return err(
+      `unknown subagent_type "${requestedType}". Available: ${available} (and more — check /agents).`,
+    );
+  }
+
+  const turnsCap = agentType?.maxTurns ?? DEFAULT_SUB_MAX_TURNS;
+  const maxTurns = Math.min(Math.max(req.maxTurns ?? turnsCap, 1), 20);
+
+  const provider = pickProviderForSub();
+  const state: AgentState = createAgentState();
+  const rules = loadRules();
+  const hooks = loadConfig().config.hooks;
+
+  // Sub-agents inherit the parent's session so any tasks they create,
+  // worktrees they enter, etc. show up in the parent's view too. The
+  // sub-agent runs in a fresh AgentState so the parent's conversation
+  // history isn't polluted, but tool state stays shared.
+  const parent = currentSession();
+  try {
+    const allowedTools = agentType?.allowedTools;
+    const runOpts: Parameters<typeof runAgentTurn>[3] = {
+      session: { id: parent.id, scope: 'sub-agent' },
+      maxTurns,
+      maxRetries: DEFAULT_SUB_MAX_RETRIES,
+      rules,
+      hooks,
+      // A sub-agent starts with an empty history and is capped at a handful
+      // of turns, so it rarely compacts at all — and when it does, paying for
+      // a summarising model call nested inside the parent's turn buys very
+      // little for the latency it adds.
+      summariseDropped: false,
+      ...(opts?.signal !== undefined ? { signal: opts.signal } : {}),
+    };
+    // Inject the agent type's specialised prompt as a soul block so it
+    // composes with the standard system prompt + rules instead of
+    // replacing them. Simpler than threading a separate parameter.
+    if (agentType?.prompt) {
+      runOpts.souls = [
+        {
+          scope: 'session',
+          path: agentType.path,
+          content: `# Sub-agent role: ${agentType.name}\n${agentType.prompt}`,
+        },
+      ];
+    }
+    if (allowedTools && allowedTools.length > 0) {
+      runOpts.allowedTools = allowedTools;
+    }
+    const result = await runAgentTurn(provider, state, prompt, runOpts);
+    const label = agentType ? `[${agentType.name}] ` : '';
+    const tag =
+      result.reason === 'end-turn'
+        ? `${label}✓ sub-agent completed`
+        : `${label}sub-agent ended: ${result.reason}`;
+    return ok(`${tag}\n---\n${result.finalText || '(no text returned)'}`);
+  } catch (e) {
+    return err(`sub-agent failed: ${(e as Error).message}`);
+  }
+}

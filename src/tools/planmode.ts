@@ -20,6 +20,8 @@ const READ_ONLY_NAMES = new Set([
   'WebSearch',
   'TaskList',
   'TaskGet',
+  // Recall reads; Remember writes and stays hidden with the rest of them.
+  'Recall',
   'EnterPlanMode',
   'ExitPlanMode',
   'Agent',

@@ -3,6 +3,7 @@
 // alongside the built-ins without a special code path.
 
 import { MCP_RESOURCE_TOOLS } from '../mcp/resources.ts';
+import { agentBatchTool } from './agent-batch.ts';
 import { ASK_TOOLS } from './ask.ts';
 import { attachTool } from './attach.ts';
 import { bashTool } from './bash.ts';
@@ -12,6 +13,7 @@ import { diffReviewTool } from './diff-review.ts';
 import { editTool } from './edit.ts';
 import { globTool } from './glob.ts';
 import { grepTool } from './grep.ts';
+import { MEMORY_TOOLS } from './memory.ts';
 import { MONITOR_TOOLS } from './monitor.ts';
 import { NOTIFY_TOOLS } from './notify.ts';
 import { PLAN_MODE_TOOLS, isPlanMode, isReadOnlyToolName } from './planmode.ts';
@@ -37,7 +39,9 @@ export const BUILTIN_TOOLS: Tool[] = [
   webFetchTool,
   webSearchTool,
   ...TASK_TOOLS,
+  ...MEMORY_TOOLS,
   subAgentTool,
+  agentBatchTool,
   ...PLAN_MODE_TOOLS,
   ...WORKTREE_TOOLS,
   ...NOTIFY_TOOLS,
