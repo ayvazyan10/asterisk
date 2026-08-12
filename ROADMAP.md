@@ -125,14 +125,17 @@ text blocks while keeping the 6 most recent messages intact. The original
 hard-coded 80k threshold sat above Ollama's default 65,536 window, so on a
 stock install the feature could never fire; `53ce875` fixed that.
 
-### Real tokenizer for the compaction budget
-**Status:** not started · **Effort:** medium
+### ~~Token counting for the compaction budget~~ ✓ shipped
+`agent/tokens.ts` replaces `chars / 4` with a character-class model. The old
+estimate reported Chinese at 0.27x its real size, so a CJK conversation
+overflowed the window with compaction never firing; JSON came in at 0.68x and
+emoji at 0.50x. Everything now lands between 0.9x and 1.3x.
 
-The budget is still computed from a `chars/4` estimate, which under-counts
-code and badly under-counts CJK — exactly the inputs most likely to overflow
-a window. The 60% budget absorbs some of the error, but the honest fix is to
-count with the model's own tokenizer where one is available and fall back to
-the estimate elsewhere.
+Not a tokenizer, deliberately. Asterisk talks to three vendors with three
+vocabularies, and none exposes a counter cheaply enough to run over the whole
+history every turn — llama.cpp's /tokenize is a round trip, Anthropic's
+count_tokens is billable, Ollama has none. A bundled BPE table would be
+precise for one vendor and wrong for the other two.
 
 ### ~~Ctrl+C / ESC abort in the REPL~~ ✓ shipped
 ESC key aborts in-flight turns, clears the message queue. AbortSignal

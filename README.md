@@ -16,7 +16,7 @@ same assistant to Telegram and WhatsApp.
   API, [Model Context Protocol](https://modelcontextprotocol.io), Playwright.
 - **Apache 2.0** licensed.
 
-Status `0.1.0` — early but real. ~36 built-in tools, 20 slash commands,
+Status `0.2.0` — early but real. 40 built-in tools, 28 slash commands,
 14 daemon-managed scheduling/lifecycle features, **29 bundled skills**,
 **27 specialised sub-agent types** the agent can dispatch on demand,
 layered multi-language rules, switchable output styles
@@ -109,9 +109,9 @@ asterisk configure       # answer "openai-compatible", then the base URL + model
 
 A llama.cpp server started with `--alias gemma-4-26b --port 8080` is reached
 at `http://127.0.0.1:8080/v1`. Tool calling, streaming, and reasoning output
-(`--reasoning-format deepseek`) are all supported; local turns are recorded at
-Set `ASTERISK_OPENAI_API_KEY` only if the endpoint is a
-hosted service that needs one.
+(`--reasoning-format deepseek`) are all supported. Set
+`ASTERISK_OPENAI_API_KEY` only if the endpoint is a hosted service that needs
+one.
 
 ```bash
 asterisk                # interactive REPL
@@ -688,7 +688,10 @@ and clear the message queue.
   model emits multiple in one turn.
 - **Context compaction** — the budget is 60% of the context window the
   active provider reports. Over it, old tool results and long text blocks
-  are truncated while keeping the 6 most recent messages intact.
+  are truncated while keeping the 6 most recent messages intact. Token
+  counting is a character-class estimate, not `chars / 4`: CJK counts near
+  one token per character and punctuation-dense code above the prose rate,
+  because under-counting those is what silently overflows a window.
 - **Large result persistence** — tool outputs > 8 KB are saved to
   `~/.asterisk/outputs/` with a 500-char preview kept in context.
 - **Prompt caching** — Anthropic provider sends the system prompt with

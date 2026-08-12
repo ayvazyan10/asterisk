@@ -172,38 +172,36 @@ describe('concurrency', () => {
 // ─── compaction ────────────────────────────────────────────────────────
 
 describe('compaction', () => {
-  it('estimateTokens counts text block chars divided by 4', () => {
-    const messages: Message[] = [makeMessage('user', 'x'.repeat(400))];
-    expect(estimateTokens(messages)).toBe(100);
+  // The estimate's own behaviour lives in tests/tokens.test.ts. What matters
+  // here is only that every block type reaches it — a block silently counted
+  // as zero is how a history sails past the budget.
+  it('estimateTokens counts text blocks', () => {
+    const small = estimateTokens([makeMessage('user', 'x'.repeat(40))]);
+    const large = estimateTokens([makeMessage('user', 'x'.repeat(4000))]);
+    expect(large).toBeGreaterThan(small * 10);
   });
 
   it('estimateTokens counts tool_result content', () => {
-    const messages: Message[] = [makeToolResultMessage('y'.repeat(800))];
-    expect(estimateTokens(messages)).toBe(200);
+    const small = estimateTokens([makeToolResultMessage('y'.repeat(40))]);
+    const large = estimateTokens([makeToolResultMessage('y'.repeat(4000))]);
+    expect(large).toBeGreaterThan(small * 10);
   });
 
   it('estimateTokens counts tool_use name + stringified input', () => {
-    const messages: Message[] = [
+    const withInput: Message[] = [
       {
         role: 'assistant',
-        content: [
-          {
-            type: 'tool_use',
-            id: 'tu-1',
-            name: 'Bash',
-            input: { command: 'echo hi' },
-          },
-        ],
+        content: [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'echo hi' } }],
       },
     ];
-    const inputStr = JSON.stringify({ command: 'echo hi' });
-    const expected = Math.ceil((inputStr.length + 'Bash'.length) / 4);
-    expect(estimateTokens(messages)).toBe(expected);
+    const bare: Message[] = [
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: {} }] },
+    ];
+    expect(estimateTokens(withInput)).toBeGreaterThan(estimateTokens(bare));
   });
 
-  it('estimateTokens rounds up', () => {
-    const messages: Message[] = [makeMessage('user', 'x'.repeat(5))];
-    expect(estimateTokens(messages)).toBe(2); // ceil(5/4) = 2
+  it('estimateTokens returns a whole number', () => {
+    expect(Number.isInteger(estimateTokens([makeMessage('user', 'x'.repeat(5))]))).toBe(true);
   });
 
   it('compactHistory is no-op when under threshold', () => {

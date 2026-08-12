@@ -7,6 +7,10 @@
 // overflowed roughly 19% *before* compaction was ever attempted. The threshold
 // is now derived from the window the active provider actually reports.
 //
+// The estimate itself was `chars / 4`, which under-counts CJK by roughly 4x
+// and punctuation-dense code by 2–3x — see tokens.ts. Under-counting is the
+// direction that hurts: it reports a history as fitting when it does not.
+//
 // And compaction only ever *shortened* blocks: a history made of many small
 // messages could sit above the threshold permanently, with every turn paying to
 // rebuild the whole array and nothing getting smaller. When shortening is not
@@ -15,6 +19,7 @@
 // prevent.
 
 import type { ContentBlock, Message } from '../types/messages.ts';
+import { estimateTextTokens, messageOverhead } from './tokens.ts';
 
 /** Used when the provider does not report a window. */
 export const DEFAULT_CONTEXT_WINDOW = 128_000;
@@ -33,20 +38,39 @@ const KEEP_RECENT = 6;
 const TOOL_RESULT_MAX = 200;
 const TEXT_MAX = 500;
 
-export function estimateTokens(messages: readonly Message[]): number {
-  let chars = 0;
-  for (const msg of messages) {
-    for (const block of msg.content) {
-      if (block.type === 'text') chars += block.text.length;
-      else if (block.type === 'tool_result') chars += block.content.length;
-      else if (block.type === 'tool_use')
-        chars += JSON.stringify(block.input).length + block.name.length;
+/**
+ * Per-message cost, memoised on the message object.
+ *
+ * `dropOldest` re-estimates the remaining history on every iteration, which is
+ * quadratic in message count. That was free when the estimate was
+ * `text.length / 4`; a character-class model is not, and without this cache a
+ * 60-message history took over a minute to compact. Messages are treated as
+ * immutable everywhere in the loop — compaction builds new objects rather than
+ * editing them — so identity is a sound cache key.
+ */
+const messageCost = new WeakMap<object, number>();
+
+function messageTokens(msg: Message): number {
+  const cached = messageCost.get(msg);
+  if (cached !== undefined) return cached;
+
+  let total = messageOverhead();
+  for (const block of msg.content) {
+    if (block.type === 'text') total += estimateTextTokens(block.text);
+    else if (block.type === 'tool_result') total += estimateTextTokens(block.content);
+    else if (block.type === 'tool_use') {
+      total += estimateTextTokens(block.name) + estimateTextTokens(JSON.stringify(block.input));
     }
   }
-  // Four characters per token is a rough English-prose average and it
-  // under-counts code and CJK. Replacing it with a real tokenizer is a separate
-  // change; until then the 0.6 budget above absorbs the error.
-  return Math.ceil(chars / 4);
+
+  messageCost.set(msg, total);
+  return total;
+}
+
+export function estimateTokens(messages: readonly Message[]): number {
+  let total = 0;
+  for (const msg of messages) total += messageTokens(msg);
+  return Math.ceil(total);
 }
 
 /** Token budget history may occupy for a given context window. */
