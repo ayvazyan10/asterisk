@@ -45,9 +45,7 @@ function main(): void {
   const notes = extractReleaseNotes(changelog, version);
 
   if (notes === null) {
-    console.error(
-      `CHANGELOG.md has no "## [${version}]" section. Write the entry before tagging.`,
-    );
+    console.error(`CHANGELOG.md has no "## [${version}]" section. Write the entry before tagging.`);
     process.exit(1);
   }
 

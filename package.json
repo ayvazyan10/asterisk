@@ -37,9 +37,9 @@
   "scripts": {
     "build": "bun scripts/build.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check src/ tests/",
-    "lint:fix": "biome check --write src/ tests/",
-    "format": "biome format --write src/ tests/",
+    "lint": "biome check src/ tests/ scripts/",
+    "lint:fix": "biome check --write src/ tests/ scripts/",
+    "format": "biome format --write src/ tests/ scripts/",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "bun src/entrypoints/cli.tsx",
