@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sub-agents share one filesystem view.
 - **A SKILL.md contract** — frontmatter validation with actionable errors, plus
   `/skills validate`. Previously a malformed skill was silently skipped.
+- **`asterisk eval`** — scenario harness graded by objective criteria, offline
+  in CI and `--live` against a real model.
+- **`asterisk acp`** — Agent Client Protocol server on stdio, so an editor can
+  drive the agent. Documented core only; unproven against a real ACP client.
+- **`Forget`** — delete a note by id from long-term memory.
+- **Local-model robustness** — tool calls emitted as text, invented namespaced
+  tool names, unparseable arguments, empty completions and runaway repetition
+  are all recovered or reported instead of ending the turn.
 - **Provider fallback chain** (`providerFallback`) — try another backend when
   the primary is unreachable, without replaying a rejected request or
   restarting a reply that has already begun streaming.

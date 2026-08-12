@@ -205,6 +205,26 @@ already on the user's screen. The chain advertises the smallest context window
 of its links, because history is budgeted once and answered by whichever link
 takes it.
 
+### ~~Self-eval harness~~ ✓ shipped
+`asterisk eval` runs scenarios against objective criteria — a file contains X,
+a tool was called, the sequence was Edit→Read→Edit — rather than against
+whether an answer reads well. Runs offline in CI with a scripted provider,
+`--live` for a real model. A guard test requires every scenario to carry at
+least one objective criterion, so a model-graded-only scenario cannot go
+permanently green.
+
+### ~~Local-model robustness~~ ✓ shipped
+Fixed against a live llama.cpp server: tool calls emitted as text instead of
+through the tool-call channel, a namespaced tool name the model invented for
+itself, unparseable or prose-wrapped arguments, empty completions that were
+pushing `content: []` into history, and runaway repetition. Ollama-side changes
+are fixture-driven — Ollama was not running.
+
+### ~~Agent Client Protocol server~~ ✓ shipped
+`asterisk acp` speaks ACP over stdio so an editor can drive Asterisk.
+Implements the documented core and answers method-not-found for the rest,
+which the capabilities honestly advertise. Unproven against a real ACP client.
+
 ## Tier 3 — Speculative, not committed
 
 ### ~~Web dashboard~~ ✓ shipped as the control panel
