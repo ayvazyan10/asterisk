@@ -7,8 +7,8 @@ here into commits as they ship.
 
 The original Tier 1 has shipped or been dropped, and so has the OS-level
 sandbox. What remains here is extending that boundary to the in-process file
-tools. After that, the next items to promote come from Tier 2: image content
-blocks and the multi-agent coordinator.
+tools. After that, the next item to promote from Tier 2 is the multi-agent
+coordinator.
 
 ### ~~Skill marketplace~~ — dropped
 Cut on 2026-07-31. The bundled set stays the whole story; skills are still
@@ -123,11 +123,19 @@ format and is absorbed on first run.
 Checks Ollama/Anthropic connectivity, system tools (git, rg, bun, node,
 playwright), MCP servers, config files, daemon status.
 
-### Image content blocks for the model
-Today the agent calls `BrowserScreenshot` and only sees the file path.
-Pipe the actual image bytes back through Anthropic's vision-capable
-content blocks (and Ollama's vision models when present) so the agent
-can *read* its own screenshots.
+### ~~Image content blocks for the model~~ ✓ shipped
+`BrowserScreenshot` now returns an image attachment, and the agent loop turns
+it into a content block carried in the same user message as the tool results —
+a separate message would put two user turns back to back, which the Anthropic
+API rejects. Mapped per provider: Anthropic nests base64 under `source`,
+Ollama takes an `images` array on the message, OpenAI-compatible endpoints take
+a `data:` URI part. Each of those silently ignores a block it does not
+recognise, so the mapping is the whole feature and it is tested per provider.
+
+Capped by the `vision` settings — size, count per turn, and how many survive in
+history, because one screenshot costs well over a thousand tokens and two can
+outweigh an entire text conversation. Older images become a note naming what
+was dropped.
 
 ### ~~Model-side context compaction~~ ✓ shipped
 `compactHistory()` runs at the top of each turn against a budget of 60% of

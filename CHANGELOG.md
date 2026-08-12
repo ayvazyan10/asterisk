@@ -5,6 +5,33 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **The agent can see its screenshots.** `BrowserScreenshot` feeds the image
+  back to the model as a content block rather than only reporting a path.
+  Mapped per provider (Anthropic `source`, Ollama `images`, OpenAI-compatible
+  `image_url`) — each silently ignores an unrecognised block, so the mapping is
+  the feature. New `vision` settings cap size, count per turn, and how many
+  images survive in history.
+- **Bash runs in an OS sandbox** — bubblewrap on Linux, seatbelt on macOS, with
+  a containment probe that refuses to trust a backend that has not demonstrated
+  it works. See the README's Sandbox section for what it does and does not
+  cover.
+- **Dropped history is summarised** rather than replaced by a bare count.
+- **`/permissions`** and the Bash permission boundary.
+
+### Changed
+
+- Token counting is a character-class estimate instead of `chars / 4`, which
+  under-counted Chinese by 3.7x and let CJK conversations overflow the window
+  with compaction never firing.
+- Interactive tools are no longer killed by the 120s runaway-work deadline, so
+  a prompt can actually wait for a person.
+- `registry.ts` split into per-domain command modules; lint covers `scripts/`
+  and holds at zero warnings.
+
 ## [0.2.0] - 2026-08-12
 
 Everything between the initial release and today, gathered into one entry.

@@ -280,6 +280,41 @@ const SandboxSchema = z.object({
     ),
 });
 
+// Whether the agent can see images, and how much context they may occupy.
+// A screenshot costs well over a thousand tokens, so the caps matter as much
+// as the switch.
+const VisionSchema = z.object({
+  enabled: z
+    .boolean()
+    .default(true)
+    .describe(
+      'Send screenshots and other image attachments to the model. Turn off for a text-only model that errors on image input.',
+    ),
+  maxPerTurn: z
+    .number()
+    .int()
+    .min(0)
+    .max(8)
+    .default(2)
+    .describe('Most images attached to a single turn. Extra ones are named but not sent.'),
+  maxBytes: z
+    .number()
+    .int()
+    .min(0)
+    .max(20_000_000)
+    .default(4_000_000)
+    .describe('Largest image that will be sent. Anything bigger is reported to the agent instead.'),
+  keepInHistory: z
+    .number()
+    .int()
+    .min(0)
+    .max(8)
+    .default(2)
+    .describe(
+      'How many of the most recent images stay in history. Older ones become a note — an old screenshot is rarely what the model needs.',
+    ),
+});
+
 // Hooks fire at agent-loop lifecycle events. Each hook is a shell command
 // run with the event payload on stdin (JSON). Stdout is logged into the
 // transcript as a system note; non-zero exit logs the stderr too.
@@ -345,6 +380,7 @@ export const ConfigSchema = z.object({
   web: WebSchema.default({}),
   permissions: PermissionsSchema.default({}),
   sandbox: SandboxSchema.default({}),
+  vision: VisionSchema.default({}),
   outputStyle: OutputStyleSchema.default('default').describe(
     'Behaviour modifier spliced into the system prompt.',
   ),

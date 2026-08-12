@@ -203,6 +203,10 @@ The agent has these tools out of the box:
 **Filesystem & shell**
 `Bash` · `Read` · `Write` · `Edit` · `Grep` · `Glob`
 
+The agent can **see** the screenshots it takes: `BrowserScreenshot` feeds the
+image back through the model's vision input, capped and evicted from history
+by the `vision` settings. Turn it off for a text-only model.
+
 **Browser (real Chromium via Playwright)**
 `BrowserNavigate` · `BrowserClick` · `BrowserType` · `BrowserPress` ·
 `BrowserSnapshot` · `BrowserScreenshot` · `BrowserWait` · `BrowserClose`
@@ -568,6 +572,12 @@ the panel's **Download JSON** button produces and **Upload JSON** accepts:
     }
   },
   "daemon": { "logLevel": "info", "heartbeatSeconds": 60 },
+  "vision": {                                 // images sent to the model
+    "enabled": true,                          // off for a text-only model
+    "maxPerTurn": 2,
+    "maxBytes": 4000000,
+    "keepInHistory": 2                        // older ones become a note
+  },
   "sandbox": {                                // what a command may reach — see "Sandbox"
     "mode": "auto",                           // "auto" | "required" | "off"
     "network": true,                          // off blocks installs, git push, curl
@@ -766,8 +776,6 @@ coordinator, and others.
 - Tasks, plan-mode, and worktree state live in memory; daemon restart
   wipes them. Conversation history now persists across daemon restarts
   (7-day expiry), but task lists do not.
-- No image content blocks back to the model, so it can't *see* the
-  screenshots it captures (tracked).
 - **The sandbox covers `Bash` only.** `Read`, `Write` and `Edit` run
   in-process, so no child-process sandbox can reach them; they are bounded by
   the workspace guard instead, which `ASTERISK_NO_WORKSPACE_GUARD=1` disables.

@@ -19,7 +19,7 @@
 // prevent.
 
 import type { ContentBlock, Message } from '../types/messages.ts';
-import { estimateTextTokens, messageOverhead } from './tokens.ts';
+import { estimateImageTokens, estimateTextTokens, messageOverhead } from './tokens.ts';
 
 /** Used when the provider does not report a window. */
 export const DEFAULT_CONTEXT_WINDOW = 128_000;
@@ -67,6 +67,7 @@ function messageTokens(msg: Message): number {
   let total = messageOverhead();
   for (const block of msg.content) {
     if (block.type === 'text') total += estimateTextTokens(block.text);
+    else if (block.type === 'image') total += estimateImageTokens(block.data.length);
     else if (block.type === 'tool_result') total += estimateTextTokens(block.content);
     else if (block.type === 'tool_use') {
       total += estimateTextTokens(block.name) + estimateTextTokens(JSON.stringify(block.input));

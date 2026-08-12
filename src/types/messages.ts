@@ -23,7 +23,25 @@ export interface ToolResultBlock {
   is_error?: boolean;
 }
 
-export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+/**
+ * An image the model can actually look at.
+ *
+ * Carried as base64 rather than a path because every provider wants the bytes
+ * inline — Anthropic as a base64 source, Ollama as an `images` array on the
+ * message, OpenAI-compatible endpoints as a `data:` URI. A path would only be
+ * meaningful to a model running on this machine, which is not a promise
+ * Asterisk can make.
+ */
+export interface ImageBlock {
+  type: 'image';
+  /** Raw base64, with no `data:` prefix. */
+  data: string;
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  /** Where it came from, for transcripts and error messages. */
+  source?: string;
+}
+
+export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock | ImageBlock;
 
 export interface Message {
   role: Role;

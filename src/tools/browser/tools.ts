@@ -302,7 +302,13 @@ export const browserScreenshotTool: Tool = {
           openMessage = `\nopen failed: ${(e as Error).message}`;
         }
       }
-      return ok(`screenshot saved · ${target}\nfile://${target}${openMessage}`);
+      // The attachment is what lets the *agent* see the shot: the loop turns
+      // image attachments into content blocks the model receives. It is also
+      // what the REPL renders inline, so the path is reported once, here.
+      return {
+        ...ok(`screenshot saved · ${target}\nfile://${target}${openMessage}`),
+        attachments: [{ kind: 'image' as const, path: target }],
+      };
     } catch (e) {
       return err(`BrowserScreenshot failed: ${(e as Error).message}`);
     }

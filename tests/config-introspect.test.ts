@@ -86,6 +86,7 @@ describe('settings registry', () => {
       'web',
       'permissions',
       'sandbox',
+      'vision',
       'outputStyle',
     ]);
   });

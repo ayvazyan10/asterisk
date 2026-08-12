@@ -112,6 +112,20 @@ export function estimateTextTokens(text: string): number {
   return total;
 }
 
+/**
+ * Estimated tokens for an image, from the size of its base64 payload.
+ *
+ * Anthropic bills roughly (width × height) / 750, which needs dimensions we
+ * would have to decode the file to learn. Bytes are a usable stand-in: a
+ * 100KB screenshot lands near 1.1k tokens, a 1MB one near the 1.6k cap that
+ * matches a full 1568px-edge image. Rough, and deliberately not cheap — the
+ * failure that matters is under-counting an image and overflowing the window.
+ */
+export function estimateImageTokens(base64Length: number): number {
+  const bytes = Math.ceil((base64Length * 3) / 4);
+  return Math.min(1600, 750 + Math.round(bytes / 900));
+}
+
 /** Per-message framing cost, exported so callers can reason about the total. */
 export function messageOverhead(): number {
   return MESSAGE_OVERHEAD;

@@ -1,0 +1,207 @@
+// The agent used to take screenshots and learn only where it had put them.
+//
+// What these tests guard is mostly the ways an image can go missing without
+// anyone noticing: a provider that accepts an unknown block and silently drops
+// it, a file too large to send, an old screenshot crowding out the whole
+// history. A picture that is quietly not delivered is worse than one that
+// fails loudly — the agent describes it anyway.
+
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { estimateTokens } from '../src/agent/compaction.ts';
+import { evictOldImages, mediaTypeFor, readImageBlock } from '../src/agent/images.ts';
+import { estimateImageTokens } from '../src/agent/tokens.ts';
+import { toOpenAiMessages } from '../src/providers/openai-compatible.ts';
+import type { ImageBlock, Message } from '../src/types/messages.ts';
+
+// A one-pixel PNG, so the tests exercise real bytes rather than a stub.
+const PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+let dir: string;
+
+beforeEach(async () => {
+  dir = await mkdtemp(join(tmpdir(), 'asterisk-img-'));
+});
+afterEach(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
+
+function image(data = 'AAAA', source = '/shot.png'): ImageBlock {
+  return { type: 'image', data, mediaType: 'image/png', source };
+}
+
+describe('mediaTypeFor', () => {
+  it.each([
+    ['a.png', 'image/png'],
+    ['a.JPG', 'image/jpeg'],
+    ['a.jpeg', 'image/jpeg'],
+    ['a.webp', 'image/webp'],
+    ['a.gif', 'image/gif'],
+  ])('maps %s', (name, expected) => {
+    expect(mediaTypeFor(name)).toBe(expected);
+  });
+
+  it('refuses formats the providers do not accept', () => {
+    expect(mediaTypeFor('a.bmp')).toBeNull();
+    expect(mediaTypeFor('a.txt')).toBeNull();
+    expect(mediaTypeFor('noextension')).toBeNull();
+  });
+});
+
+describe('readImageBlock', () => {
+  it('reads a real file into base64', async () => {
+    const path = join(dir, 'shot.png');
+    await writeFile(path, Buffer.from(PNG_BASE64, 'base64'));
+
+    const result = await readImageBlock(path, 1_000_000);
+
+    expect('block' in result).toBe(true);
+    if ('block' in result) {
+      expect(result.block.mediaType).toBe('image/png');
+      expect(result.block.data).toBe(PNG_BASE64);
+      expect(result.block.source).toBe(path);
+    }
+  });
+
+  it('skips a file over the size limit, and says by how much', async () => {
+    const path = join(dir, 'big.png');
+    await writeFile(path, Buffer.alloc(5000));
+
+    const result = await readImageBlock(path, 1000);
+
+    expect('skipped' in result).toBe(true);
+    if ('skipped' in result) expect(result.skipped).toMatch(/over the/);
+  });
+
+  it('reports a missing file rather than throwing', async () => {
+    const result = await readImageBlock(join(dir, 'nope.png'), 1_000_000);
+    expect('skipped' in result).toBe(true);
+  });
+
+  it('refuses a directory', async () => {
+    const result = await readImageBlock(dir, 1_000_000);
+    expect('skipped' in result).toBe(true);
+  });
+});
+
+describe('evictOldImages', () => {
+  const history = (): Message[] => [
+    { role: 'user', content: [{ type: 'text', text: 'look' }, image('A', '/one.png')] },
+    { role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
+    { role: 'user', content: [image('B', '/two.png')] },
+    { role: 'user', content: [image('C', '/three.png')] },
+  ];
+
+  it('keeps the most recent and replaces the rest with a note', () => {
+    const out = evictOldImages(history(), 1);
+    const images = out.flatMap((m) => m.content.filter((b) => b.type === 'image'));
+
+    expect(images).toHaveLength(1);
+    expect((images[0] as ImageBlock).data).toBe('C');
+    // Named, not silently forgotten — otherwise the model has no idea it ever
+    // saw the earlier one.
+    expect(JSON.stringify(out)).toContain('/one.png');
+    expect(JSON.stringify(out)).toContain('was dropped');
+  });
+
+  it('leaves surrounding text intact', () => {
+    const out = evictOldImages(history(), 0);
+    expect(JSON.stringify(out)).toContain('look');
+    expect(out.flatMap((m) => m.content.filter((b) => b.type === 'image'))).toHaveLength(0);
+  });
+
+  it('does nothing when already within the limit', () => {
+    const input = history();
+    expect(evictOldImages(input, 5)).toBe(input);
+  });
+});
+
+describe('token accounting', () => {
+  it('charges an image far more than its text neighbours', () => {
+    const withImage = estimateTokens([{ role: 'user', content: [image('x'.repeat(4000))] }]);
+    const withText = estimateTokens([{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]);
+    // An image the compaction budget treats as free is how a window overflows.
+    expect(withImage).toBeGreaterThan(withText * 50);
+  });
+
+  it('grows with payload size but stays capped', () => {
+    expect(estimateImageTokens(400_000)).toBeGreaterThan(estimateImageTokens(4_000));
+    expect(estimateImageTokens(50_000_000)).toBeLessThanOrEqual(1600);
+  });
+});
+
+describe('provider mapping', () => {
+  it('sends OpenAI-compatible images as a data URI part', () => {
+    const out = toOpenAiMessages('', [
+      { role: 'user', content: [{ type: 'text', text: 'what is this' }, image('QUJD')] },
+    ]);
+
+    const user = out.find((m) => m.role === 'user');
+    expect(Array.isArray(user?.content)).toBe(true);
+    const parts = user?.content as Array<Record<string, unknown>>;
+    expect(parts.some((p) => p['type'] === 'text')).toBe(true);
+    const imagePart = parts.find((p) => p['type'] === 'image_url');
+    expect(imagePart).toBeDefined();
+    expect(JSON.stringify(imagePart)).toContain('data:image/png;base64,QUJD');
+  });
+
+  it('keeps plain text as a bare string, not a parts array', () => {
+    // Only vision endpoints accept the array form, so a text-only conversation
+    // must not start sending it.
+    const out = toOpenAiMessages('', [
+      { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+    ]);
+    expect(out.find((m) => m.role === 'user')?.content).toBe('hello');
+  });
+});
+
+describe('provider mapping — Ollama', () => {
+  it('hoists images onto the message rather than leaving them as blocks', async () => {
+    const { flattenForOllama } = await import('../src/providers/ollama.ts');
+    const out = flattenForOllama([
+      { role: 'user', content: [{ type: 'text', text: 'what is this' }, image('QUJD')] },
+    ]);
+
+    // Ollama's /api/chat takes `images` on the message; a content block it does
+    // not recognise is dropped without complaint.
+    expect(out[0]?.images).toEqual(['QUJD']);
+    expect(out[0]?.content).toBe('what is this');
+  });
+
+  it('emits a message for an image even with no accompanying text', async () => {
+    const { flattenForOllama } = await import('../src/providers/ollama.ts');
+    const out = flattenForOllama([{ role: 'user', content: [image('QUJD')] }]);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.images).toEqual(['QUJD']);
+  });
+
+  it('leaves a text-only message without an images field', async () => {
+    const { flattenForOllama } = await import('../src/providers/ollama.ts');
+    const out = flattenForOllama([{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]);
+    expect(out[0]?.images).toBeUndefined();
+  });
+});
+
+describe('provider mapping — Anthropic', () => {
+  it('nests the payload under source, as the API expects', async () => {
+    const { toAnthropicContent } = await import('../src/providers/anthropic.ts');
+    const [block] = toAnthropicContent([image('QUJD')]) as Array<Record<string, unknown>>;
+
+    // Passing our flat shape through unchanged is accepted as an unknown block
+    // rather than rejected, so the model simply never sees the picture.
+    expect(block).toEqual({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'QUJD' },
+    });
+  });
+
+  it('passes every other block through untouched', async () => {
+    const { toAnthropicContent } = await import('../src/providers/anthropic.ts');
+    const text = { type: 'text' as const, text: 'hi' };
+    expect(toAnthropicContent([text])[0]).toBe(text);
+  });
+});

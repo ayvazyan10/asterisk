@@ -18,6 +18,25 @@ interface AnthropicConfig {
 // Haiku 3.5 retired 2026-02-19; `claude-haiku-4-5` is its replacement.
 const DEFAULT_MODEL = process.env['ANTHROPIC_MODEL'] ?? 'claude-haiku-4-5';
 
+/**
+ * Bridges our content blocks to the Anthropic wire shape.
+ *
+ * Text, tool_use and tool_result already line up field for field, which is why
+ * the rest of this file gets away with a cast. Images do not: ours carries the
+ * base64 and media type flat, Anthropic nests them under `source`, and passing
+ * ours through unchanged is silently accepted as an unknown block rather than
+ * rejected — the model simply never sees the picture.
+ */
+export function toAnthropicContent(blocks: readonly ContentBlock[]): unknown[] {
+  return blocks.map((block) => {
+    if (block.type !== 'image') return block;
+    return {
+      type: 'image',
+      source: { type: 'base64', media_type: block.mediaType, data: block.data },
+    };
+  });
+}
+
 export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}): Provider {
   const apiKey = overrides.apiKey ?? process.env['ANTHROPIC_API_KEY'] ?? '';
   if (!apiKey) {
@@ -50,7 +69,9 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
           // closely enough; cast through unknown to bridge the structural gap.
           messages: req.messages.map((m) => ({
             role: m.role === 'system' ? 'user' : m.role,
-            content: m.content as unknown as Anthropic.Messages.MessageParam['content'],
+            content: toAnthropicContent(
+              m.content,
+            ) as unknown as Anthropic.Messages.MessageParam['content'],
           })),
           tools: req.tools.map((t) => ({
             name: t.name,

@@ -78,7 +78,10 @@ interface WireResponse {
 
 interface OutMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content?: string | null;
+  // A string for the ordinary case; the array form is what carries images, and
+  // only vision-capable endpoints accept it — hence only used when there is an
+  // image to send.
+  content?: string | null | Array<Record<string, unknown>>;
   tool_calls?: Array<{
     id: string;
     type: 'function';
@@ -105,6 +108,9 @@ export function toOpenAiMessages(system: string, messages: readonly Message[]): 
       .map((b) => b.text)
       .join('\n')
       .trim();
+    const images = message.content.filter(
+      (b): b is Extract<ContentBlock, { type: 'image' }> => b.type === 'image',
+    );
     const toolUses = message.content.filter((b): b is ToolUseBlock => b.type === 'tool_use');
     const toolResults = message.content.filter(
       (b): b is Extract<ContentBlock, { type: 'tool_result' }> => b.type === 'tool_result',
@@ -132,7 +138,21 @@ export function toOpenAiMessages(system: string, messages: readonly Message[]): 
         content: result.is_error ? `ERROR: ${result.content}` : result.content,
       });
     }
-    if (text) out.push({ role: 'user', content: text });
+    if (images.length > 0) {
+      // The multimodal shape: an array of parts rather than a bare string.
+      // Reference: https://platform.openai.com/docs/guides/vision
+      const parts: Array<Record<string, unknown>> = [];
+      if (text) parts.push({ type: 'text', text });
+      for (const image of images) {
+        parts.push({
+          type: 'image_url',
+          image_url: { url: `data:${image.mediaType};base64,${image.data}` },
+        });
+      }
+      out.push({ role: 'user', content: parts });
+    } else if (text) {
+      out.push({ role: 'user', content: text });
+    }
   }
 
   return out;

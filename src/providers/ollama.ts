@@ -39,6 +39,9 @@ interface OllamaMessage {
   thinking?: string;
   tool_calls?: OllamaToolCall[];
   tool_name?: string;
+  /** base64 images, no data: prefix. Vision models read these; text-only
+   *  models ignore the field rather than failing the request. */
+  images?: string[];
 }
 
 interface OllamaChatResponse {
@@ -61,7 +64,7 @@ const DEFAULTS: OllamaConfig = {
   modelIdleTimeoutMs: Number(process.env['OLLAMA_MODEL_IDLE_TIMEOUT_MS'] ?? 90_000),
 };
 
-function flattenForOllama(messages: Message[]): OllamaMessage[] {
+export function flattenForOllama(messages: Message[]): OllamaMessage[] {
   // Ollama expects a flat string content per message and uses separate
   // entries for tool results. Translate Anthropic-style content blocks down.
   const out: OllamaMessage[] = [];
@@ -70,9 +73,13 @@ function flattenForOllama(messages: Message[]): OllamaMessage[] {
     const textParts: string[] = [];
     const toolCalls: OllamaToolCall[] = [];
     const toolResults: { id: string; content: string; isError: boolean }[] = [];
+    // Ollama hangs images off the message rather than treating them as content
+    // blocks, so they are collected here and attached below.
+    const images: string[] = [];
 
     for (const block of msg.content) {
       if (block.type === 'text') textParts.push(block.text);
+      else if (block.type === 'image') images.push(block.data);
       else if (block.type === 'tool_use') {
         toolCalls.push({
           function: { name: block.name, arguments: block.input },
@@ -87,8 +94,10 @@ function flattenForOllama(messages: Message[]): OllamaMessage[] {
     }
 
     if (msg.role === 'user' || msg.role === 'system') {
-      if (textParts.length > 0) {
-        out.push({ role: msg.role, content: textParts.join('\n') });
+      if (textParts.length > 0 || images.length > 0) {
+        const entry: OllamaMessage = { role: msg.role, content: textParts.join('\n') };
+        if (images.length > 0) entry.images = images;
+        out.push(entry);
       }
       for (const r of toolResults) {
         out.push({

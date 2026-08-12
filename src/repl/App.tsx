@@ -364,15 +364,6 @@ export function App({ initialProvider, state, mcp }: Props) {
             } else {
               append(kind, oneLine, full);
             }
-            // Try to render screenshots inline when the terminal supports it.
-            if (name === 'BrowserScreenshot' && !isError) {
-              const m = /screenshot saved · (\S.+?)(?:\n|$)/.exec(output);
-              const path = m?.[1]?.trim();
-              if (path && detectInlineProtocol()) {
-                // Side-effect: writes escape sequences directly to stdout.
-                renderInlineImage(path);
-              }
-            }
           },
           onRetry: (attempt, delayMs, why) => {
             setWorkingStatus(`retrying (#${attempt} in ${Math.round(delayMs / 1000)}s)`);

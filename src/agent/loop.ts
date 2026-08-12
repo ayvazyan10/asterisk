@@ -28,6 +28,7 @@ import { retry } from '../utils/retry.ts';
 import { compactHistory, compactHistoryWithSummary } from './compaction.ts';
 import { type AgentSession, runWithSession } from './context.ts';
 import { completeToolResults, repairHistory } from './history.ts';
+import { collectImageBlocks, evictOldImages, imageLimits } from './images.ts';
 import { persistOutput, shouldPersistOutput } from './output-store.ts';
 import { summariseMessages } from './summarise.ts';
 
@@ -269,6 +270,12 @@ async function runAgentTurnInner(
       // actually about to discard messages; compactHistoryWithSummary decides
       // that internally and skips the callback otherwise. A summariser that
       // fails returns null and the plain drop notice is used instead.
+      // Before budgeting: an old screenshot is almost never what the model
+      // needs, and two of them can outweigh the entire text history. Guarded so
+      // a text-only conversation never reads configuration for this.
+      if (state.history.some((m) => m.content.some((b) => b.type === 'image'))) {
+        state.history = evictOldImages(state.history, imageLimits().keepInHistory);
+      }
       state.history = repairHistory(
         opts.summariseDropped === false
           ? compactHistory(state.history, provider.contextWindow)
@@ -392,6 +399,9 @@ async function runAgentTurnInner(
       // Run tool calls in batches — consecutive concurrency-safe tools run
       // in parallel via Promise.all; everything else runs sequentially.
       const toolResults: ContentBlock[] = [];
+      // Paths of images produced this turn, fed back to the model below so it
+      // can look at its own screenshots instead of only knowing where they are.
+      const imagePaths: string[] = [];
       const batches = partitionTools(toolUses);
 
       for (const batch of batches) {
@@ -473,15 +483,15 @@ async function runAgentTurnInner(
             const exec = await runToolWithTimeout(tool, toolInput, deadlineMs, signal);
             output = exec.output;
             isError = exec.isError;
-            if (exec.attachments && opts.onAttachment) {
-              for (const a of exec.attachments) {
-                const forwarded: { kind: string; path: string; caption?: string } = {
-                  kind: a.kind,
-                  path: a.path,
-                };
-                if (a.caption !== undefined) forwarded.caption = a.caption;
-                opts.onAttachment(forwarded);
-              }
+            for (const a of exec.attachments ?? []) {
+              if (a.kind === 'image') imagePaths.push(a.path);
+              if (!opts.onAttachment) continue;
+              const forwarded: { kind: string; path: string; caption?: string } = {
+                kind: a.kind,
+                path: a.path,
+              };
+              if (a.caption !== undefined) forwarded.caption = a.caption;
+              opts.onAttachment(forwarded);
             }
           }
           // Callback receives the ORIGINAL output, not the persisted version.
@@ -532,10 +542,16 @@ async function runAgentTurnInner(
       // unanswered tool_use makes every later request fail with a 400 that is
       // classified non-retryable, and the caller persists this history, so the
       // conversation stays broken across restarts and /resume.
-      state.history.push({
-        role: 'user',
-        content: completeToolResults(response.content, toolResults),
-      });
+      // Images ride in the SAME user message as the tool results. A separate
+      // message would put two user turns back to back, which the Anthropic API
+      // rejects outright.
+      const answered: ContentBlock[] = completeToolResults(response.content, toolResults);
+      if (imagePaths.length > 0) {
+        const { blocks, notes } = await collectImageBlocks(imagePaths);
+        for (const note of notes) answered.push({ type: 'text', text: note });
+        answered.push(...blocks);
+      }
+      state.history.push({ role: 'user', content: answered });
 
       if ((reason as TerminalReason) === 'aborted') break;
 
