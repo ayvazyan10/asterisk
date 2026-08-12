@@ -714,7 +714,11 @@ moving the security — so "installed" is never taken as "working".
 
 `sandbox.network` (default on) controls network access — turning it off blocks
 package installs and `git push` along with everything else.
-`sandbox.writablePaths` adds paths beyond the workspace and `/tmp`.
+`sandbox.writablePaths` adds paths beyond the workspace, and governs the
+in-process `Write` and `Edit` as well as the shell — one setting, one boundary.
+The two differ in exactly one place: `/tmp` is writable by the shell and not by
+the file tools, because reaching for it through `Bash` costs an approval prompt
+and reaching for it through `Write` costs nothing.
 
 `/doctor` reports which backend is active and why. If it says `none`, you are
 not sandboxed:
@@ -793,10 +797,11 @@ coordinator, and others.
   wipes them. Conversation history now persists across daemon restarts
   (7-day expiry), but task lists do not.
 - **The sandbox covers `Bash` only.** `Read`, `Write` and `Edit` run
-  in-process, so no child-process sandbox can reach them; they are bounded by
-  the workspace guard instead, which `ASTERISK_NO_WORKSPACE_GUARD=1` disables.
-  The two boundaries nearly coincide — workspace-only writes either way — but
-  they are enforced by different code and configured separately.
+  in-process, so no child-process sandbox can reach them. They share the same
+  writable set — one `sandbox.writablePaths` setting governs both — but a path
+  check is a check, while bubblewrap is a kernel boundary. Only the file tools
+  can be turned off with `ASTERISK_NO_WORKSPACE_GUARD=1`; `Bash` stays confined
+  and still needs approval.
 - **Reads are not confined.** The sandbox restricts what a command can
   *change*, not what it can see. A command you approve can read any file your
   user can.

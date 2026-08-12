@@ -28,6 +28,7 @@ import {
   seatbeltProfile,
 } from './sandbox-profiles.ts';
 import { workspaceRoot } from './workspace.ts';
+import { writablePaths } from './write-policy.ts';
 
 export type { SandboxBackend, SandboxPolicy } from './sandbox-profiles.ts';
 
@@ -55,24 +56,23 @@ export function _resetSandboxForTesting(): void {
 }
 
 /**
- * The writable set a command gets unless configuration overrides it.
+ * The writable set a sandboxed command gets.
  *
- * Deliberately short. `~/.asterisk` is *not* in it: the agent writes its
- * database, outputs and file history in-process, outside the sandbox, so a
- * shell command has no reason to write there — and leaving it read-only means
- * a command cannot rewrite the secret store or the permission grants that
- * decided it was allowed to run.
+ * Delegates to write-policy.ts so the shell and the in-process file tools
+ * share one configured set and cannot drift apart. The shell scope adds /tmp,
+ * which the file tools do not get — see that module's header for why the
+ * difference is deliberate.
+ *
+ * `~/.asterisk` is deliberately absent: the agent writes its database, outputs
+ * and file history in-process, outside the sandbox, so a shell command has no
+ * reason to write there — and leaving it read-only means a command cannot
+ * rewrite the secret store or the permission grants that let it run.
  *
  * Reads are not restricted. This confines what a command can change, not what
  * it can see; see the sandbox section of the README.
  */
 export function defaultWritablePaths(): string[] {
-  return normaliseWritablePaths([
-    workspaceRoot(),
-    // Already world-writable on any Unix, so confining it buys nothing and
-    // breaks every workflow that uses mktemp across two commands.
-    '/tmp',
-  ]);
+  return writablePaths('shell');
 }
 
 async function binaryExists(file: string): Promise<boolean> {

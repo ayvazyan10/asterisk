@@ -1,5 +1,11 @@
-// Workspace boundary guard. Edit / Write refuse to touch files outside
-// the workspace root unless the user opts out via ASTERISK_NO_WORKSPACE_GUARD=1.
+// The workspace root, and what "inside it" means.
+//
+// The write check that used to live here moved to write-policy.ts, which is
+// now the single answer for both the in-process file tools and the sandboxed
+// shell. They were two policies that disagreed — the shell could write /tmp
+// and Write/Edit could not — and the disagreement pushed the agent toward
+// Bash, the more capable tool. This module keeps only the root itself, which
+// plenty of other code needs.
 //
 // Why: agents sometimes go off-prompt and start modifying files in
 // unrelated directories (notably Asterisk's own installed source under
@@ -38,23 +44,4 @@ export function isInsideWorkspace(absPath: string): boolean {
   const root = workspaceRoot();
   if (absPath === root) return true;
   return absPath.startsWith(root + sep);
-}
-
-/** Throws ToolResult-shaped err message string when the path is outside
- *  the workspace root. Returns null when allowed (inside the workspace
- *  or guard disabled). Keeps the call site terse. */
-export function checkWorkspaceWritable(rawPath: string): string | null {
-  // Opt-out for power users / scripts that legitimately need to write
-  // outside (e.g. installer flows). Default is enforced.
-  if (process.env['ASTERISK_NO_WORKSPACE_GUARD'] === '1') return null;
-  const abs = resolve(rawPath);
-  if (isInsideWorkspace(abs)) return null;
-  const root = workspaceRoot();
-  return [
-    `refused: ${abs} is outside the workspace (${root}).`,
-    'The agent does not write outside its workspace by default. If this',
-    'was intentional, ask the user to (a) re-run from the right cwd,',
-    '(b) cd into the right directory, or (c) export ASTERISK_NO_WORKSPACE_GUARD=1',
-    'to disable this check globally.',
-  ].join(' ');
 }

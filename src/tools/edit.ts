@@ -5,7 +5,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { recordFileChange } from '../agent/file-history.ts';
 import { type Tool, err, ok } from './types.ts';
-import { checkWorkspaceWritable } from './workspace.ts';
+import { checkWritable } from './write-policy.ts';
 
 export const editTool: Tool = {
   name: 'Edit',
@@ -29,7 +29,7 @@ export const editTool: Tool = {
     const replaceAll = input['replaceAll'] === true;
     if (!path) return err('path is required');
     if (!oldString) return err('oldString is required (and must be non-empty)');
-    const guard = checkWorkspaceWritable(path);
+    const guard = checkWritable(path);
     if (guard) return err(guard);
 
     try {

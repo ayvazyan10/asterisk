@@ -62,7 +62,11 @@ describe('workspace guard', () => {
     expect(r.isError).toBe(true);
     expect(r.output).toMatch(/refused/);
     expect(r.output).toContain(outside);
-    expect(r.output).toMatch(/outside the workspace/);
+    // Wording follows the boundary: it is the "writable set" now, because
+    // sandbox.writablePaths can add to it — the workspace is just the default
+    // member. The refusal itself is unchanged.
+    expect(r.output).toMatch(/outside the writable set/);
+    expect(r.output).toContain('sandbox.writablePaths');
   });
 
   it('Edit outside the workspace is refused before touching the file', async () => {

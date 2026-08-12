@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`sandbox.writablePaths` now governs `Write` and `Edit` too.** The file
+  tools had a separate workspace guard, so widening the boundary for the shell
+  silently left them where they were. One module answers for both now. `/tmp`
+  stays shell-only on purpose: reaching it through Bash costs an approval
+  prompt, through Write it costs nothing.
 - REPL coverage from 7% to 77%, repo-wide lines 50% to 65%. Fixed a stray
   character typed into the prompt by Ctrl+O, and removed dead duplicate modal
   handlers the tests exposed.

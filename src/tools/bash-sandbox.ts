@@ -68,7 +68,10 @@ export async function confineBashCommand(command: string): Promise<ConfinedComma
     }
 
     const wrapped = await wrapCommand(command, {
-      writablePaths: [...defaultWritablePaths(), ...settings.writablePaths],
+      // defaultWritablePaths() already folds in sandbox.writablePaths through
+      // write-policy.ts, so adding settings.writablePaths again would list every
+      // configured path twice in the bwrap argv.
+      writablePaths: defaultWritablePaths(),
       network: settings.network,
       cwd: workspaceRoot(),
     });

@@ -89,16 +89,21 @@ confidence without converting any security.
 
 Modes: `auto`, `required` (refuse to run at all when unconfined), `off`.
 
-### Extend the sandbox boundary to the in-process file tools
-**Status:** not started · **Effort:** medium
-
+### ~~Extend the sandbox boundary to the in-process file tools~~ ✓ shipped
 `Read`, `Write` and `Edit` execute inside the agent process, so no
-child-process sandbox reaches them. Today they are bounded by the workspace
-guard, which lands in nearly the same place — workspace-only writes — but is
-separate code with separate configuration, and
-`ASTERISK_NO_WORKSPACE_GUARD=1` turns it off entirely. They should share one
-path policy with `sandbox.writablePaths` rather than approximating each other.
-Reads are unconfined on both paths and would stay that way.
+child-process sandbox reaches them. They now share one policy module with the
+shell: `sandbox.writablePaths` governs both, so widening the boundary for one
+no longer silently leaves the other where it was.
+
+They differ on `/tmp`, deliberately. The first cut unified them on the grounds
+that refusing `/tmp` to `Write` only pushed the agent toward `Bash`. That was
+wrong — `touch /tmp/x` is off the read-only allowlist, so the Bash route costs
+an approval prompt and `Write` costs nothing. Unifying would have removed a
+consent step, not an inconsistency.
+
+Still true and still worth saying: a path check is a check, and bubblewrap is a
+kernel boundary. Sharing the policy does not make the in-process tools as
+strong as the sandboxed shell.
 
 ### ~~Streaming for the REPL~~ ✓ shipped
 Provider streaming wired into the REPL transcript via `onAssistantDelta`.
