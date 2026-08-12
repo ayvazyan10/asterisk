@@ -10,6 +10,7 @@ import type { HookConfig } from '../config/schema.ts';
 import { getDb } from '../db/index.ts';
 import { type HookResult, fireHooks } from '../hooks/runner.ts';
 import { type OutputStyle, outputStyleToPromptSection } from '../output-styles/styles.ts';
+import { firePluginEvent } from '../plugins/runtime.ts';
 import { ProviderError, isAbort, isRetryable, retryAfterMs } from '../providers/errors.ts';
 import { recoverToolCallsFromText } from '../providers/text-tool-calls.ts';
 import {
@@ -493,6 +494,26 @@ async function runAgentTurnInner(
             return fail(
               malformedArgumentsMessage(name, malformed.raw, getTool(name)?.input_schema),
             );
+          }
+
+          // Plugin handlers run alongside the shell hooks and can block the same
+          // way. Same vocabulary on purpose — two ways of hooking the loop with
+          // one decision type, rather than two that drift apart.
+          const pluginBefore = await firePluginEvent({
+            event: 'before_tool',
+            tool: name,
+            toolInput,
+          });
+          for (const e of pluginBefore.errors) opts.onToolResult?.(name, e, true);
+          if (pluginBefore.decision?.action === 'block') {
+            const why = pluginBefore.decision.reason;
+            opts.onToolResult?.(name, why, true);
+            return {
+              type: 'tool_result',
+              tool_use_id: use.id,
+              content: `tool blocked by plugin: ${why}`,
+              is_error: true,
+            };
           }
 
           if (hooks.length > 0) {

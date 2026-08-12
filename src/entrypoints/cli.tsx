@@ -9,6 +9,7 @@ import { createAgentState } from '../agent/loop.ts';
 import { loadConversation } from '../agent/persistence.ts';
 import { loadConfig } from '../config/load.ts';
 import { createMcpManager } from '../mcp/manager.ts';
+import { initialisePlugins } from '../plugins/runtime.ts';
 import { chooseProvider } from '../providers/factory.ts';
 import { App } from '../repl/App.tsx';
 import { setExtraTools } from '../tools/registry.ts';
@@ -34,6 +35,14 @@ const provider = pickProvider();
 const state = createAgentState();
 state.history = loadConversation('repl');
 const mcp = createMcpManager();
+
+// Plugins are loaded before the UI comes up, not in the background like MCP:
+// they contribute tools, and a tool set that grows a few seconds into the
+// session is the kind of surprise you do not want from in-process code.
+const pluginLoad = await initialisePlugins();
+for (const line of [...pluginLoad.errors, ...pluginLoad.notices]) {
+  process.stderr.write(`plugin: ${line}\n`);
+}
 
 // Connect any pre-configured MCP servers in the background. We don't block
 // REPL startup on this — the user sees `/mcp list` reflecting state once the
