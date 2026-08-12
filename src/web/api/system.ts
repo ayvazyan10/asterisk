@@ -4,12 +4,12 @@
 import { existsSync, statSync } from 'node:fs';
 
 import { readConfig } from '../../config/store.ts';
-import { asteriskPaths } from '../../daemon/paths.ts';
 import { logs, restart, start, status, stop } from '../../daemon/lifecycle.ts';
+import { asteriskPaths } from '../../daemon/paths.ts';
 import { listHooks, listMcpServers } from '../../db/collections.ts';
 import { getVersion } from '../../version.ts';
 import { issueToken, listTokens, revokeToken } from '../auth.ts';
-import { audit, type Handler, HttpError, json, readJsonObject } from '../http.ts';
+import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
 
 /** Snapshot for the dashboard header. */
 export const getStatus: Handler = ({ db }) => {
@@ -102,7 +102,11 @@ export const getDoctor: Handler = async ({ db }) => {
       checks.push({ name: 'Ollama', ok: false, detail: `HTTP ${res.status} from ${base}` });
     }
   } catch (e) {
-    checks.push({ name: 'Ollama', ok: false, detail: `unreachable at ${base}: ${(e as Error).message}` });
+    checks.push({
+      name: 'Ollama',
+      ok: false,
+      detail: `unreachable at ${base}: ${(e as Error).message}`,
+    });
   }
 
   const anthropicKey = process.env['ANTHROPIC_API_KEY'] ?? '';
@@ -136,10 +140,7 @@ export const getDoctor: Handler = async ({ db }) => {
     checks.push({
       name: `MCP: ${server.name}`,
       ok: true,
-      detail:
-        server.transport === 'stdio'
-          ? `stdio — ${server.command}`
-          : `http — ${server.url}`,
+      detail: server.transport === 'stdio' ? `stdio — ${server.command}` : `http — ${server.url}`,
     });
   }
 

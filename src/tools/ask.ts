@@ -7,7 +7,7 @@
 
 import { EventEmitter } from 'node:events';
 
-import { type Tool, ok, err } from './types.ts';
+import { type Tool, err, ok } from './types.ts';
 
 export interface AskQuestion {
   id: string;
@@ -97,11 +97,13 @@ export const askUserQuestionTool: Tool = {
     );
     const abortPromise = opts?.signal
       ? new Promise<AskAnswer>((resolve) => {
-          opts.signal!.addEventListener('abort', () =>
-            resolve({ id, answer: '', cancelled: true }),
-          {
-            once: true,
-          });
+          opts.signal!.addEventListener(
+            'abort',
+            () => resolve({ id, answer: '', cancelled: true }),
+            {
+              once: true,
+            },
+          );
         })
       : null;
 

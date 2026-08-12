@@ -72,7 +72,8 @@ export function classifyHttpError(
 
   if (status === 429) return new ProviderError('rate-limit', truncate(body, 400), opts);
   if (status === 529) return new ProviderError('overloaded', truncate(body, 400), opts);
-  if (status >= 500) return new ProviderError('server', `server ${status}: ${truncate(body, 300)}`, opts);
+  if (status >= 500)
+    return new ProviderError('server', `server ${status}: ${truncate(body, 300)}`, opts);
   if (status === 401 || status === 403)
     return new ProviderError('auth', `auth error (${status}): ${truncate(body, 200)}`, opts);
   if (status === 400) {

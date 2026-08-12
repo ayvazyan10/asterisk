@@ -9,7 +9,7 @@ import { ConfigSchema, SECRET_KEYS, type SecretKey } from '../../config/schema.t
 import { readConfig, writeConfig } from '../../config/store.ts';
 import { allSecrets, deleteSecret, maskSecret, setSecret } from '../../db/settings.ts';
 import { getPath, setPath } from '../../utils/object-path.ts';
-import { audit, type Handler, HttpError, json, readJsonObject } from '../http.ts';
+import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
 
 /** Registry plus current values — everything the settings UI needs in one call. */
 export const getSettings: Handler = ({ db }) => {

@@ -11,7 +11,7 @@
 
 import { request } from 'undici';
 
-import { type Tool, ok, err } from './types.ts';
+import { type Tool, err, ok } from './types.ts';
 
 const TIMEOUT_MS = 12_000;
 

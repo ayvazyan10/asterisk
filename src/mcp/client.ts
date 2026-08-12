@@ -8,7 +8,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 import type { McpServerConfig } from '../config/schema.ts';
-import { type Tool, ok, err } from '../tools/types.ts';
+import { type Tool, err, ok } from '../tools/types.ts';
 
 interface RemoteToolDefinition {
   name: string;
@@ -70,9 +70,7 @@ export function stdioEnv(configured: Record<string, string>): Record<string, str
   return { ...env, ...configured };
 }
 
-export async function connectMcpServer(
-  config: McpServerConfig,
-): Promise<ConnectedMcpServer> {
+export async function connectMcpServer(config: McpServerConfig): Promise<ConnectedMcpServer> {
   const client = new Client({ name: 'asterisk', version: '0.1.0' }, { capabilities: {} });
 
   if (config.transport === 'stdio') {

@@ -3,9 +3,9 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { type Tool, ok, err } from './types.ts';
-import { checkWorkspaceWritable } from './workspace.ts';
 import { recordFileChange } from '../agent/file-history.ts';
+import { type Tool, err, ok } from './types.ts';
+import { checkWorkspaceWritable } from './workspace.ts';
 
 export const editTool: Tool = {
   name: 'Edit',

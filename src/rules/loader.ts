@@ -187,7 +187,8 @@ function makeRule(scope: Rule['scope'], layer: NonNullable<Rule['layer']>, path:
 export function rulesToPromptSection(rules: readonly Rule[]): string {
   if (rules.length === 0) return '';
   const blocks = rules.map((r) => {
-    const tag = r.layer && r.layer !== 'flat' ? `${r.scope}/${r.layer}/${r.name}` : `${r.scope}/${r.name}`;
+    const tag =
+      r.layer && r.layer !== 'flat' ? `${r.scope}/${r.layer}/${r.name}` : `${r.scope}/${r.name}`;
     return `## ${tag}\n${r.content}`;
   });
   return `# Rules (loaded from disk)\n${blocks.join('\n\n')}`;

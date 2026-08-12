@@ -9,12 +9,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { currentSessionId } from '../agent/context.ts';
-import { type Tool, ok, err } from './types.ts';
+import { type Tool, err, ok } from './types.ts';
 
-const MONITORS_DIR = join(
-  process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'),
-  'monitors',
-);
+const MONITORS_DIR = join(process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'), 'monitors');
 
 interface MonitorRecord {
   id: string;

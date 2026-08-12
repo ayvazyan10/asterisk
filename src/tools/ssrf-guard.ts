@@ -31,7 +31,8 @@ function localFetchAllowed(): boolean {
 
 function ipv4Blocked(host: string): string | null {
   const parts = host.split('.').map((p) => Number.parseInt(p, 10));
-  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255))
+    return null;
   const [a, b] = parts as [number, number, number, number];
 
   if (a === 127) return 'loopback address';
@@ -107,11 +108,7 @@ export function checkOutboundUrl(raw: string): UrlCheck {
   const host = url.hostname;
   const version = isIP(host.replace(/^\[|\]$/g, ''));
   const blocked =
-    version === 4
-      ? ipv4Blocked(host)
-      : version === 6
-        ? ipv6Blocked(host)
-        : hostnameBlocked(host);
+    version === 4 ? ipv4Blocked(host) : version === 6 ? ipv6Blocked(host) : hostnameBlocked(host);
 
   if (blocked) {
     return {

@@ -102,12 +102,14 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
                 ? 'stop_sequence'
                 : 'unknown';
 
-      const usage: TokenUsage | undefined = response.usage ? {
-        inputTokens: response.usage.input_tokens,
-        outputTokens: response.usage.output_tokens,
-        cacheCreationInputTokens: (response.usage as any).cache_creation_input_tokens,
-        cacheReadInputTokens: (response.usage as any).cache_read_input_tokens,
-      } : undefined;
+      const usage: TokenUsage | undefined = response.usage
+        ? {
+            inputTokens: response.usage.input_tokens,
+            outputTokens: response.usage.output_tokens,
+            cacheCreationInputTokens: (response.usage as any).cache_creation_input_tokens,
+            cacheReadInputTokens: (response.usage as any).cache_read_input_tokens,
+          }
+        : undefined;
 
       return { content, stopReason, ...(usage ? { usage } : {}) };
     },

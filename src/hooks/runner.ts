@@ -93,16 +93,17 @@ function parseDecision(stdout: string, ctx: HookContext): HookDecision | undefin
     if (parsed.action === 'block') {
       return {
         action: 'block',
-        reason: typeof parsed.reason === 'string' && parsed.reason.trim()
-          ? parsed.reason.trim()
-          : 'blocked by hook',
+        reason:
+          typeof parsed.reason === 'string' && parsed.reason.trim()
+            ? parsed.reason.trim()
+            : 'blocked by hook',
       };
     }
     if (
-      parsed.action === 'rewrite'
-      && typeof parsed.input === 'object'
-      && parsed.input !== null
-      && !Array.isArray(parsed.input)
+      parsed.action === 'rewrite' &&
+      typeof parsed.input === 'object' &&
+      parsed.input !== null &&
+      !Array.isArray(parsed.input)
     ) {
       const decision: HookDecision = {
         action: 'rewrite',

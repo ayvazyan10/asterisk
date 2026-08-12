@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { fireHooks } from '../src/hooks/runner.ts';
 import type { HookConfig } from '../src/config/schema.ts';
+import { fireHooks } from '../src/hooks/runner.ts';
 
 const baseHook: HookConfig = {
   name: 'test',
@@ -21,10 +21,10 @@ describe('fireHooks', () => {
   });
 
   it('skips disabled hooks', async () => {
-    const results = await fireHooks(
-      [{ ...baseHook, enabled: false }],
-      { event: 'after_tool', tool: 'Bash' },
-    );
+    const results = await fireHooks([{ ...baseHook, enabled: false }], {
+      event: 'after_tool',
+      tool: 'Bash',
+    });
     expect(results).toEqual([]);
   });
 

@@ -4,7 +4,7 @@
 // list reflects what the sub-agent created.
 
 import { currentSessionId } from '../agent/context.ts';
-import { type Tool, ok, err } from './types.ts';
+import { type Tool, err, ok } from './types.ts';
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 
@@ -77,8 +77,7 @@ export const taskCreateTool: Tool = {
   async execute(input) {
     const title = typeof input['title'] === 'string' ? input['title'].trim() : '';
     if (!title) return err('title is required');
-    const description =
-      typeof input['description'] === 'string' ? input['description'].trim() : '';
+    const description = typeof input['description'] === 'string' ? input['description'].trim() : '';
     const b = bucket();
     const id = String(b.nextId++);
     const now = Date.now();
@@ -125,8 +124,7 @@ export const taskUpdateTool: Tool = {
     if (status) task.status = status as TaskStatus;
     if (typeof input['title'] === 'string' && input['title'].trim())
       task.title = input['title'].trim();
-    if (typeof input['description'] === 'string')
-      task.description = input['description'].trim();
+    if (typeof input['description'] === 'string') task.description = input['description'].trim();
     task.updatedAt = Date.now();
     return ok(`updated #${task.id} → ${task.status} · ${task.title}`);
   },

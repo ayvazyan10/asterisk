@@ -62,12 +62,8 @@ describe('config schema and persistence', () => {
     expect(ok.bots.telegram.streamMode).toBe('stream');
     expect(ok.bots.telegram.streamThrottleMs).toBe(1500);
 
-    expect(() =>
-      ConfigSchema.parse({ bots: { telegram: { streamMode: 'real-time' } } }),
-    ).toThrow();
-    expect(() =>
-      ConfigSchema.parse({ bots: { telegram: { streamThrottleMs: 100 } } }),
-    ).toThrow();
+    expect(() => ConfigSchema.parse({ bots: { telegram: { streamMode: 'real-time' } } })).toThrow();
+    expect(() => ConfigSchema.parse({ bots: { telegram: { streamThrottleMs: 100 } } })).toThrow();
   });
 
   it('round-trips a saved config', () => {

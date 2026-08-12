@@ -7,8 +7,8 @@ import { runWithSession } from '../src/agent/context.ts';
 import { type AgentState, createAgentState } from '../src/agent/loop.ts';
 import { BOT_COMMAND_LIST, tryHandleBotCommand } from '../src/bots/commands.ts';
 import { readSessionSoul } from '../src/soul/loader.ts';
-import { _resetTasksForTesting, taskCreateTool } from '../src/tools/tasks.ts';
 import { isPlanMode, setPlanMode } from '../src/tools/planmode.ts';
+import { _resetTasksForTesting, taskCreateTool } from '../src/tools/tasks.ts';
 
 function ctx(state: AgentState) {
   return { state, providerName: 'ollama:test' };
@@ -53,9 +53,7 @@ describe('bot commands', () => {
   });
 
   it('/help returns the help text', async () => {
-    const r = await runWithSession(SESSION, async () =>
-      tryHandleBotCommand('/help', ctx(state)),
-    );
+    const r = await runWithSession(SESSION, async () => tryHandleBotCommand('/help', ctx(state)));
     expect(r?.text).toMatch(/I'm Asterisk/);
     expect(r?.text).toMatch(/\/help/);
     expect(r?.text).toMatch(/\/status/);
@@ -64,9 +62,7 @@ describe('bot commands', () => {
   it('/clear empties history', async () => {
     state.history.push({ role: 'user', content: [{ type: 'text', text: 'hi' }] });
     expect(state.history).toHaveLength(1);
-    const r = await runWithSession(SESSION, async () =>
-      tryHandleBotCommand('/clear', ctx(state)),
-    );
+    const r = await runWithSession(SESSION, async () => tryHandleBotCommand('/clear', ctx(state)));
     expect(r?.text).toMatch(/cleared/);
     expect(state.history).toHaveLength(0);
   });
@@ -92,9 +88,7 @@ describe('bot commands', () => {
   });
 
   it('/tasks reports an empty state cleanly', async () => {
-    const r = await runWithSession(SESSION, async () =>
-      tryHandleBotCommand('/tasks', ctx(state)),
-    );
+    const r = await runWithSession(SESSION, async () => tryHandleBotCommand('/tasks', ctx(state)));
     expect(r?.text).toMatch(/no tasks/);
   });
 
@@ -110,9 +104,7 @@ describe('bot commands', () => {
 
   it('/status surfaces session, history, and plan-mode info', async () => {
     state.history.push({ role: 'user', content: [{ type: 'text', text: 'hi' }] });
-    const r = await runWithSession(SESSION, async () =>
-      tryHandleBotCommand('/status', ctx(state)),
-    );
+    const r = await runWithSession(SESSION, async () => tryHandleBotCommand('/status', ctx(state)));
     expect(r?.text).toMatch(/Session\s+bot:test/);
     expect(r?.text).toMatch(/Provider\s+ollama:test/);
     expect(r?.text).toMatch(/History\s+1 message/);
@@ -127,9 +119,7 @@ describe('bot commands', () => {
   });
 
   it('/soul (no args) reports nothing loaded for a fresh session', async () => {
-    const r = await runWithSession(SESSION, async () =>
-      tryHandleBotCommand('/soul', ctx(state)),
-    );
+    const r = await runWithSession(SESSION, async () => tryHandleBotCommand('/soul', ctx(state)));
     expect(r?.text).toMatch(/no soul/i);
     expect(r?.text).toMatch(/\/soul set/);
   });
@@ -194,9 +184,7 @@ describe('bot commands', () => {
 
   it('/soul set with multi-line markdown survives intact', async () => {
     const body = '# Persona\n\n- terse\n- direct\n- no apologies';
-    await runWithSession(SESSION, async () =>
-      tryHandleBotCommand(`/soul set ${body}`, ctx(state)),
-    );
+    await runWithSession(SESSION, async () => tryHandleBotCommand(`/soul set ${body}`, ctx(state)));
     const stored = readSessionSoul(SESSION) ?? '';
     expect(stored).toContain('# Persona');
     expect(stored).toContain('- terse');
@@ -204,9 +192,7 @@ describe('bot commands', () => {
   });
 
   it('/style with no args lists styles + marks the current one', async () => {
-    const r = await runWithSession(SESSION, async () =>
-      tryHandleBotCommand('/style', ctx(state)),
-    );
+    const r = await runWithSession(SESSION, async () => tryHandleBotCommand('/style', ctx(state)));
     expect(r?.text).toMatch(/Current output style/);
     expect(r?.text).toMatch(/concise/);
     expect(r?.text).toMatch(/explanatory/);

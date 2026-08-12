@@ -1,6 +1,6 @@
-import type { Tool } from './types.ts';
-import { ok, err } from './types.ts';
 import { listTools } from './registry.ts';
+import type { Tool } from './types.ts';
+import { err, ok } from './types.ts';
 
 export const toolSearchTool: Tool = {
   name: 'ToolSearch',
@@ -46,9 +46,7 @@ export const toolSearchTool: Tool = {
 
     if (matches.length === 0) return ok('no tools matched the query');
 
-    const lines = matches.map(
-      (m) => `${m.tool.name}: ${m.tool.description.split('\n')[0]}`,
-    );
+    const lines = matches.map((m) => `${m.tool.name}: ${m.tool.description.split('\n')[0]}`);
     return ok(lines.join('\n'));
   },
 };

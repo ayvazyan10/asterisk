@@ -9,12 +9,12 @@
 import { Bot, type Context, GrammyError, InputFile } from 'grammy';
 
 import {
-  asOutgoingMessage,
   type Attachment,
   type BotAdapter,
   type Handler,
   type IncomingMessage,
   type StreamEvent,
+  asOutgoingMessage,
 } from '../adapter.ts';
 import { BOT_COMMAND_LIST } from '../commands.ts';
 import { balanceOpenTags, escapeHtml, markdownToTelegramHtml } from './format.ts';

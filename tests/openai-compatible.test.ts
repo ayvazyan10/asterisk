@@ -4,12 +4,12 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { ProviderError } from '../src/providers/errors.ts';
 import {
   createOpenAiCompatibleProvider,
   toOpenAiMessages,
   toOpenAiTools,
 } from '../src/providers/openai-compatible.ts';
-import { ProviderError } from '../src/providers/errors.ts';
 import type { Message, TextBlock, ToolUseBlock } from '../src/types/messages.ts';
 
 const realFetch = globalThis.fetch;
@@ -70,7 +70,11 @@ describe('message conversion', () => {
         role: 'assistant',
         content: 'checking',
         tool_calls: [
-          { id: 'call_1', type: 'function', function: { name: 'read', arguments: '{"path":"/tmp/a"}' } },
+          {
+            id: 'call_1',
+            type: 'function',
+            function: { name: 'read', arguments: '{"path":"/tmp/a"}' },
+          },
         ],
       },
     ]);
@@ -98,7 +102,9 @@ describe('message conversion', () => {
     const messages: Message[] = [
       {
         role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: 'c', content: 'no such file', is_error: true }],
+        content: [
+          { type: 'tool_result', tool_use_id: 'c', content: 'no such file', is_error: true },
+        ],
       },
     ];
     expect(toOpenAiMessages('', messages)[0]).toMatchObject({ content: 'ERROR: no such file' });
@@ -108,7 +114,10 @@ describe('message conversion', () => {
     expect(
       toOpenAiTools([{ name: 'grep', description: 'search', input_schema: { type: 'object' } }]),
     ).toEqual([
-      { type: 'function', function: { name: 'grep', description: 'search', parameters: { type: 'object' } } },
+      {
+        type: 'function',
+        function: { name: 'grep', description: 'search', parameters: { type: 'object' } },
+      },
     ]);
   });
 });
@@ -132,7 +141,11 @@ describe('non-streaming responses', () => {
     respond(
       JSON.stringify({
         choices: [{ finish_reason: 'stop', message: { content: 'x' } }],
-        usage: { prompt_tokens: 100, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 64 } },
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 5,
+          prompt_tokens_details: { cached_tokens: 64 },
+        },
       }),
     );
     const res = await createOpenAiCompatibleProvider({ model: 'm' }).send(base);
@@ -148,7 +161,11 @@ describe('non-streaming responses', () => {
             message: {
               content: '',
               tool_calls: [
-                { id: 'abc', type: 'function', function: { name: 'list_dir', arguments: '{"path":"/tmp"}' } },
+                {
+                  id: 'abc',
+                  type: 'function',
+                  function: { name: 'list_dir', arguments: '{"path":"/tmp"}' },
+                },
               ],
             },
           },
@@ -169,7 +186,9 @@ describe('non-streaming responses', () => {
   it('surfaces reasoning_content through onThinking', async () => {
     respond(
       JSON.stringify({
-        choices: [{ finish_reason: 'stop', message: { content: 'answer', reasoning_content: 'pondering' } }],
+        choices: [
+          { finish_reason: 'stop', message: { content: 'answer', reasoning_content: 'pondering' } },
+        ],
       }),
     );
 
@@ -182,7 +201,9 @@ describe('non-streaming responses', () => {
   });
 
   it('maps a length finish to max_tokens', async () => {
-    respond(JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: 'trunc' } }] }));
+    respond(
+      JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: 'trunc' } }] }),
+    );
     expect((await createOpenAiCompatibleProvider({ model: 'm' }).send(base)).stopReason).toBe(
       'max_tokens',
     );
@@ -207,7 +228,9 @@ describe('non-streaming responses', () => {
 describe('requests', () => {
   it('posts to /chat/completions and normalises a trailing slash', async () => {
     respond(JSON.stringify({ choices: [{ message: { content: 'x' } }] }));
-    await createOpenAiCompatibleProvider({ baseUrl: 'http://host:8080/v1/', model: 'm' }).send(base);
+    await createOpenAiCompatibleProvider({ baseUrl: 'http://host:8080/v1/', model: 'm' }).send(
+      base,
+    );
     expect(lastRequest?.url).toBe('http://host:8080/v1/chat/completions');
   });
 

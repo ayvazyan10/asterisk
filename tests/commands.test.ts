@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createAgentState } from '../src/agent/loop.ts';
 import { COMMANDS, lookupCommand } from '../src/commands/registry.ts';
+import type { McpManager } from '../src/mcp/manager.ts';
 import { createOllamaProvider } from '../src/providers/ollama.ts';
 import type { Provider } from '../src/types/messages.ts';
-import type { McpManager } from '../src/mcp/manager.ts';
 
 function fakeMcp(): McpManager {
   return {

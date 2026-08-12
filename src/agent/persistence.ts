@@ -12,10 +12,7 @@ interface PersistedConversation {
 }
 
 function persistDir(): string {
-  const dir = join(
-    process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'),
-    'conversations',
-  );
+  const dir = join(process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'), 'conversations');
   ensureOwnerOnlyDir(dir);
   return dir;
 }
@@ -50,7 +47,9 @@ export function loadConversation(id: string): Message[] {
     if (!Array.isArray(data.messages)) return [];
     // Expire conversations older than 7 days
     if (Date.now() - data.updatedAt > 7 * 24 * 60 * 60 * 1000) {
-      try { unlinkSync(path); } catch {}
+      try {
+        unlinkSync(path);
+      } catch {}
       return [];
     }
     // Transcripts written before the abort path was fixed can hold tool_use
@@ -62,7 +61,11 @@ export function loadConversation(id: string): Message[] {
   }
 }
 
-export function listConversations(): Array<{ id: string; updatedAt: number; messageCount: number }> {
+export function listConversations(): Array<{
+  id: string;
+  updatedAt: number;
+  messageCount: number;
+}> {
   const dir = persistDir();
   try {
     const files = readdirSync(dir).filter((f) => f.endsWith('.json'));

@@ -2,7 +2,7 @@
 // Reference: https://github.com/SuperchupuDev/tinyglobby
 
 import { glob } from 'tinyglobby';
-import { type Tool, ok, err } from './types.ts';
+import { type Tool, err, ok } from './types.ts';
 
 export const globTool: Tool = {
   name: 'Glob',

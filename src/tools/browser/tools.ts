@@ -9,11 +9,11 @@
 //   - "role=button[name='Submit']"    → ARIA role + accessible name
 //   - "xpath=//button"                → XPath
 
-import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 
-import { type Tool, ok, err } from '../types.ts';
 import { expandHome } from '../../utils/path.ts';
+import { type Tool, err, ok } from '../types.ts';
 import { closeSessionBrowser, getPage, hookProcessExit, isOpen } from './session.ts';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -173,10 +173,8 @@ export const browserSnapshotTool: Tool = {
     additionalProperties: false,
   },
   async execute(input) {
-    const maxText =
-      typeof input['maxText'] === 'number' ? input['maxText'] : SNAPSHOT_TEXT_LIMIT;
-    const maxElements =
-      typeof input['maxElements'] === 'number' ? input['maxElements'] : 60;
+    const maxText = typeof input['maxText'] === 'number' ? input['maxText'] : SNAPSHOT_TEXT_LIMIT;
+    const maxElements = typeof input['maxElements'] === 'number' ? input['maxElements'] : 60;
     try {
       const page = await getPage();
       const title = await page.title();
@@ -272,7 +270,10 @@ export const browserScreenshotTool: Tool = {
     const raw = typeof input['path'] === 'string' ? input['path'].trim() : '';
     let requestedPath: string;
     if (!raw) {
-      requestedPath = join(screenshotsRoot, `${new Date().toISOString().replace(/[:.]/g, '-')}.png`);
+      requestedPath = join(
+        screenshotsRoot,
+        `${new Date().toISOString().replace(/[:.]/g, '-')}.png`,
+      );
     } else if (raw.startsWith('~')) {
       requestedPath = expandHome(raw);
     } else if (raw.startsWith('/')) {
@@ -369,8 +370,7 @@ export const browserCloseTool: Tool = {
 
 async function openWithSystemViewer(path: string): Promise<void> {
   const { execa } = await import('execa');
-  const isWsl =
-    !!process.env['WSL_DISTRO_NAME'] || !!process.env['WSL_INTEROP'];
+  const isWsl = !!process.env['WSL_DISTRO_NAME'] || !!process.env['WSL_INTEROP'];
   const platform = process.platform;
   const candidates: { cmd: string; args: string[] }[] =
     platform === 'darwin'

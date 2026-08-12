@@ -38,13 +38,7 @@ describe('parseInline', () => {
 
   it('combines bold + italic + code in one pass', () => {
     const parts = parseInline('**bold** and *italic* and `code`');
-    expect(parts.map((p) => p.kind)).toEqual([
-      'bold',
-      'text',
-      'italic',
-      'text',
-      'code',
-    ]);
+    expect(parts.map((p) => p.kind)).toEqual(['bold', 'text', 'italic', 'text', 'code']);
   });
 
   it('handles __underscored bold__', () => {

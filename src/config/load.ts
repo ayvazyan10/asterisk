@@ -7,16 +7,10 @@
 
 import { writeFileSync } from 'node:fs';
 
-import { getDb } from '../db/index.ts';
 import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
-import {
-  importLegacyFiles,
-  readConfig,
-  readSecrets,
-  writeConfig,
-  writeSecrets,
-} from './store.ts';
+import { getDb } from '../db/index.ts';
 import type { AsteriskConfig, SecretKey } from './schema.ts';
+import { importLegacyFiles, readConfig, readSecrets, writeConfig, writeSecrets } from './store.ts';
 
 export interface LoadedConfig {
   config: AsteriskConfig;

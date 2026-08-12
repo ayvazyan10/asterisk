@@ -127,10 +127,7 @@ export function readSecrets(
  * happened to be safe only because they spread the full existing set back in.
  * Use `deleteSecrets` to remove keys deliberately.
  */
-export function writeSecrets(
-  db: SqliteDriver,
-  secrets: Partial<Record<SecretKey, string>>,
-): void {
+export function writeSecrets(db: SqliteDriver, secrets: Partial<Record<SecretKey, string>>): void {
   db.transaction(() => {
     for (const key of SECRET_KEYS) {
       if (!(key in secrets)) continue;

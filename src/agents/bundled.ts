@@ -48,7 +48,8 @@ what you found, what you did, what's left.`,
   // ─────────────────────── exploration / research ─────────────────────
   {
     name: 'explore',
-    description: 'Read-only codebase scout — find files, search code, answer questions about a repo.',
+    description:
+      'Read-only codebase scout — find files, search code, answer questions about a repo.',
     scope: 'bundled',
     path: 'bundled:explore',
     allowedTools: READ_ONLY_TOOLS,
@@ -197,7 +198,8 @@ seem useful.`,
   },
   {
     name: 'database-reviewer',
-    description: 'Database review — schema, queries, indexes, migrations, security (Postgres/MySQL/SQLite).',
+    description:
+      'Database review — schema, queries, indexes, migrations, security (Postgres/MySQL/SQLite).',
     scope: 'bundled',
     path: 'bundled:database-reviewer',
     prompt: `You review database work — SQL queries, migrations, schema
@@ -224,7 +226,8 @@ Return: findings list with severity, file:line, cause, proposed fix.`,
   },
   {
     name: 'performance-optimizer',
-    description: 'Profile and optimize hot paths — bundle size, render perf, algorithmic improvements, memory.',
+    description:
+      'Profile and optimize hot paths — bundle size, render perf, algorithmic improvements, memory.',
     scope: 'bundled',
     path: 'bundled:performance-optimizer',
     prompt: `You hunt performance bottlenecks. Don't guess — measure first
@@ -251,7 +254,8 @@ Avoid premature optimization. If the code is fine, say so.`,
   },
   {
     name: 'refactor-cleaner',
-    description: 'Dead-code removal, deduplication, consolidation. Run knip / depcheck / ts-prune-style analysis.',
+    description:
+      'Dead-code removal, deduplication, consolidation. Run knip / depcheck / ts-prune-style analysis.',
     scope: 'bundled',
     path: 'bundled:refactor-cleaner',
     prompt: `You clean up unused code and duplication. Be conservative —
@@ -305,7 +309,8 @@ you flagged as needing human attention.`,
   // ─────────────────────── language-specific reviewers ────────────────
   {
     name: 'typescript-reviewer',
-    description: 'TypeScript / JavaScript review — type safety, async correctness, idiomatic patterns.',
+    description:
+      'TypeScript / JavaScript review — type safety, async correctness, idiomatic patterns.',
     scope: 'bundled',
     path: 'bundled:typescript-reviewer',
     prompt: `You review TypeScript / JavaScript code. Focus on idiomatic
@@ -433,7 +438,8 @@ finding and ask the parent how to proceed.`,
   },
   {
     name: 'tdd-guide',
-    description: 'Test-driven development — write tests first, then minimal implementation. Enforces 80%+ coverage.',
+    description:
+      'Test-driven development — write tests first, then minimal implementation. Enforces 80%+ coverage.',
     scope: 'bundled',
     path: 'bundled:tdd-guide',
     prompt: `You drive new features TDD-style. Tests come first — always.
@@ -458,7 +464,8 @@ the test before writing the implementation.`,
   },
   {
     name: 'e2e-runner',
-    description: 'End-to-end test specialist — Playwright/Cypress flows, flake quarantine, screenshot/trace artifacts.',
+    description:
+      'End-to-end test specialist — Playwright/Cypress flows, flake quarantine, screenshot/trace artifacts.',
     scope: 'bundled',
     path: 'bundled:e2e-runner',
     prompt: `You write, run, and triage end-to-end tests. The parent has
@@ -486,7 +493,8 @@ not sure what selectors exist.`,
   // ─────────────────────── domain / multi-channel ─────────────────────
   {
     name: 'chief-of-staff',
-    description: 'Triage incoming messages across channels — classify, draft replies, schedule follow-up.',
+    description:
+      'Triage incoming messages across channels — classify, draft replies, schedule follow-up.',
     scope: 'bundled',
     path: 'bundled:chief-of-staff',
     prompt: `You are a personal-assistant sub-agent that triages incoming
@@ -512,7 +520,8 @@ Don't actually send. Surface the drafts for the user to approve.`,
   },
   {
     name: 'healthcare-reviewer',
-    description: 'Healthcare-app code review — clinical safety, PHI compliance, EHR integrity, CDSS accuracy.',
+    description:
+      'Healthcare-app code review — clinical safety, PHI compliance, EHR integrity, CDSS accuracy.',
     scope: 'bundled',
     path: 'bundled:healthcare-reviewer',
     prompt: `You review code in healthcare contexts: EHR/EMR, clinical
@@ -542,7 +551,8 @@ and the fix.`,
   },
   {
     name: 'opensource-forker',
-    description: 'Stage 1 — fork an internal project for OSS release. Strip secrets, scrub references, generate .env.example.',
+    description:
+      'Stage 1 — fork an internal project for OSS release. Strip secrets, scrub references, generate .env.example.',
     scope: 'bundled',
     path: 'bundled:opensource-forker',
     prompt: `You prepare an internal project for open-source release. Stage 1
@@ -571,7 +581,8 @@ Workflow:
   },
   {
     name: 'opensource-sanitizer',
-    description: 'Stage 2 — verify a forked project is clean. PASS / WARN / FAIL on secrets, PII, internal references.',
+    description:
+      'Stage 2 — verify a forked project is clean. PASS / WARN / FAIL on secrets, PII, internal references.',
     scope: 'bundled',
     path: 'bundled:opensource-sanitizer',
     prompt: `You verify a forked project is safe for public release. Stage 2:
@@ -601,7 +612,8 @@ Verdict: PASS · PASS-WITH-WARNINGS · FAIL.
   },
   {
     name: 'opensource-packager',
-    description: 'Stage 3 — generate README, LICENSE, CONTRIBUTING, GitHub templates, setup.sh for a clean repo.',
+    description:
+      'Stage 3 — generate README, LICENSE, CONTRIBUTING, GitHub templates, setup.sh for a clean repo.',
     scope: 'bundled',
     path: 'bundled:opensource-packager',
     prompt: `You produce the OSS-release packaging for a sanitized project.
@@ -632,7 +644,8 @@ on a toy demo). Ask the user before assuming.`,
   // ─────────────────────── meta / loops ───────────────────────────────
   {
     name: 'loop-operator',
-    description: 'Run a recurring task in a loop, monitor progress, intervene safely when it stalls.',
+    description:
+      'Run a recurring task in a loop, monitor progress, intervene safely when it stalls.',
     scope: 'bundled',
     path: 'bundled:loop-operator',
     prompt: `You run a recurring task as a controlled loop. The parent
@@ -659,7 +672,8 @@ parent didn't give one, ask via AskUserQuestion before starting.`,
   },
   {
     name: 'gan-planner',
-    description: 'GAN-style harness — planner phase. Take a one-line prompt → full spec, sprints, eval rubric.',
+    description:
+      'GAN-style harness — planner phase. Take a one-line prompt → full spec, sprints, eval rubric.',
     scope: 'bundled',
     path: 'bundled:gan-planner',
     prompt: `You're the planner stage of a GAN-style build harness. Input:
@@ -685,7 +699,8 @@ nested lists.`,
   },
   {
     name: 'gan-generator',
-    description: 'GAN-style harness — generator phase. Implement against the spec, iterate against evaluator feedback.',
+    description:
+      'GAN-style harness — generator phase. Implement against the spec, iterate against evaluator feedback.',
     scope: 'bundled',
     path: 'bundled:gan-generator',
     prompt: `You're the generator stage of a GAN-style build harness. Input:
@@ -713,7 +728,8 @@ has the context.`,
   },
   {
     name: 'gan-evaluator',
-    description: 'GAN-style harness — evaluator phase. Score the generator output against the rubric, give actionable feedback.',
+    description:
+      'GAN-style harness — evaluator phase. Score the generator output against the rubric, give actionable feedback.',
     scope: 'bundled',
     path: 'bundled:gan-evaluator',
     prompt: `You're the evaluator stage of a GAN-style build harness. Input:

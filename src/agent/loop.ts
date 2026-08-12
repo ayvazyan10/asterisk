@@ -6,6 +6,16 @@
 // timeout enforcement, and AbortSignal threading from the REPL down to the
 // shell-level tools.
 
+import type { HookConfig } from '../config/schema.ts';
+import { getDb } from '../db/index.ts';
+import { isEmptyUsage, recordUsage } from '../db/usage.ts';
+import { type HookResult, fireHooks } from '../hooks/runner.ts';
+import { type OutputStyle, outputStyleToPromptSection } from '../output-styles/styles.ts';
+import { ProviderError, isAbort, isRetryable, retryAfterMs } from '../providers/errors.ts';
+import { type Rule, rulesToPromptSection } from '../rules/loader.ts';
+import { type Soul, soulsToPromptSection } from '../soul/loader.ts';
+import { isConcurrencySafe } from '../tools/concurrency.ts';
+import { getTool, toolDefinitions } from '../tools/registry.ts';
 import type {
   ContentBlock,
   Message,
@@ -15,21 +25,11 @@ import type {
   ToolResultBlock,
   ToolUseBlock,
 } from '../types/messages.ts';
-import type { HookConfig } from '../config/schema.ts';
-import { fireHooks, type HookResult } from '../hooks/runner.ts';
-import { ProviderError, isAbort, isRetryable, retryAfterMs } from '../providers/errors.ts';
-import { rulesToPromptSection, type Rule } from '../rules/loader.ts';
-import { soulsToPromptSection, type Soul } from '../soul/loader.ts';
-import { outputStyleToPromptSection, type OutputStyle } from '../output-styles/styles.ts';
-import { getTool, toolDefinitions } from '../tools/registry.ts';
 import { retry } from '../utils/retry.ts';
-import { type AgentSession, runWithSession } from './context.ts';
-import { shouldPersistOutput, persistOutput } from './output-store.ts';
 import { compactHistory } from './compaction.ts';
+import { type AgentSession, runWithSession } from './context.ts';
 import { completeToolResults, repairHistory } from './history.ts';
-import { getDb } from '../db/index.ts';
-import { isEmptyUsage, recordUsage } from '../db/usage.ts';
-import { isConcurrencySafe } from '../tools/concurrency.ts';
+import { persistOutput, shouldPersistOutput } from './output-store.ts';
 
 const SYSTEM_PROMPT = `You are Asterisk, a personal AI assistant running on the user's machine.
 
@@ -272,11 +272,7 @@ async function runAgentTurnInner(
 
   // before_turn hooks fire-and-log; failures don't abort the turn.
   if (hooks.length > 0) {
-    const before = await fireHooks(
-      hooks,
-      { event: 'before_turn', userText: userInput },
-      signal,
-    );
+    const before = await fireHooks(hooks, { event: 'before_turn', userText: userInput }, signal);
     for (const r of before) opts.onHook?.(r);
   }
 
@@ -331,9 +327,10 @@ async function runAgentTurnInner(
             if (opts.onAssistantDelta) sendOpts.onText = opts.onAssistantDelta;
             if (opts.onAssistantThinking) sendOpts.onThinking = opts.onAssistantThinking;
             const allTools = toolDefinitions();
-            const tools = opts.allowedTools && opts.allowedTools.length > 0
-              ? allTools.filter((t) => opts.allowedTools!.includes(t.name))
-              : allTools;
+            const tools =
+              opts.allowedTools && opts.allowedTools.length > 0
+                ? allTools.filter((t) => opts.allowedTools!.includes(t.name))
+                : allTools;
             return provider.send({
               system: systemPrompt,
               messages: state.history,
@@ -513,12 +510,7 @@ async function runAgentTurnInner(
             output = `tool not found: ${use.name}`;
             isError = true;
           } else {
-            const exec = await runToolWithTimeout(
-              tool,
-              toolInput,
-              toolTimeoutMs,
-              signal,
-            );
+            const exec = await runToolWithTimeout(tool, toolInput, toolTimeoutMs, signal);
             output = exec.output;
             isError = exec.isError;
             if (exec.attachments && opts.onAttachment) {
@@ -550,9 +542,8 @@ async function runAgentTurnInner(
           }
           // Persist large non-error outputs to disk and replace content
           // with a summary + preview for the model's context window.
-          const persistedOutput = !isError && shouldPersistOutput(output)
-            ? persistOutput(use.name, output)
-            : output;
+          const persistedOutput =
+            !isError && shouldPersistOutput(output) ? persistOutput(use.name, output) : output;
           return {
             type: 'tool_result',
             tool_use_id: use.id,

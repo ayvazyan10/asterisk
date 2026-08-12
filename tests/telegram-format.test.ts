@@ -8,21 +8,13 @@ import {
 
 describe('markdownToTelegramHtml', () => {
   it('renders bold (** and __) as <b>', () => {
-    expect(markdownToTelegramHtml('hello **world** there')).toBe(
-      'hello <b>world</b> there',
-    );
-    expect(markdownToTelegramHtml('hello __world__ there')).toBe(
-      'hello <b>world</b> there',
-    );
+    expect(markdownToTelegramHtml('hello **world** there')).toBe('hello <b>world</b> there');
+    expect(markdownToTelegramHtml('hello __world__ there')).toBe('hello <b>world</b> there');
   });
 
   it('renders italic (single * and _) as <i>', () => {
-    expect(markdownToTelegramHtml('hello *world* there')).toBe(
-      'hello <i>world</i> there',
-    );
-    expect(markdownToTelegramHtml('hello _world_ there')).toBe(
-      'hello <i>world</i> there',
-    );
+    expect(markdownToTelegramHtml('hello *world* there')).toBe('hello <i>world</i> there');
+    expect(markdownToTelegramHtml('hello _world_ there')).toBe('hello <i>world</i> there');
   });
 
   it('keeps bold and italic separate when they appear together', () => {
@@ -108,9 +100,7 @@ describe('balanceOpenTags', () => {
   });
 
   it('closes nested tags in reverse order', () => {
-    expect(balanceOpenTags('<b>bold and <i>italic')).toBe(
-      '<b>bold and <i>italic</i></b>',
-    );
+    expect(balanceOpenTags('<b>bold and <i>italic')).toBe('<b>bold and <i>italic</i></b>');
   });
 
   it('leaves balanced markup alone', () => {

@@ -5,7 +5,14 @@
 // `ctx.params`, in order. First match wins, so specific routes precede
 // general ones.
 
-import type { Handler } from './http.ts';
+import {
+  getHooks,
+  getMcpServers,
+  putHook,
+  putMcpServer,
+  removeHook,
+  removeMcpServer,
+} from './api/collections.ts';
 import {
   exportConfig,
   getSecrets,
@@ -15,22 +22,7 @@ import {
   putSecret,
   resetSetting,
 } from './api/config.ts';
-import {
-  getHooks,
-  getMcpServers,
-  putHook,
-  putMcpServer,
-  removeHook,
-  removeMcpServer,
-} from './api/collections.ts';
 import { deleteContent, listContent, readContent, writeContent } from './api/content.ts';
-import {
-  deleteUsage,
-  getPricing,
-  getUsage,
-  putPricing,
-  removePricing,
-} from './api/usage.ts';
 import {
   daemonAction,
   deleteToken,
@@ -41,6 +33,8 @@ import {
   getTokens,
   postToken,
 } from './api/system.ts';
+import { deleteUsage, getPricing, getUsage, putPricing, removePricing } from './api/usage.ts';
+import type { Handler } from './http.ts';
 
 export interface Route {
   method: string;

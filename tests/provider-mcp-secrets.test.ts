@@ -12,13 +12,13 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { deleteSecrets, readSecrets, writeSecrets } from '../src/config/store.ts';
+import { openDriver } from '../src/db/driver.ts';
+import type { SqliteDriver } from '../src/db/driver.ts';
+import { migrate } from '../src/db/migrations.ts';
+import { stdioEnv } from '../src/mcp/client.ts';
 import { mapAnthropicError } from '../src/providers/anthropic.ts';
 import { isRetryable } from '../src/providers/errors.ts';
-import { stdioEnv } from '../src/mcp/client.ts';
-import { openDriver } from '../src/db/driver.ts';
-import { migrate } from '../src/db/migrations.ts';
-import { readSecrets, writeSecrets, deleteSecrets } from '../src/config/store.ts';
-import type { SqliteDriver } from '../src/db/driver.ts';
 
 describe('Anthropic error mapping', () => {
   it('classifies a connection failure as retryable network', () => {

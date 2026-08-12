@@ -10,7 +10,7 @@
 
 import { request } from 'undici';
 
-import { type Tool, ok, err } from './types.ts';
+import { type Tool, err, ok } from './types.ts';
 
 const TIMEOUT_MS = 10_000;
 
@@ -23,8 +23,14 @@ export const pushNotificationTool: Tool = {
     properties: {
       title: { type: 'string', description: 'Optional short title.' },
       message: { type: 'string', description: 'Body of the notification.' },
-      url: { type: 'string', description: 'Override the webhook URL (default $ASTERISK_NOTIFY_URL).' },
-      priority: { type: 'string', description: 'Optional severity: low | normal | high (default normal).' },
+      url: {
+        type: 'string',
+        description: 'Override the webhook URL (default $ASTERISK_NOTIFY_URL).',
+      },
+      priority: {
+        type: 'string',
+        description: 'Optional severity: low | normal | high (default normal).',
+      },
     },
     required: ['message'],
     additionalProperties: false,
@@ -76,7 +82,10 @@ export const remoteTriggerTool: Tool = {
         additionalProperties: { type: 'string' },
       },
       bodyJson: { type: 'object', description: 'JSON body — sent as application/json.' },
-      bodyText: { type: 'string', description: 'Raw text body (mutually exclusive with bodyJson).' },
+      bodyText: {
+        type: 'string',
+        description: 'Raw text body (mutually exclusive with bodyJson).',
+      },
       timeoutMs: { type: 'number', description: 'Network timeout (default 10000).' },
     },
     required: ['url'],
@@ -86,8 +95,7 @@ export const remoteTriggerTool: Tool = {
     const url = typeof input['url'] === 'string' ? input['url'] : '';
     if (!url || !/^https?:\/\//i.test(url)) return err('valid http(s) url required');
     const method = (typeof input['method'] === 'string' && input['method']) || 'POST';
-    const timeoutMs =
-      typeof input['timeoutMs'] === 'number' ? input['timeoutMs'] : TIMEOUT_MS;
+    const timeoutMs = typeof input['timeoutMs'] === 'number' ? input['timeoutMs'] : TIMEOUT_MS;
     const headers: Record<string, string> = {};
     if (input['headers'] && typeof input['headers'] === 'object') {
       for (const [k, v] of Object.entries(input['headers'])) {

@@ -25,8 +25,7 @@ export function Form({ spec, onSubmit, onCancel }: Props) {
   }, [spec.fields]);
   const [values, setValues] = useState<Record<string, string>>(initial);
 
-  const setVal = (key: string, value: string) =>
-    setValues((prev) => ({ ...prev, [key]: value }));
+  const setVal = (key: string, value: string) => setValues((prev) => ({ ...prev, [key]: value }));
 
   const isLast = active === spec.fields.length - 1;
 

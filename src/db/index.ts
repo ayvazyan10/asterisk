@@ -6,7 +6,7 @@
 // talking to the first test's database.
 
 import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
-import { openDriver, restrictSidecars, type SqliteDriver } from './driver.ts';
+import { type SqliteDriver, openDriver, restrictSidecars } from './driver.ts';
 import { migrate } from './migrations.ts';
 import { seedBuiltinPricing } from './pricing.ts';
 

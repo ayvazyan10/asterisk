@@ -8,8 +8,8 @@
 import {
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   statSync,
@@ -18,7 +18,7 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
-import { audit, type Handler, HttpError, json, readJsonObject } from '../http.ts';
+import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
 
 export type ContentKind = 'rules' | 'skills' | 'agents' | 'souls';
 
@@ -129,7 +129,8 @@ export const listContent: Handler = ({ params }) => {
   const kinds = requested
     ? [requested].filter(isContentKind)
     : (Object.keys(KINDS) as ContentKind[]);
-  if (requested && kinds.length === 0) throw new HttpError(`unknown content kind: ${requested}`, 404);
+  if (requested && kinds.length === 0)
+    throw new HttpError(`unknown content kind: ${requested}`, 404);
 
   const home = asteriskHome();
   return json({
@@ -142,7 +143,11 @@ export const listContent: Handler = ({ params }) => {
         const abs = join(home, extra);
         if (!existsSync(abs) || !statSync(abs).isFile()) continue;
         const stat = statSync(abs);
-        files.unshift({ path: `${EXTRA_PREFIX}${extra}`, bytes: stat.size, modified: stat.mtimeMs });
+        files.unshift({
+          path: `${EXTRA_PREFIX}${extra}`,
+          bytes: stat.size,
+          modified: stat.mtimeMs,
+        });
       }
 
       return { kind, root: base, description: spec.description, files };

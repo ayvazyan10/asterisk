@@ -47,7 +47,10 @@ export const enterPlanModeTool: Tool = {
   input_schema: {
     type: 'object',
     properties: {
-      reason: { type: 'string', description: 'Optional note describing why you\'re entering plan mode.' },
+      reason: {
+        type: 'string',
+        description: "Optional note describing why you're entering plan mode.",
+      },
     },
     additionalProperties: false,
   },

@@ -9,8 +9,8 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { createAgentState, runAgentTurn } from '../src/agent/loop.ts';
 import { findUnpaired, isPaired } from '../src/agent/history.ts';
+import { createAgentState, runAgentTurn } from '../src/agent/loop.ts';
 import type { Provider, ProviderResponse } from '../src/types/messages.ts';
 
 function fakeProvider(responses: ProviderResponse[]): Provider {

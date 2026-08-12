@@ -48,7 +48,10 @@ function parseBlocks(text: string): Block[] {
         idx++;
       }
       idx++;
-      blocks.push({ key: `b${blocks.length}`, node: <CodeBlock lang={lang} code={code.join('\n')} /> });
+      blocks.push({
+        key: `b${blocks.length}`,
+        node: <CodeBlock lang={lang} code={code.join('\n')} />,
+      });
       continue;
     }
 
@@ -127,12 +130,12 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const lines = code.split('\n');
   return (
     <Box flexDirection="column" marginY={1}>
-      {lang && (
-        <Text dimColor>{`┌─ ${lang}`}</Text>
-      )}
+      {lang && <Text dimColor>{`┌─ ${lang}`}</Text>}
       {lines.map((l, i) => (
         <Box key={`c${i}`}>
-          <Text dimColor color="cyan">{'│ '}</Text>
+          <Text dimColor color="cyan">
+            {'│ '}
+          </Text>
           <Text color="cyan">{l}</Text>
         </Box>
       ))}

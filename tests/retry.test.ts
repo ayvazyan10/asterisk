@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ProviderError, classifyHttpError, isRetryable, parseRetryAfter, retryAfterMs } from '../src/providers/errors.ts';
+import {
+  ProviderError,
+  classifyHttpError,
+  isRetryable,
+  parseRetryAfter,
+  retryAfterMs,
+} from '../src/providers/errors.ts';
 import { retry, sleep } from '../src/utils/retry.ts';
 
 describe('classifyHttpError', () => {

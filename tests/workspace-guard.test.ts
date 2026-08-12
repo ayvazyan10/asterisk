@@ -4,8 +4,12 @@ import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { editTool } from '../src/tools/edit.ts';
+import {
+  _resetWorkspaceForTesting,
+  isInsideWorkspace,
+  workspaceRoot,
+} from '../src/tools/workspace.ts';
 import { writeTool } from '../src/tools/write.ts';
-import { _resetWorkspaceForTesting, isInsideWorkspace, workspaceRoot } from '../src/tools/workspace.ts';
 
 describe('workspace guard', () => {
   let workspace: string;

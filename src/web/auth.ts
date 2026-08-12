@@ -73,9 +73,7 @@ function digestsMatch(a: string, b: string): boolean {
 export function verifyToken(db: SqliteDriver, token: string): boolean {
   if (!token) return false;
   const candidate = hash(token);
-  const rows = db.all<{ id: number; token_hash: string }>(
-    'SELECT id, token_hash FROM web_tokens',
-  );
+  const rows = db.all<{ id: number; token_hash: string }>('SELECT id, token_hash FROM web_tokens');
 
   // Every row is compared even after a match so the work is independent of
   // which token was supplied.

@@ -56,7 +56,13 @@ export function balanceOpenTags(html: string): string {
   }
   if (stack.length === 0) return html;
   // Close in reverse order.
-  return html + stack.reverse().map((t) => `</${t}>`).join('');
+  return (
+    html +
+    stack
+      .reverse()
+      .map((t) => `</${t}>`)
+      .join('')
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -120,14 +126,13 @@ function applyInline(escaped: string): string {
   // Strikethrough.  ~~x~~
   s = s.replace(/~~([^~\n]+?)~~/g, '<s>$1</s>');
   // Links.  [text](url)
-  s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, txt, url) =>
-    `<a href="${escapeAttr(url)}">${txt}</a>`,
+  s = s.replace(
+    /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    (_, txt, url) => `<a href="${escapeAttr(url)}">${txt}</a>`,
   );
   // Headings — Telegram has no header tags. Render as bold + a blank line so
   // there is visual separation from the body text.
-  s = s.replace(/(^|\n)(#{1,6})\s+([^\n]+)/g, (_, lead, _hashes, head) =>
-    `${lead}<b>${head}</b>`,
-  );
+  s = s.replace(/(^|\n)(#{1,6})\s+([^\n]+)/g, (_, lead, _hashes, head) => `${lead}<b>${head}</b>`);
   // Bullet markers — Telegram has no list tags; just unify the glyph.
   s = s.replace(/(^|\n)\s*[-*+]\s+/g, '$1• ');
   // Block quotes per-line. Coalesce contiguous lines into a single
@@ -163,9 +168,7 @@ function collapseBlockquote(s: string): string {
 // ─────────────────────────────────────────────────────────────────────────
 
 export function escapeHtml(s: string): string {
-  return s.replace(/[&<>]/g, (c) =>
-    c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;',
-  );
+  return s.replace(/[&<>]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
 }
 
 function escapeAttr(s: string): string {

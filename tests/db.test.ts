@@ -13,7 +13,7 @@ import {
   upsertHook,
   upsertMcpServer,
 } from '../src/db/collections.ts';
-import { openDriver, type SqliteDriver } from '../src/db/driver.ts';
+import { type SqliteDriver, openDriver } from '../src/db/driver.ts';
 import { closeDb, getDb } from '../src/db/index.ts';
 import { latestVersion, migrate } from '../src/db/migrations.ts';
 import {
@@ -214,7 +214,14 @@ describe('collections', () => {
 
   it('deletes MCP servers and reports whether anything matched', () => {
     const db = fresh();
-    upsertMcpServer(db, { name: 'x', transport: 'stdio', command: 'c', args: [], env: {}, enabled: true });
+    upsertMcpServer(db, {
+      name: 'x',
+      transport: 'stdio',
+      command: 'c',
+      args: [],
+      env: {},
+      enabled: true,
+    });
     expect(deleteMcpServer(db, 'x')).toBe(true);
     expect(deleteMcpServer(db, 'x')).toBe(false);
     expect(listMcpServers(db)).toHaveLength(0);
@@ -281,7 +288,9 @@ describe('config store', () => {
       mcpServers: [
         { name: 'a', transport: 'stdio', command: 'run-a', args: ['--x'], env: {}, enabled: true },
       ],
-      hooks: [{ name: 'h', event: 'on_error', command: 'notify', timeoutSeconds: 5, enabled: true }],
+      hooks: [
+        { name: 'h', event: 'on_error', command: 'notify', timeoutSeconds: 5, enabled: true },
+      ],
     });
     writeConfig(db, draft);
 

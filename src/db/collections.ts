@@ -66,9 +66,7 @@ function rowToMcp(row: McpRow): WithId<McpServerConfig> {
 }
 
 export function listMcpServers(db: SqliteDriver): Array<WithId<McpServerConfig>> {
-  return db
-    .all<McpRow>('SELECT * FROM mcp_servers ORDER BY sort_order, id')
-    .map(rowToMcp);
+  return db.all<McpRow>('SELECT * FROM mcp_servers ORDER BY sort_order, id').map(rowToMcp);
 }
 
 /** Config-shaped view, for `loadConfig()`. Ids are stripped. */
@@ -84,9 +82,9 @@ export function upsertMcpServer(
   const server = McpServerSchema.parse(input);
   const order =
     sortOrder ??
-    (db.get<{ next: number }>('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM mcp_servers')
+    db.get<{ next: number }>('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM mcp_servers')
       ?.next ??
-      0);
+    0;
 
   db.run(
     `INSERT INTO mcp_servers
@@ -165,9 +163,8 @@ export function upsertHook(
   const hook = HookConfigSchema.parse(input);
   const order =
     sortOrder ??
-    (db.get<{ next: number }>('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM hooks')
-      ?.next ??
-      0);
+    db.get<{ next: number }>('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM hooks')?.next ??
+    0;
 
   db.run(
     `INSERT INTO hooks

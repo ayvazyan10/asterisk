@@ -5,8 +5,7 @@ type Mode = 'unstaged' | 'staged' | 'all';
 
 export const diffReviewTool: Tool = {
   name: 'DiffReview',
-  description:
-    'Inspect git changes and produce a structured diff summary with review-risk hints.',
+  description: 'Inspect git changes and produce a structured diff summary with review-risk hints.',
   input_schema: {
     type: 'object',
     properties: {
@@ -24,9 +23,8 @@ export const diffReviewTool: Tool = {
   },
   async execute(input, opts) {
     const mode = (typeof input['mode'] === 'string' ? input['mode'] : 'unstaged') as Mode;
-    const path = typeof input['path'] === 'string' && input['path'].trim()
-      ? input['path'].trim()
-      : undefined;
+    const path =
+      typeof input['path'] === 'string' && input['path'].trim() ? input['path'].trim() : undefined;
     if (!['unstaged', 'staged', 'all'].includes(mode)) {
       return err('mode must be one of: unstaged, staged, all');
     }
@@ -84,7 +82,9 @@ function countLines(diff: string, prefix: '+' | '-'): number {
 
 function reviewHints(diff: string): string[] {
   const hints: string[] = [];
-  const addedLines = diff.split('\n').filter((line) => line.startsWith('+') && !line.startsWith('+++'));
+  const addedLines = diff
+    .split('\n')
+    .filter((line) => line.startsWith('+') && !line.startsWith('+++'));
   const checks: Array<[RegExp, string]> = [
     [/\bTODO\b|\bFIXME\b/i, 'New TODO/FIXME markers were added.'],
     [/\bconsole\.log\b/, 'New console.log calls were added.'],
@@ -92,7 +92,10 @@ function reviewHints(diff: string): string[] {
     [/\beval\s*\(/, 'New eval usage appears in added lines.'],
     [/\bexecSync\s*\(|\bspawn\s*\(|\bexeca\s*\(/, 'New process execution code was added.'],
     [/\bprocess\.env\b/, 'New environment-variable reads were added.'],
-    [/\bwriteFileSync\b|\bunlinkSync\b|\brmSync\b/, 'New synchronous filesystem mutation code was added.'],
+    [
+      /\bwriteFileSync\b|\bunlinkSync\b|\brmSync\b/,
+      'New synchronous filesystem mutation code was added.',
+    ],
   ];
   for (const [pattern, message] of checks) {
     if (addedLines.some((line) => pattern.test(line))) hints.push(message);

@@ -76,10 +76,7 @@ describe('rules — layered + language-aware', () => {
     await mkdir(join(userHome, 'rules', 'common'), { recursive: true });
     await mkdir(join(projectRoot, '.asterisk', 'rules', 'common'), { recursive: true });
     await writeFile(join(userHome, 'rules', 'common', 'style.md'), 'USER_STYLE');
-    await writeFile(
-      join(projectRoot, '.asterisk', 'rules', 'common', 'style.md'),
-      'PROJECT_STYLE',
-    );
+    await writeFile(join(projectRoot, '.asterisk', 'rules', 'common', 'style.md'), 'PROJECT_STYLE');
     const rules = loadRules(projectRoot);
     const styles = rules.filter((r) => r.name === 'style.md');
     // Both load because they're at different paths — but project comes

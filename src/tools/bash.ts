@@ -2,8 +2,8 @@
 // Reference: https://github.com/sindresorhus/execa
 
 import { execa } from 'execa';
-import { type Tool, ok, err } from './types.ts';
 import { checkBashSafety } from './bash-safety.ts';
+import { type Tool, err, ok } from './types.ts';
 
 export const bashTool: Tool = {
   name: 'Bash',
@@ -30,8 +30,7 @@ export const bashTool: Tool = {
       return err(`command blocked by safety check:\n${safety.warnings.join('\n')}`);
     }
 
-    const rawTimeout =
-      typeof input['timeoutSeconds'] === 'number' ? input['timeoutSeconds'] : 60;
+    const rawTimeout = typeof input['timeoutSeconds'] === 'number' ? input['timeoutSeconds'] : 60;
     const timeoutMs = Math.min(Math.max(rawTimeout, 1), 600) * 1000;
 
     try {
@@ -46,7 +45,9 @@ export const bashTool: Tool = {
       if (result.isCanceled || result.isTerminated) {
         const reason = result.isCanceled ? 'cancelled' : `killed by ${result.signal}`;
         const partial = [result.stdout, result.stderr].filter((s) => s && s.length > 0).join('\n');
-        return err(`command ${reason} after ${Math.round(timeoutMs / 1000)}s${partial ? `\n${partial.slice(0, 2000)}` : ''}`);
+        return err(
+          `command ${reason} after ${Math.round(timeoutMs / 1000)}s${partial ? `\n${partial.slice(0, 2000)}` : ''}`,
+        );
       }
       const combined = [result.stdout, result.stderr].filter((s) => s && s.length > 0).join('\n');
       const truncated =

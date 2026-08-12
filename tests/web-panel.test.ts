@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ConfigSchema } from '../src/config/schema.ts';
 import { readConfig, writeConfig } from '../src/config/store.ts';
-import { openDriver, type SqliteDriver } from '../src/db/driver.ts';
+import { type SqliteDriver, openDriver } from '../src/db/driver.ts';
 import { migrate } from '../src/db/migrations.ts';
 import { seedBuiltinPricing } from '../src/db/pricing.ts';
 import { getSecret } from '../src/db/settings.ts';
@@ -81,7 +81,9 @@ describe('router', () => {
 
   it('prefers the file route over the listing route', () => {
     expect(matchRoute('GET', '/api/content/rules')).toMatchObject({ params: ['rules'] });
-    expect(matchRoute('GET', '/api/content/rules/a.md')).toMatchObject({ params: ['rules', 'a.md'] });
+    expect(matchRoute('GET', '/api/content/rules/a.md')).toMatchObject({
+      params: ['rules', 'a.md'],
+    });
   });
 
   it('reports allowed methods for a known path with the wrong verb', () => {
@@ -157,7 +159,10 @@ describe('settings API', () => {
 
   it('resets a single setting to its default', async () => {
     await call('/api/settings', send('PATCH', { updates: { 'ollama.model': 'weird:1b' } }));
-    const { status, body } = await call('/api/settings/reset', send('POST', { path: 'ollama.model' }));
+    const { status, body } = await call(
+      '/api/settings/reset',
+      send('POST', { path: 'ollama.model' }),
+    );
     expect(status).toBe(200);
     expect(body.value).toBe('carstenuhlig/omnicoder-9b:q8_0');
     expect(readConfig(db).ollama.model).toBe('carstenuhlig/omnicoder-9b:q8_0');
@@ -172,7 +177,10 @@ describe('settings API', () => {
 
 describe('secrets API', () => {
   it('never returns plaintext', async () => {
-    await call('/api/secrets', send('PUT', { key: 'ANTHROPIC_API_KEY', value: 'sk-supersecret-1234' }));
+    await call(
+      '/api/secrets',
+      send('PUT', { key: 'ANTHROPIC_API_KEY', value: 'sk-supersecret-1234' }),
+    );
     const { body } = await call('/api/secrets');
 
     expect(JSON.stringify(body)).not.toContain('sk-supersecret-1234');
@@ -191,7 +199,9 @@ describe('secrets API', () => {
   });
 
   it('rejects unknown secret keys', async () => {
-    expect((await call('/api/secrets', send('PUT', { key: 'MY_KEY', value: 'x' }))).status).toBe(400);
+    expect((await call('/api/secrets', send('PUT', { key: 'MY_KEY', value: 'x' }))).status).toBe(
+      400,
+    );
   });
 });
 
@@ -199,7 +209,9 @@ describe('collections API', () => {
   it('creates, lists and deletes an MCP server', async () => {
     const created = await call(
       '/api/mcp',
-      send('PUT', { server: { name: 'files', transport: 'stdio', command: 'mcp-files', args: ['/tmp'] } }),
+      send('PUT', {
+        server: { name: 'files', transport: 'stdio', command: 'mcp-files', args: ['/tmp'] },
+      }),
     );
     expect(created.status).toBe(200);
 
@@ -224,7 +236,10 @@ describe('collections API', () => {
   });
 
   it('round-trips a hook', async () => {
-    await call('/api/hooks', send('PUT', { hook: { name: 'fmt', event: 'after_tool', command: 'biome check' } }));
+    await call(
+      '/api/hooks',
+      send('PUT', { hook: { name: 'fmt', event: 'after_tool', command: 'biome check' } }),
+    );
     const { body } = await call('/api/hooks');
     expect(body.hooks[0]).toMatchObject({ name: 'fmt', event: 'after_tool', enabled: true });
   });
@@ -267,7 +282,10 @@ describe('content API', () => {
   });
 
   it('creates intermediate directories on write', async () => {
-    const { status } = await call('/api/content/agents/deep/nested/a.md', send('PUT', { content: 'x' }));
+    const { status } = await call(
+      '/api/content/agents/deep/nested/a.md',
+      send('PUT', { content: 'x' }),
+    );
     expect(status).toBe(200);
     expect(await readFile(join(home, 'agents', 'deep', 'nested', 'a.md'), 'utf8')).toBe('x');
   });
@@ -293,7 +311,9 @@ describe('content API', () => {
   });
 
   it('refuses non-markdown files', async () => {
-    expect((await call('/api/content/rules/config.json', send('PUT', { content: '{}' }))).status).toBe(400);
+    expect(
+      (await call('/api/content/rules/config.json', send('PUT', { content: '{}' }))).status,
+    ).toBe(400);
   });
 
   it('only allows declared extras through the @ escape hatch', async () => {
@@ -307,7 +327,9 @@ describe('content API', () => {
   });
 
   it('deletes a file', async () => {
-    expect((await call('/api/content/rules/common/style.md', { method: 'DELETE' })).status).toBe(200);
+    expect((await call('/api/content/rules/common/style.md', { method: 'DELETE' })).status).toBe(
+      200,
+    );
     expect((await call('/api/content/rules/common/style.md')).status).toBe(404);
   });
 
@@ -330,7 +352,9 @@ describe('config export and import', () => {
     expect(ok.status).toBe(200);
     expect(readConfig(db).ollama.model).toBe('imported:1b');
 
-    expect((await call('/api/config/import', send('POST', { config: { provider: 'nope' } }))).status).toBe(422);
+    expect(
+      (await call('/api/config/import', send('POST', { config: { provider: 'nope' } }))).status,
+    ).toBe(422);
   });
 });
 
@@ -364,9 +388,9 @@ describe('usage and pricing API', () => {
 
   it('serves seeded pricing and accepts an override', async () => {
     const seeded = await call('/api/pricing');
-    expect(seeded.body.pricing.find((p: { model: string }) => p.model === 'claude-opus-5')).toMatchObject(
-      { inputPerMTok: 5, outputPerMTok: 25, source: 'builtin' },
-    );
+    expect(
+      seeded.body.pricing.find((p: { model: string }) => p.model === 'claude-opus-5'),
+    ).toMatchObject({ inputPerMTok: 5, outputPerMTok: 25, source: 'builtin' });
 
     const saved = await call(
       '/api/pricing',
@@ -405,9 +429,15 @@ describe('usage and pricing API', () => {
 
 describe('status and system', () => {
   it('reports version, provider and counts', async () => {
-    await call('/api/mcp', send('PUT', { server: { name: 'a', transport: 'stdio', command: 'a' } }));
+    await call(
+      '/api/mcp',
+      send('PUT', { server: { name: 'a', transport: 'stdio', command: 'a' } }),
+    );
     const { body } = await call('/api/status');
-    expect(body).toMatchObject({ provider: 'ollama', counts: { mcpServers: 1, enabledMcpServers: 1 } });
+    expect(body).toMatchObject({
+      provider: 'ollama',
+      counts: { mcpServers: 1, enabledMcpServers: 1 },
+    });
     expect(body.version).toMatch(/^\d+\.\d+\.\d+/);
   });
 
@@ -460,7 +490,9 @@ describe('tokens and auth', () => {
     const token = issueToken(db, 'test');
     const guarded = createRequestHandler({ db, host: '127.0.0.1', port: 0, authRequired: true });
     const res = await guarded(
-      new Request('http://localhost/api/status', { headers: { cookie: `asterisk_session=${token}` } }),
+      new Request('http://localhost/api/status', {
+        headers: { cookie: `asterisk_session=${token}` },
+      }),
     );
     expect(res.status).toBe(200);
   });

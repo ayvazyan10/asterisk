@@ -7,7 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { openDriver, type SqliteDriver } from '../src/db/driver.ts';
+import { type SqliteDriver, openDriver } from '../src/db/driver.ts';
 import { migrate } from '../src/db/migrations.ts';
 import { checkRequestOrigin } from '../src/web/origin-guard.ts';
 import { createRequestHandler } from '../src/web/server.ts';
@@ -45,7 +45,10 @@ describe('checkRequestOrigin', () => {
   it('refuses an opaque origin', () => {
     // A sandboxed iframe or data: document sends Origin: null.
     expect(
-      checkRequestOrigin(req('/api/hooks', { host: '127.0.0.1:4321', origin: 'null' }, 'PUT'), OPTS),
+      checkRequestOrigin(
+        req('/api/hooks', { host: '127.0.0.1:4321', origin: 'null' }, 'PUT'),
+        OPTS,
+      ),
     ).toContain('opaque origin');
   });
 
@@ -133,7 +136,12 @@ describe('the handler enforces the guard ahead of authentication', () => {
 
   it('rejects a rebound request with 403 even when auth is disabled', async () => {
     // authRequired:false is the worst case — nothing else would stop it.
-    const handler = createRequestHandler({ db, host: '127.0.0.1', port: 4321, authRequired: false });
+    const handler = createRequestHandler({
+      db,
+      host: '127.0.0.1',
+      port: 4321,
+      authRequired: false,
+    });
     const res = await handler(
       new Request('http://127.0.0.1:4321/api/hooks', {
         method: 'PUT',
@@ -145,7 +153,12 @@ describe('the handler enforces the guard ahead of authentication', () => {
   });
 
   it('rejects a cross-site mutation with 403', async () => {
-    const handler = createRequestHandler({ db, host: '127.0.0.1', port: 4321, authRequired: false });
+    const handler = createRequestHandler({
+      db,
+      host: '127.0.0.1',
+      port: 4321,
+      authRequired: false,
+    });
     const res = await handler(
       new Request('http://127.0.0.1:4321/api/hooks', {
         method: 'PUT',
@@ -162,7 +175,12 @@ describe('the handler enforces the guard ahead of authentication', () => {
   });
 
   it('lets a same-origin request through the guard', async () => {
-    const handler = createRequestHandler({ db, host: '127.0.0.1', port: 4321, authRequired: false });
+    const handler = createRequestHandler({
+      db,
+      host: '127.0.0.1',
+      port: 4321,
+      authRequired: false,
+    });
     const res = await handler(
       new Request('http://127.0.0.1:4321/', {
         headers: { host: '127.0.0.1:4321', 'sec-fetch-site': 'same-origin' },
@@ -172,7 +190,12 @@ describe('the handler enforces the guard ahead of authentication', () => {
   });
 
   it('does not leak internals in a 500', async () => {
-    const handler = createRequestHandler({ db, host: '127.0.0.1', port: 4321, authRequired: false });
+    const handler = createRequestHandler({
+      db,
+      host: '127.0.0.1',
+      port: 4321,
+      authRequired: false,
+    });
     // A malformed body makes the route handler throw a Zod error, whose message
     // used to be returned verbatim.
     const res = await handler(

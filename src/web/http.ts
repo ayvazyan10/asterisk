@@ -60,12 +60,7 @@ export class HttpError extends Error {
 }
 
 /** Records a mutation in the audit log. Never throws — auditing must not break the write. */
-export function audit(
-  db: SqliteDriver,
-  action: string,
-  target: string,
-  detail?: unknown,
-): void {
+export function audit(db: SqliteDriver, action: string, target: string, detail?: unknown): void {
   try {
     db.run('INSERT INTO audit_log (at, actor, action, target, detail) VALUES (?, ?, ?, ?, ?)', [
       Date.now(),

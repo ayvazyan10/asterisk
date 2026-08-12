@@ -121,7 +121,10 @@ export function upsertPricing(
   if (!input.model) throw new Error('model is required');
   for (const [key, value] of Object.entries(input)) {
     if (key === 'model') continue;
-    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
+    if (
+      value !== undefined &&
+      (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
+    ) {
       throw new Error(`${key} must be a non-negative number`);
     }
   }

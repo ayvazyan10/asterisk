@@ -73,20 +73,14 @@ export function ListPicker({ spec, onPick, onCancel }: Props) {
                     {item.badge}
                   </Text>
                 )}
-                {item.description && (
-                  <Text dimColor>{`  · ${item.description}`}</Text>
-                )}
+                {item.description && <Text dimColor>{`  · ${item.description}`}</Text>}
               </Box>
             );
           })}
         </Box>
       )}
       <Box marginTop={1}>
-        <Text dimColor>
-          {busy
-            ? '  …running…'
-            : '  ↑↓ navigate · Enter pick · Esc cancel'}
-        </Text>
+        <Text dimColor>{busy ? '  …running…' : '  ↑↓ navigate · Enter pick · Esc cancel'}</Text>
       </Box>
     </Box>
   );

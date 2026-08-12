@@ -7,7 +7,7 @@
 import { request } from 'undici';
 
 import { checkOutboundUrl } from './ssrf-guard.ts';
-import { type Tool, ok, err } from './types.ts';
+import { type Tool, err, ok } from './types.ts';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_BYTES = 2_000_000;
@@ -43,7 +43,10 @@ export const webFetchTool: Tool = {
     if (guard.reason) return err(guard.reason);
 
     const timeoutMs = Math.min(
-      Math.max(typeof input['timeoutMs'] === 'number' ? input['timeoutMs'] : DEFAULT_TIMEOUT_MS, 1_000),
+      Math.max(
+        typeof input['timeoutMs'] === 'number' ? input['timeoutMs'] : DEFAULT_TIMEOUT_MS,
+        1_000,
+      ),
       60_000,
     );
     const query = typeof input['query'] === 'string' ? input['query'].trim() : '';
@@ -79,10 +82,13 @@ export const webFetchTool: Tool = {
       const isHtml = ctype.includes('html') || /<html[\s>]/i.test(raw.slice(0, 4096));
       const text = isHtml ? htmlToText(raw) : raw;
       const focused = query ? focusAround(text, query, MAX_RETURN_CHARS) : text;
-      const final = focused.length > MAX_RETURN_CHARS
-        ? `${focused.slice(0, MAX_RETURN_CHARS)}\n[truncated · ${focused.length - MAX_RETURN_CHARS} chars]`
-        : focused;
-      return ok(`URL: ${url}\nStatus: ${status}  ·  ${ctype || 'unknown content-type'}\n---\n${final}`);
+      const final =
+        focused.length > MAX_RETURN_CHARS
+          ? `${focused.slice(0, MAX_RETURN_CHARS)}\n[truncated · ${focused.length - MAX_RETURN_CHARS} chars]`
+          : focused;
+      return ok(
+        `URL: ${url}\nStatus: ${status}  ·  ${ctype || 'unknown content-type'}\n---\n${final}`,
+      );
     } catch (e) {
       return err(`WebFetch failed: ${(e as Error).message}`);
     } finally {

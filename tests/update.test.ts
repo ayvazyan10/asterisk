@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -31,9 +31,7 @@ describe('update entrypoint', () => {
 
   it('detects when install dir is not a git repo', () => {
     const nonGit = join(tmpRepo, 'nope');
-    expect(() =>
-      execSync('git rev-parse --git-dir', { cwd: nonGit, encoding: 'utf8' }),
-    ).toThrow();
+    expect(() => execSync('git rev-parse --git-dir', { cwd: nonGit, encoding: 'utf8' })).toThrow();
   });
 
   it('reads version from package.json', async () => {

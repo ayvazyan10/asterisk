@@ -45,12 +45,10 @@ export const codeIntelTool: Tool = {
   async execute(input, opts) {
     const action = input['action'] as Action;
     const query = typeof input['query'] === 'string' ? input['query'].trim() : '';
-    const path = typeof input['path'] === 'string' && input['path'].trim()
-      ? input['path'].trim()
-      : '.';
-    const file = typeof input['file'] === 'string' && input['file'].trim()
-      ? input['file'].trim()
-      : undefined;
+    const path =
+      typeof input['path'] === 'string' && input['path'].trim() ? input['path'].trim() : '.';
+    const file =
+      typeof input['file'] === 'string' && input['file'].trim() ? input['file'].trim() : undefined;
     const line = typeof input['line'] === 'number' ? input['line'] : undefined;
     const character = typeof input['character'] === 'number' ? input['character'] : undefined;
 
@@ -59,16 +57,21 @@ export const codeIntelTool: Tool = {
     }
     const hasPosition = !!file && line !== undefined && character !== undefined;
     if (
-      action !== 'diagnostics'
-      && !(action === 'symbols' && file)
-      && !((action === 'definition' || action === 'references') && hasPosition)
-      && !query
+      action !== 'diagnostics' &&
+      !(action === 'symbols' && file) &&
+      !((action === 'definition' || action === 'references') && hasPosition) &&
+      !query
     ) {
       return err('query is required');
     }
 
     if (action === 'diagnostics') return diagnostics(path, file, opts?.signal);
-    if ((action === 'definition' || action === 'references') && file && line !== undefined && character !== undefined) {
+    if (
+      (action === 'definition' || action === 'references') &&
+      file &&
+      line !== undefined &&
+      character !== undefined
+    ) {
       return languageServiceLookup(action, file, line, character);
     }
     if (action === 'symbols' && file) return languageServiceSymbols(file);
@@ -147,10 +150,12 @@ function languageServiceLookup(
     const source = service.program.getSourceFile(service.fileName);
     if (!source) return err(`file not found in TypeScript program: ${service.fileName}`);
     const position = ts.getPositionOfLineAndCharacter(source, line - 1, character - 1);
-    const items = action === 'definition'
-      ? service.languageService.getDefinitionAtPosition(service.fileName, position) ?? []
-      : (service.languageService.findReferences(service.fileName, position) ?? [])
-        .flatMap((ref) => ref.references);
+    const items =
+      action === 'definition'
+        ? (service.languageService.getDefinitionAtPosition(service.fileName, position) ?? [])
+        : (service.languageService.findReferences(service.fileName, position) ?? []).flatMap(
+            (ref) => ref.references,
+          );
     if (items.length === 0) return ok('(no results)');
     const lines = items.map((item) => {
       const targetFile = item.fileName;
@@ -216,7 +221,8 @@ async function diagnostics(path: string, file?: string, signal?: AbortSignal) {
         return formatDiagnosticResult(result.exitCode ?? 0, result.stdout, result.stderr);
       }
     }
-    if (!existsSync(tsconfigPath)) return ok('(no package typecheck script or tsconfig.json found)');
+    if (!existsSync(tsconfigPath))
+      return ok('(no package typecheck script or tsconfig.json found)');
     const result = await execa('tsc', ['--noEmit', '--pretty', 'false'], execOpts);
     return formatDiagnosticResult(result.exitCode ?? 0, result.stdout, result.stderr);
   } catch (e) {
@@ -283,12 +289,14 @@ function readTsConfig(configPath: string): ts.ParsedCommandLine {
 
 function formatTsDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
   return truncate(
-    diagnostics.map((d) => {
-      const msg = ts.flattenDiagnosticMessageText(d.messageText, '\n');
-      if (!d.file || d.start === undefined) return msg;
-      const pos = d.file.getLineAndCharacterOfPosition(d.start);
-      return `${d.file.fileName}:${pos.line + 1}:${pos.character + 1} TS${d.code}: ${msg}`;
-    }).join('\n'),
+    diagnostics
+      .map((d) => {
+        const msg = ts.flattenDiagnosticMessageText(d.messageText, '\n');
+        if (!d.file || d.start === undefined) return msg;
+        const pos = d.file.getLineAndCharacterOfPosition(d.start);
+        return `${d.file.fileName}:${pos.line + 1}:${pos.character + 1} TS${d.code}: ${msg}`;
+      })
+      .join('\n'),
   );
 }
 

@@ -58,9 +58,7 @@ function fakeProvider(responses: ProviderResponse[]): Provider {
 function writeAttempt(path: string): ProviderResponse[] {
   return [
     {
-      content: [
-        { type: 'tool_use', id: 'w1', name: 'Write', input: { path, content: 'pwned' } },
-      ],
+      content: [{ type: 'tool_use', id: 'w1', name: 'Write', input: { path, content: 'pwned' } }],
       stopReason: 'tool_use',
     },
     { content: [{ type: 'text', text: 'finished' }], stopReason: 'end_turn' },
@@ -82,7 +80,11 @@ describe('allowedTools is enforced at execution', () => {
     });
 
     expect(existsSync(target)).toBe(false);
-    expect(onToolResult).toHaveBeenCalledWith('Write', expect.stringContaining('not available'), true);
+    expect(onToolResult).toHaveBeenCalledWith(
+      'Write',
+      expect.stringContaining('not available'),
+      true,
+    );
   });
 
   it('reports the refusal back to the model as an error tool_result', async () => {
@@ -92,9 +94,7 @@ describe('allowedTools is enforced at execution', () => {
       allowedTools: ['Read'],
     });
 
-    const results = state.history
-      .flatMap((m) => m.content)
-      .filter((b) => b.type === 'tool_result');
+    const results = state.history.flatMap((m) => m.content).filter((b) => b.type === 'tool_result');
 
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({ tool_use_id: 'w1', is_error: true });
@@ -163,9 +163,7 @@ describe('before_tool hooks fail closed', () => {
     });
 
     expect(existsSync(target)).toBe(false);
-    const results = state.history
-      .flatMap((m) => m.content)
-      .filter((b) => b.type === 'tool_result');
+    const results = state.history.flatMap((m) => m.content).filter((b) => b.type === 'tool_result');
     expect(results[0]).toMatchObject({ is_error: true });
     expect((results[0] as { content: string }).content).toContain('denied by policy');
   });
@@ -176,14 +174,18 @@ describe('before_tool hooks fail closed', () => {
 
     await runAgentTurn(fakeProvider(writeAttempt(target)), state, 'write it', {
       hooks: [
-        { name: 'crash', event: 'before_tool', command: 'exit 7', timeoutSeconds: 30, enabled: true },
+        {
+          name: 'crash',
+          event: 'before_tool',
+          command: 'exit 7',
+          timeoutSeconds: 30,
+          enabled: true,
+        },
       ],
     });
 
     expect(existsSync(target)).toBe(false);
-    const results = state.history
-      .flatMap((m) => m.content)
-      .filter((b) => b.type === 'tool_result');
+    const results = state.history.flatMap((m) => m.content).filter((b) => b.type === 'tool_result');
     expect((results[0] as { content: string }).content).toContain('exited 7');
   });
 

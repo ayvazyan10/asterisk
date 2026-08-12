@@ -13,7 +13,16 @@
 // continuing. `findExposedFiles` exists so the gap surfaces as a `/doctor`
 // warning instead of as a silent leak.
 
-import { chmodSync, closeSync, mkdirSync, openSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import type { Dirent } from 'node:fs';
 import { join } from 'node:path';
 

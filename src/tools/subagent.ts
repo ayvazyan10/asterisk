@@ -6,14 +6,14 @@
 // fresh AgentState. maxTurns is capped lower (default 8) than the parent
 // loop so the sub-task can't run forever.
 
-import { findAgent, loadAgents } from '../agents/loader.ts';
-import { type AgentState, createAgentState, runAgentTurn } from '../agent/loop.ts';
 import { currentSession } from '../agent/context.ts';
+import { type AgentState, createAgentState, runAgentTurn } from '../agent/loop.ts';
+import { findAgent, loadAgents } from '../agents/loader.ts';
 import { loadConfig } from '../config/load.ts';
 import { createProviderFromConfig } from '../providers/factory.ts';
 import { loadRules } from '../rules/loader.ts';
-import { type Tool, ok, err } from './types.ts';
 import type { Provider } from '../types/messages.ts';
+import { type Tool, err, ok } from './types.ts';
 
 const DEFAULT_SUB_MAX_TURNS = 32;
 const DEFAULT_SUB_MAX_RETRIES = 3;
@@ -70,7 +70,7 @@ export const subAgentTool: Tool = {
       maxTurns: {
         type: 'number',
         description:
-          'Cap on the sub-agent\'s tool-use turns (default 8 unless the agent type sets a higher cap, max 20).',
+          "Cap on the sub-agent's tool-use turns (default 8 unless the agent type sets a higher cap, max 20).",
       },
     },
     required: ['prompt'],
@@ -95,10 +95,7 @@ export const subAgentTool: Tool = {
 
     const turnsCap = agentType?.maxTurns ?? DEFAULT_SUB_MAX_TURNS;
     const maxTurns = Math.min(
-      Math.max(
-        typeof input['maxTurns'] === 'number' ? input['maxTurns'] : turnsCap,
-        1,
-      ),
+      Math.max(typeof input['maxTurns'] === 'number' ? input['maxTurns'] : turnsCap, 1),
       20,
     );
 

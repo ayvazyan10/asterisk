@@ -61,9 +61,7 @@ describe('agent loop', () => {
   it('reports unknown-tool gracefully', async () => {
     const provider = fakeProvider([
       {
-        content: [
-          { type: 'tool_use', id: 'x', name: 'NotATool', input: {} },
-        ],
+        content: [{ type: 'tool_use', id: 'x', name: 'NotATool', input: {} }],
         stopReason: 'tool_use',
       },
       {
@@ -75,7 +73,11 @@ describe('agent loop', () => {
     const onToolResult = vi.fn();
     const result = await runAgentTurn(provider, state, 'q', { onToolResult });
     expect(result.reason).toBe('end-turn');
-    expect(onToolResult).toHaveBeenCalledWith('NotATool', expect.stringContaining('not found'), true);
+    expect(onToolResult).toHaveBeenCalledWith(
+      'NotATool',
+      expect.stringContaining('not found'),
+      true,
+    );
   });
 
   it('lets before_tool hooks block tool execution', async () => {
@@ -174,9 +176,7 @@ describe('agent loop', () => {
     // shot — which it takes, producing the expected text.
     const provider = fakeProvider([
       {
-        content: [
-          { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'echo a' } },
-        ],
+        content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'echo a' } }],
         stopReason: 'tool_use',
       },
       {
@@ -197,9 +197,7 @@ describe('agent loop', () => {
     // The synthetic prod should be in history.
     const userMessages = state.history.filter((m) => m.role === 'user');
     const promptedSummary = userMessages.some((m) =>
-      m.content.some(
-        (b) => b.type === 'text' && /short summary/i.test(b.text),
-      ),
+      m.content.some((b) => b.type === 'text' && /short summary/i.test(b.text)),
     );
     expect(promptedSummary).toBe(true);
   });
@@ -210,9 +208,7 @@ describe('agent loop', () => {
     // up with the synthesised stub rather than looping forever.
     const provider = fakeProvider([
       {
-        content: [
-          { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'echo a' } },
-        ],
+        content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'echo a' } }],
         stopReason: 'tool_use',
       },
       { content: [], stopReason: 'end_turn' }, // empty post-tool
@@ -262,9 +258,7 @@ describe('agent loop', () => {
     const ctrl = new AbortController();
     const provider = fakeProvider([
       {
-        content: [
-          { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'sleep 10' } },
-        ],
+        content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'sleep 10' } }],
         stopReason: 'tool_use',
       },
       {
@@ -287,9 +281,7 @@ describe('agent loop', () => {
       name: 'loop',
       async send() {
         return {
-          content: [
-            { type: 'tool_use', id: 'i', name: 'Bash', input: { command: 'echo x' } },
-          ],
+          content: [{ type: 'tool_use', id: 'i', name: 'Bash', input: { command: 'echo x' } }],
           stopReason: 'tool_use',
         };
       },

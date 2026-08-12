@@ -20,9 +20,7 @@ export function Banner({ providerName, cwd, version }: Props) {
         </Text>
         <Text dimColor>{' /help for commands · /quit to exit · ^C to abort'}</Text>
       </Box>
-      <Text dimColor>
-        {`  ${providerName}  ·  ${shortenPath(cwd)}`}
-      </Text>
+      <Text dimColor>{`  ${providerName}  ·  ${shortenPath(cwd)}`}</Text>
     </Box>
   );
 }

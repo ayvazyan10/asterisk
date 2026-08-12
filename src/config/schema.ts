@@ -151,7 +151,9 @@ const WhatsappWebJsSchema = z.object({
   sessionDir: z
     .string()
     .default('')
-    .describe('Where the linked-device session is cached. Blank uses ~/.asterisk/whatsapp-web-session.'),
+    .describe(
+      'Where the linked-device session is cached. Blank uses ~/.asterisk/whatsapp-web-session.',
+    ),
 });
 
 const WhatsappSchema = z.object({
@@ -261,9 +263,7 @@ export type McpServerConfig = z.infer<typeof McpServerSchema>;
 export const OutputStyleSchema = z.enum(['default', 'concise', 'explanatory', 'learning']);
 
 export const ConfigSchema = z.object({
-  provider: ProviderSchema.default('ollama').describe(
-    'Which backend the agent loop talks to.',
-  ),
+  provider: ProviderSchema.default('ollama').describe('Which backend the agent loop talks to.'),
   ollama: OllamaSchema.default({}),
   openaiCompatible: OpenAiCompatibleSchema.default({}),
   anthropic: AnthropicSchema.default({}),

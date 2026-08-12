@@ -2,6 +2,7 @@
 // can be added at runtime via setExtraTools so the agent loop sees them
 // alongside the built-ins without a special code path.
 
+import { MCP_RESOURCE_TOOLS } from '../mcp/resources.ts';
 import { ASK_TOOLS } from './ask.ts';
 import { attachTool } from './attach.ts';
 import { bashTool } from './bash.ts';
@@ -13,18 +14,17 @@ import { globTool } from './glob.ts';
 import { grepTool } from './grep.ts';
 import { MONITOR_TOOLS } from './monitor.ts';
 import { NOTIFY_TOOLS } from './notify.ts';
-import { isPlanMode, isReadOnlyToolName, PLAN_MODE_TOOLS } from './planmode.ts';
+import { PLAN_MODE_TOOLS, isPlanMode, isReadOnlyToolName } from './planmode.ts';
 import { readTool } from './read.ts';
 import { SCHEDULE_TOOLS } from './schedule.ts';
 import { subAgentTool } from './subagent.ts';
 import { TASK_TOOLS } from './tasks.ts';
+import { toolSearchTool } from './tool-search.ts';
 import type { Tool } from './types.ts';
 import { webFetchTool } from './webfetch.ts';
 import { webSearchTool } from './websearch.ts';
 import { WORKTREE_TOOLS } from './worktree.ts';
 import { writeTool } from './write.ts';
-import { toolSearchTool } from './tool-search.ts';
-import { MCP_RESOURCE_TOOLS } from '../mcp/resources.ts';
 
 export const BUILTIN_TOOLS: Tool[] = [
   bashTool,

@@ -5,11 +5,11 @@
 // Reference: https://github.com/pedroslopez/whatsapp-web.js
 
 import {
-  asOutgoingMessage,
   type Attachment,
   type BotAdapter,
   type Handler,
   type IncomingMessage,
+  asOutgoingMessage,
 } from '../adapter.ts';
 
 export interface WebJsOptions {
@@ -23,9 +23,7 @@ interface WhatsappWebMessage {
   reply(text: string): Promise<unknown>;
 }
 
-interface WhatsappWebMessageMedia {
-  // whatsapp-web.js MessageMedia
-}
+type WhatsappWebMessageMedia = {};
 
 interface WhatsappWebClient {
   on(event: 'qr', cb: (qr: string) => void): void;

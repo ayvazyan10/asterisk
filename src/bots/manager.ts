@@ -1,11 +1,11 @@
 // Bot manager — given the loaded config + secrets, instantiates the enabled
 // adapters and gives the daemon one start/stop surface.
 
+import type { LoadedConfig } from '../config/load.ts';
 import type { BotAdapter, Handler } from './adapter.ts';
 import { createTelegramAdapter } from './telegram/index.ts';
 import { createWhatsappMetaCloudAdapter } from './whatsapp/meta-cloud.ts';
 import { createWhatsappWebJsAdapter } from './whatsapp/web-js.ts';
-import type { LoadedConfig } from '../config/load.ts';
 
 export interface BotManager {
   start(handler: Handler): Promise<string[]>;

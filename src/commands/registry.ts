@@ -3,9 +3,10 @@
 // a string to render, null for no output, or a FormSpec / ListSpec to render
 // an interactive modal in the REPL.
 
-import { existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
+import { runWithSession } from '../agent/context.ts';
 import type { AgentState } from '../agent/loop.ts';
 import {
   deleteConversation,
@@ -13,26 +14,25 @@ import {
   loadConversation,
   saveConversation,
 } from '../agent/persistence.ts';
-import { loadConfig, saveConfig, saveSecrets } from '../config/load.ts';
-import { renderCost, renderUsage } from './usage-report.ts';
-import type { HookConfig, McpServerConfig } from '../config/schema.ts';
-import type { McpManager } from '../mcp/manager.ts';
-import { chooseProvider } from '../providers/factory.ts';
-import { loadRules } from '../rules/loader.ts';
-import { loadSkills, type Skill } from '../skills/loader.ts';
-import { DEFAULT_SOUL_TEMPLATE, type Soul, loadSouls } from '../soul/loader.ts';
 import { loadAgents } from '../agents/loader.ts';
-import { findOutputStyle, OUTPUT_STYLES } from '../output-styles/styles.ts';
-import { isPlanMode, setPlanMode } from '../tools/planmode.ts';
-import { _allTasks } from '../tools/tasks.ts';
-import { runWithSession } from '../agent/context.ts';
-import { listTools, setExtraTools } from '../tools/registry.ts';
-import { codeIntelTool } from '../tools/code-intel.ts';
-import type { Provider } from '../types/messages.ts';
+import { loadConfig, saveConfig, saveSecrets } from '../config/load.ts';
+import type { HookConfig, McpServerConfig } from '../config/schema.ts';
 import { asteriskPaths } from '../daemon/paths.ts';
-import { getVersion } from '../version.ts';
 import { statusFromPidFile } from '../daemon/pidfile.ts';
+import type { McpManager } from '../mcp/manager.ts';
+import { OUTPUT_STYLES, findOutputStyle } from '../output-styles/styles.ts';
+import { chooseProvider } from '../providers/factory.ts';
 import type { CommandResult, FormSpec, ListSpec } from '../repl/forms/types.ts';
+import { loadRules } from '../rules/loader.ts';
+import { type Skill, loadSkills } from '../skills/loader.ts';
+import { DEFAULT_SOUL_TEMPLATE, type Soul, loadSouls } from '../soul/loader.ts';
+import { codeIntelTool } from '../tools/code-intel.ts';
+import { isPlanMode, setPlanMode } from '../tools/planmode.ts';
+import { listTools, setExtraTools } from '../tools/registry.ts';
+import { _allTasks } from '../tools/tasks.ts';
+import type { Provider } from '../types/messages.ts';
+import { getVersion } from '../version.ts';
+import { renderCost, renderUsage } from './usage-report.ts';
 
 export type { CommandResult } from '../repl/forms/types.ts';
 
@@ -304,9 +304,7 @@ export const COMMANDS: SlashCommand[] = [
       const tgState = tg.enabled
         ? `enabled · ${tg.allowedUserIds.length} allowlisted ${secrets.ASTERISK_TELEGRAM_BOT_TOKEN ? '· token set' : '· ⚠ NO TOKEN'}`
         : 'disabled';
-      const waState = wa.enabled
-        ? `enabled · ${wa.transport}`
-        : 'disabled';
+      const waState = wa.enabled ? `enabled · ${wa.transport}` : 'disabled';
 
       const mcpConfigured = cfg.mcpServers.length;
       const mcpConnected = ctx.mcp.servers.length;
@@ -588,9 +586,7 @@ export const COMMANDS: SlashCommand[] = [
         lines.push(`  ${tag(a)}  ${a.name.padEnd(28)} ${a.description}${restricted}`);
       }
       lines.push('');
-      lines.push(
-        'Usage: the agent calls Agent({ prompt: "…", subagent_type: "<name>" }).',
-      );
+      lines.push('Usage: the agent calls Agent({ prompt: "…", subagent_type: "<name>" }).');
       lines.push('Add your own at ~/.asterisk/agents/<name>.md or .asterisk/agents/<name>.md.');
       return lines.join('\n');
     },
@@ -632,7 +628,7 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/tasks',
-    description: 'List the agent\'s in-flight tasks for this session',
+    description: "List the agent's in-flight tasks for this session",
     execute() {
       return runWithSession({ id: 'repl', scope: 'repl' }, async () => {
         const tasks = _allTasks();
@@ -721,7 +717,9 @@ export const COMMANDS: SlashCommand[] = [
         if (res.ok) {
           const data = (await res.json()) as { models?: Array<{ name: string }> };
           const count = data.models?.length ?? 0;
-          lines.push(`  ✓ Ollama     reachable · ${count} model${count === 1 ? '' : 's'} installed`);
+          lines.push(
+            `  ✓ Ollama     reachable · ${count} model${count === 1 ? '' : 's'} installed`,
+          );
         } else {
           lines.push(`  ✗ Ollama     HTTP ${res.status}`);
         }
@@ -737,9 +735,9 @@ export const COMMANDS: SlashCommand[] = [
             headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
             signal: AbortSignal.timeout(5000),
           });
-          lines.push(res.ok
-            ? '  ✓ Anthropic  API key valid'
-            : `  ✗ Anthropic  API returned ${res.status}`);
+          lines.push(
+            res.ok ? '  ✓ Anthropic  API key valid' : `  ✗ Anthropic  API returned ${res.status}`,
+          );
         } catch {
           lines.push('  ✗ Anthropic  API unreachable');
         }
@@ -787,19 +785,23 @@ export const COMMANDS: SlashCommand[] = [
       // Config files
       lines.push('');
       lines.push('Config files');
-      lines.push(existsSync(paths.configFile)
-        ? `  ✓ config     ${paths.configFile}`
-        : `  · config     ${paths.configFile} (using defaults)`);
-      lines.push(existsSync(paths.secretsFile)
-        ? `  ✓ secrets    ${paths.secretsFile}`
-        : `  · secrets    ${paths.secretsFile} (not created)`);
+      lines.push(
+        existsSync(paths.configFile)
+          ? `  ✓ config     ${paths.configFile}`
+          : `  · config     ${paths.configFile} (using defaults)`,
+      );
+      lines.push(
+        existsSync(paths.secretsFile)
+          ? `  ✓ secrets    ${paths.secretsFile}`
+          : `  · secrets    ${paths.secretsFile} (not created)`,
+      );
 
       // Daemon
       const pid = statusFromPidFile(paths.pidFile);
       lines.push('');
-      lines.push(pid.running
-        ? `Daemon       running · pid ${pid.pid}`
-        : 'Daemon       not running');
+      lines.push(
+        pid.running ? `Daemon       running · pid ${pid.pid}` : 'Daemon       not running',
+      );
 
       // History
       lines.push(`History      ${ctx.state.history.length} messages`);
@@ -813,8 +815,9 @@ export const COMMANDS: SlashCommand[] = [
     usage: '/update [check]',
     async execute(_ctx, args) {
       const verb = args.trim().toLowerCase();
-      const installDir = process.env['ASTERISK_INSTALL_DIR']
-        ?? `${process.env['HOME'] ?? '~'}/.local/share/asterisk`;
+      const installDir =
+        process.env['ASTERISK_INSTALL_DIR'] ??
+        `${process.env['HOME'] ?? '~'}/.local/share/asterisk`;
       const branch = process.env['ASTERISK_BRANCH'] ?? 'master';
 
       const { execSync } = await import('node:child_process');
@@ -852,7 +855,10 @@ export const COMMANDS: SlashCommand[] = [
           `  latest:  ${remoteHead}`,
           '',
           'Changelog:',
-          ...changelog.split('\n').filter(Boolean).map((l) => `  ${l}`),
+          ...changelog
+            .split('\n')
+            .filter(Boolean)
+            .map((l) => `  ${l}`),
           '',
           'Run /update to apply, or `asterisk update` from the terminal.',
         ];
@@ -883,14 +889,19 @@ export const COMMANDS: SlashCommand[] = [
       try {
         const pkg = JSON.parse(readFileSync(`${installDir}/package.json`, 'utf8'));
         newVersion = pkg.version ?? currentVersion;
-      } catch { /* keep current */ }
+      } catch {
+        /* keep current */
+      }
 
       const lines = [
         `✓ Updated: v${currentVersion} → v${newVersion} (${remoteHead})`,
         `  ${commitCount} commit${commitCount === '1' ? '' : 's'} applied`,
         '',
         'Changelog:',
-        ...changelog.split('\n').filter(Boolean).map((l) => `  ${l}`),
+        ...changelog
+          .split('\n')
+          .filter(Boolean)
+          .map((l) => `  ${l}`),
         '',
         'Restart the REPL (/quit + asterisk) to use the new version.',
       ];
@@ -1007,7 +1018,9 @@ function formatDiffCommand(raw: string, review = false): string {
     if (!patch.trim()) return '(no changes)';
     if (!review) return [stat || 'Diff', '', truncate(patch, 50000)].join('\n');
     const added = patch.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).length;
-    const removed = patch.split('\n').filter((l) => l.startsWith('-') && !l.startsWith('---')).length;
+    const removed = patch
+      .split('\n')
+      .filter((l) => l.startsWith('-') && !l.startsWith('---')).length;
     const hints = reviewHints(patch);
     return [
       `Review · ${mode}${path ? ` · ${path}` : ''} · +${added} / -${removed}`,
@@ -1015,7 +1028,9 @@ function formatDiffCommand(raw: string, review = false): string {
       stat,
       '',
       'Risk hints:',
-      ...(hints.length ? hints.map((h) => `  ${h}`) : ['  No obvious high-signal risk patterns found.']),
+      ...(hints.length
+        ? hints.map((h) => `  ${h}`)
+        : ['  No obvious high-signal risk patterns found.']),
       '',
       truncate(patch, 50000),
     ].join('\n');
@@ -1041,10 +1056,15 @@ async function runCodeCommand(raw: string): Promise<string> {
         const result = await codeIntelTool.execute({ action: 'diagnostics', file: rest[0] });
         return result.output;
       }
-      return truncate(execSync('bun run typecheck', { encoding: 'utf8', timeout: 120000 }), 30000)
-        || 'diagnostics passed';
+      return (
+        truncate(execSync('bun run typecheck', { encoding: 'utf8', timeout: 120000 }), 30000) ||
+        'diagnostics passed'
+      );
     }
-    if ((verb === 'def' || verb === 'definition' || verb === 'refs' || verb === 'references') && rest.length >= 3) {
+    if (
+      (verb === 'def' || verb === 'definition' || verb === 'refs' || verb === 'references') &&
+      rest.length >= 3
+    ) {
       const [file, lineRaw, characterRaw] = rest;
       const line = Number.parseInt(lineRaw ?? '', 10);
       const character = Number.parseInt(characterRaw ?? '', 10);
@@ -1092,7 +1112,9 @@ function definitionPattern(query: string): string {
 }
 
 function reviewHints(diff: string): string[] {
-  const addedLines = diff.split('\n').filter((line) => line.startsWith('+') && !line.startsWith('+++'));
+  const addedLines = diff
+    .split('\n')
+    .filter((line) => line.startsWith('+') && !line.startsWith('+++'));
   const checks: Array<[RegExp, string]> = [
     [/\bTODO\b|\bFIXME\b/i, 'New TODO/FIXME markers were added.'],
     [/\bconsole\.log\b/, 'New console.log calls were added.'],
@@ -1100,9 +1122,14 @@ function reviewHints(diff: string): string[] {
     [/\beval\s*\(/, 'New eval usage appears in added lines.'],
     [/\bexecSync\s*\(|\bspawn\s*\(|\bexeca\s*\(/, 'New process execution code was added.'],
     [/\bprocess\.env\b/, 'New environment-variable reads were added.'],
-    [/\bwriteFileSync\b|\bunlinkSync\b|\brmSync\b/, 'New synchronous filesystem mutation code was added.'],
+    [
+      /\bwriteFileSync\b|\bunlinkSync\b|\brmSync\b/,
+      'New synchronous filesystem mutation code was added.',
+    ],
   ];
-  return checks.filter(([pattern]) => addedLines.some((line) => pattern.test(line))).map(([, msg]) => msg);
+  return checks
+    .filter(([pattern]) => addedLines.some((line) => pattern.test(line)))
+    .map(([, msg]) => msg);
 }
 
 function shellJoin(args: string[]): string {
@@ -1200,7 +1227,11 @@ function hooksAddForm(): FormSpec {
         key: 'event',
         label: 'Event',
         options: [
-          { value: 'before_turn', label: 'before_turn', description: 'before the user message goes to the model' },
+          {
+            value: 'before_turn',
+            label: 'before_turn',
+            description: 'before the user message goes to the model',
+          },
           { value: 'after_turn', label: 'after_turn', description: 'after the agent finishes' },
           { value: 'before_tool', label: 'before_tool', description: 'before each tool call' },
           { value: 'after_tool', label: 'after_tool', description: 'after each tool call' },
@@ -1505,16 +1536,12 @@ function mcpConfirmRemove(ctx: CommandContext, name: string): FormSpec {
   return {
     kind: 'form',
     title: `Remove MCP server "${name}"?`,
-    fields: [
-      { kind: 'confirm', key: 'confirm', label: 'Are you sure?', defaultValue: 'no' },
-    ],
+    fields: [{ kind: 'confirm', key: 'confirm', label: 'Are you sure?', defaultValue: 'no' }],
     onSubmit: async (v) => {
       if (v['confirm'] !== 'yes') return '(kept)';
       const cfg = loadConfig();
       const before = cfg.config.mcpServers.length;
-      cfg.config.mcpServers = cfg.config.mcpServers.filter(
-        (s: McpServerConfig) => s.name !== name,
-      );
+      cfg.config.mcpServers = cfg.config.mcpServers.filter((s: McpServerConfig) => s.name !== name);
       if (cfg.config.mcpServers.length === before) return `no MCP server named "${name}"`;
       saveConfig(cfg.config);
       const result = await ctx.mcp.reload();
@@ -1645,10 +1672,7 @@ function formatMcpList(ctx: CommandContext): string {
   const configured = cfg.mcpServers;
   const connected = new Set(ctx.mcp.servers.map((s) => s.config.name));
   if (configured.length === 0) {
-    return [
-      'No MCP servers configured.',
-      'Use /mcp add to register one.',
-    ].join('\n');
+    return ['No MCP servers configured.', 'Use /mcp add to register one.'].join('\n');
   }
   const lines = ['MCP servers:'];
   for (const s of configured) {
@@ -1669,9 +1693,7 @@ function formatMcpList(ctx: CommandContext): string {
 async function formatMcpResources(ctx: CommandContext, serverName?: string): Promise<string> {
   const servers = ctx.mcp.servers.filter((s) => !serverName || s.config.name === serverName);
   if (servers.length === 0) {
-    return serverName
-      ? `MCP server not connected: ${serverName}`
-      : '(no MCP servers connected)';
+    return serverName ? `MCP server not connected: ${serverName}` : '(no MCP servers connected)';
   }
   const lines: string[] = ['MCP resources:'];
   for (const server of servers) {
@@ -1796,8 +1818,20 @@ const CONFIG_SECTIONS: ConfigSection[] = [
         kind: 'form',
         title: 'Ollama settings',
         fields: [
-          { kind: 'text', key: 'baseUrl', label: 'Base URL', defaultValue: cfg.baseUrl, required: true },
-          { kind: 'text', key: 'model', label: 'Default model', defaultValue: cfg.model, required: true },
+          {
+            kind: 'text',
+            key: 'baseUrl',
+            label: 'Base URL',
+            defaultValue: cfg.baseUrl,
+            required: true,
+          },
+          {
+            kind: 'text',
+            key: 'model',
+            label: 'Default model',
+            defaultValue: cfg.model,
+            required: true,
+          },
           {
             kind: 'text',
             key: 'contextWindow',
@@ -1924,7 +1958,10 @@ const CONFIG_SECTIONS: ConfigSection[] = [
             key: 'parseMode',
             label: 'Text formatting',
             options: [
-              { value: 'html', label: 'html — render **bold**, *italic*, `code`, links (recommended)' },
+              {
+                value: 'html',
+                label: 'html — render **bold**, *italic*, `code`, links (recommended)',
+              },
               { value: 'plain', label: 'plain — show markdown markers as literal text' },
             ],
             defaultValue: cfg.config.bots.telegram.parseMode,

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -13,10 +13,7 @@ const snapshots: FileSnapshot[] = [];
 let seqCounter = 0;
 
 function historyDir(): string {
-  const dir = join(
-    process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'),
-    'file-history',
-  );
+  const dir = join(process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'), 'file-history');
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -41,7 +38,11 @@ export function getFileHistory(filePath?: string): FileSnapshot[] {
   return [...snapshots];
 }
 
-export function restoreFile(backupPath: string): { restored: boolean; path?: string; error?: string } {
+export function restoreFile(backupPath: string): {
+  restored: boolean;
+  path?: string;
+  error?: string;
+} {
   const snap = snapshots.find((s) => s.backupPath === backupPath);
   if (!snap) return { restored: false, error: 'backup not found in history' };
   if (!existsSync(backupPath)) return { restored: false, error: 'backup file missing from disk' };

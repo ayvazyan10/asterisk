@@ -10,8 +10,8 @@
 import { spawn } from 'node:child_process';
 
 import { loadConfig } from '../config/load.ts';
-import { getDb } from '../db/index.ts';
 import { asteriskPaths } from '../daemon/paths.ts';
+import { getDb } from '../db/index.ts';
 import { getVersion } from '../version.ts';
 import { hasAnyToken, issueToken } from '../web/auth.ts';
 import { startWebServer } from '../web/server.ts';

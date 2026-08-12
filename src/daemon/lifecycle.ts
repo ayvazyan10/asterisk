@@ -7,7 +7,7 @@ import { dirname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
-import { ensurePaths, asteriskPaths } from './paths.ts';
+import { asteriskPaths, ensurePaths } from './paths.ts';
 import { clearPid, statusFromPidFile, writePid, writePidExclusive } from './pidfile.ts';
 
 // Walk up from this file's location until we find package.json. Works in both

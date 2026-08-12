@@ -2,7 +2,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { type Tool, ok, err } from './types.ts';
+import { type Tool, err, ok } from './types.ts';
 
 const MAX_BYTES = 1_000_000;
 
@@ -25,7 +25,8 @@ export const readTool: Tool = {
     if (!path) return err('path is required');
 
     const offset = typeof input['offset'] === 'number' ? Math.max(1, input['offset']) : 1;
-    const limit = typeof input['limit'] === 'number' ? Math.max(1, input['limit']) : Infinity;
+    const limit =
+      typeof input['limit'] === 'number' ? Math.max(1, input['limit']) : Number.POSITIVE_INFINITY;
 
     try {
       const abs = resolve(path);

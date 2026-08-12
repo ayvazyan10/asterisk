@@ -6,20 +6,15 @@
 // Telegram registers these via setMyCommands() so users see autocomplete.
 // WhatsApp has no equivalent autocomplete UI but parses the same prefixes.
 
-import type { AgentState } from '../agent/loop.ts';
 import { currentSession, currentSessionId } from '../agent/context.ts';
-import { loadConfig, saveConfig } from '../config/load.ts';
+import type { AgentState } from '../agent/loop.ts';
 import { renderCostCompact } from '../commands/usage-report.ts';
-import { findOutputStyle, OUTPUT_STYLES } from '../output-styles/styles.ts';
-import {
-  clearSessionSoul,
-  loadSouls,
-  readSessionSoul,
-  writeSessionSoul,
-} from '../soul/loader.ts';
+import { loadConfig, saveConfig } from '../config/load.ts';
+import { OUTPUT_STYLES, findOutputStyle } from '../output-styles/styles.ts';
+import { clearSessionSoul, loadSouls, readSessionSoul, writeSessionSoul } from '../soul/loader.ts';
+import { isPlanMode, setPlanMode } from '../tools/planmode.ts';
 import { _allTasks, clearTasksForCurrentSession } from '../tools/tasks.ts';
 import { activeWorktree } from '../tools/worktree.ts';
-import { isPlanMode, setPlanMode } from '../tools/planmode.ts';
 import type { OutgoingMessage } from './adapter.ts';
 
 export interface BotCommandSpec {
@@ -37,7 +32,10 @@ export const BOT_COMMAND_LIST: BotCommandSpec[] = [
   { command: 'tasks', description: 'List your tasks' },
   { command: 'plan', description: 'Toggle plan mode (read-only research mode)' },
   { command: 'soul', description: 'Show / set / clear your personal persona' },
-  { command: 'style', description: 'Switch reply style (default / concise / explanatory / learning)' },
+  {
+    command: 'style',
+    description: 'Switch reply style (default / concise / explanatory / learning)',
+  },
   { command: 'cost', description: 'Token spend for this chat, today, and lifetime' },
 ];
 
@@ -64,10 +62,7 @@ interface CommandContext {
  *  the command was recognised; null if the message should fall through to
  *  the agent. Must be called inside the chat's session ALS scope so it can
  *  read per-session state. */
-export function tryHandleBotCommand(
-  text: string,
-  ctx: CommandContext,
-): OutgoingMessage | null {
+export function tryHandleBotCommand(text: string, ctx: CommandContext): OutgoingMessage | null {
   const trimmed = text.trim();
   if (!trimmed.startsWith('/')) return null;
   // Slice off the leading `/`, then split into "command word" and "rest".
@@ -165,7 +160,9 @@ function renderTasks(): string {
     s === 'completed' ? '✓' : s === 'in_progress' ? '◐' : s === 'cancelled' ? '✗' : '○';
   const lines = ['Your tasks:'];
   for (const t of tasks) {
-    lines.push(`${icon(t.status)} #${t.id}  ${t.title}${t.description ? ` — ${t.description}` : ''}`);
+    lines.push(
+      `${icon(t.status)} #${t.id}  ${t.title}${t.description ? ` — ${t.description}` : ''}`,
+    );
   }
   return lines.join('\n');
 }
@@ -219,9 +216,11 @@ function handleSoulCommand(rest: string): string {
         '/soul set Call me Levon. Reply in Russian. Skip apologies. Be terse.',
       ].join('\n');
     }
-    return ['Your current soul (copy, tweak, send back as `/soul set <new>`):', '', raw.trim()].join(
-      '\n',
-    );
+    return [
+      'Your current soul (copy, tweak, send back as `/soul set <new>`):',
+      '',
+      raw.trim(),
+    ].join('\n');
   }
 
   // No verb (or anything we don't recognise as an action) → show what's loaded.
@@ -265,14 +264,9 @@ function renderSoulDisplay(session: ReturnType<typeof currentSession>): string {
   const lines: string[] = ['Soul currently in effect:', ''];
   for (const s of souls) {
     const tag =
-      s.scope === 'session'
-        ? 'your soul'
-        : s.scope === 'user'
-          ? 'operator soul'
-          : 'project soul';
+      s.scope === 'session' ? 'your soul' : s.scope === 'user' ? 'operator soul' : 'project soul';
     lines.push(`# ${tag} · ${s.path}`);
-    const body =
-      s.content.length > 1500 ? `${s.content.slice(0, 1500)}\n…(truncated)` : s.content;
+    const body = s.content.length > 1500 ? `${s.content.slice(0, 1500)}\n…(truncated)` : s.content;
     lines.push(body);
     lines.push('');
   }

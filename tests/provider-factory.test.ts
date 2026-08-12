@@ -31,9 +31,12 @@ describe('provider factory', () => {
 
   it('builds anthropic when a key is present', () => {
     const chosen = chooseProvider(
-      loaded({ provider: 'anthropic', anthropic: { model: 'claude-haiku-4-5' } }, {
-        ANTHROPIC_API_KEY: 'sk-test',
-      }),
+      loaded(
+        { provider: 'anthropic', anthropic: { model: 'claude-haiku-4-5' } },
+        {
+          ANTHROPIC_API_KEY: 'sk-test',
+        },
+      ),
     );
     expect(chosen.kind).toBe('anthropic');
     expect(chosen.provider.name).toBe('anthropic:claude-haiku-4-5');

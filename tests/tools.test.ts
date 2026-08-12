@@ -3,11 +3,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { editTool } from '../src/tools/edit.ts';
 import { codeIntelTool } from '../src/tools/code-intel.ts';
+import { editTool } from '../src/tools/edit.ts';
 import { globTool } from '../src/tools/glob.ts';
 import { readTool } from '../src/tools/read.ts';
-import { BUILTIN_TOOLS, getTool, listTools, setExtraTools, toolDefinitions } from '../src/tools/registry.ts';
+import {
+  BUILTIN_TOOLS,
+  getTool,
+  listTools,
+  setExtraTools,
+  toolDefinitions,
+} from '../src/tools/registry.ts';
 import { writeTool } from '../src/tools/write.ts';
 
 describe('tool registry', () => {
@@ -157,12 +163,15 @@ describe('Read / Write / Edit / Glob', () => {
 
   it('CodeIntel uses TypeScript language service for file symbols and diagnostics', async () => {
     const path = join(dir, 'sample.ts');
-    await writeFile(path, [
-      'export function add(a: number, b: number): number {',
-      '  return a + b;',
-      '}',
-      'const result = add(1, 2);',
-    ].join('\n'));
+    await writeFile(
+      path,
+      [
+        'export function add(a: number, b: number): number {',
+        '  return a + b;',
+        '}',
+        'const result = add(1, 2);',
+      ].join('\n'),
+    );
 
     const symbols = await codeIntelTool.execute({ action: 'symbols', file: path });
     expect(symbols.isError).toBe(false);
@@ -175,12 +184,15 @@ describe('Read / Write / Edit / Glob', () => {
 
   it('CodeIntel uses TypeScript language service for definitions', async () => {
     const path = join(dir, 'defs.ts');
-    await writeFile(path, [
-      'export function add(a: number, b: number): number {',
-      '  return a + b;',
-      '}',
-      'const result = add(1, 2);',
-    ].join('\n'));
+    await writeFile(
+      path,
+      [
+        'export function add(a: number, b: number): number {',
+        '  return a + b;',
+        '}',
+        'const result = add(1, 2);',
+      ].join('\n'),
+    );
 
     const result = await codeIntelTool.execute({
       action: 'definition',

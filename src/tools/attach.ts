@@ -9,7 +9,7 @@ import { resolve } from 'node:path';
 
 import { type AttachmentKind, inferAttachmentKind } from '../bots/adapter.ts';
 import { expandHome } from '../utils/path.ts';
-import { type Tool, ok, err } from './types.ts';
+import { type Tool, err, ok } from './types.ts';
 
 const MAX_BYTES = 50 * 1024 * 1024; // 50 MB — Telegram's hard cap for sendPhoto/sendDocument
 
@@ -51,11 +51,7 @@ export const attachTool: Tool = {
     return {
       output: `📎 attached · ${kind} · ${abs} (${stats.size} bytes)${caption ? ` · "${caption}"` : ''}`,
       isError: false,
-      attachments: [
-        caption !== undefined
-          ? { kind, path: abs, caption }
-          : { kind, path: abs },
-      ],
+      attachments: [caption !== undefined ? { kind, path: abs, caption } : { kind, path: abs }],
     };
   },
 };

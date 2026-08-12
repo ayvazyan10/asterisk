@@ -6,12 +6,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { type Tool, ok, err } from './types.ts';
+import { type Tool, err, ok } from './types.ts';
 
-const SCHEDULE_DIR = join(
-  process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'),
-  'schedule',
-);
+const SCHEDULE_DIR = join(process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'), 'schedule');
 const ONESHOT_FILE = join(SCHEDULE_DIR, 'oneshots.jsonl');
 const CRON_FILE = join(SCHEDULE_DIR, 'cron.jsonl');
 

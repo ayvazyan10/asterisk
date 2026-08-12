@@ -11,9 +11,9 @@ import { saveConversation } from '../agent/persistence.ts';
 import { lookupCommand } from '../commands/registry.ts';
 import { loadConfig } from '../config/load.ts';
 import type { McpManager } from '../mcp/manager.ts';
+import { findOutputStyle } from '../output-styles/styles.ts';
 import { loadRules } from '../rules/loader.ts';
 import { loadSouls } from '../soul/loader.ts';
-import { findOutputStyle } from '../output-styles/styles.ts';
 import {
   type AskQuestion,
   answerAskQuestion,
@@ -21,29 +21,22 @@ import {
   onAskQuestion,
 } from '../tools/ask.ts';
 import type { Provider } from '../types/messages.ts';
+import { getVersion } from '../version.ts';
 import { Banner } from './Banner.tsx';
 import { CommandMenu, clampSelection, filterCommands } from './CommandMenu.tsx';
+import { MarkdownText } from './MarkdownText.tsx';
+import { StatusBar } from './StatusBar.tsx';
+import { WorkingIndicator } from './WorkingIndicator.tsx';
 import { Form } from './forms/Form.tsx';
 import { ListPicker } from './forms/ListPicker.tsx';
 import type { CommandResult, FormSpec, ListSpec } from './forms/types.ts';
 import { detectInlineProtocol, renderInlineImage } from './inline-image.ts';
-import { MarkdownText } from './MarkdownText.tsx';
-import { StatusBar } from './StatusBar.tsx';
-import { WorkingIndicator } from './WorkingIndicator.tsx';
-import { getVersion } from '../version.ts';
 
 type Modal = FormSpec | ListSpec | null;
 
 const VERSION = getVersion();
 
-type EntryKind =
-  | 'user'
-  | 'assistant'
-  | 'tool'
-  | 'tool-result'
-  | 'system'
-  | 'progress'
-  | 'error';
+type EntryKind = 'user' | 'assistant' | 'tool' | 'tool-result' | 'system' | 'progress' | 'error';
 
 interface Entry {
   id: string;
@@ -96,17 +89,14 @@ export function App({ initialProvider, state, mcp }: Props) {
     setMenuIndex((prev) => clampSelection(input, prev));
   }, [input]);
 
-  const append = useCallback(
-    (kind: EntryKind, text: string, fullText?: string) => {
-      setEntries((prev) => {
-        const id = `${prev.length}_${Date.now()}`;
-        const entry: Entry = { id, kind, text };
-        if (fullText !== undefined) entry.fullText = fullText;
-        return [...prev, entry];
-      });
-    },
-    [],
-  );
+  const append = useCallback((kind: EntryKind, text: string, fullText?: string) => {
+    setEntries((prev) => {
+      const id = `${prev.length}_${Date.now()}`;
+      const entry: Entry = { id, kind, text };
+      if (fullText !== undefined) entry.fullText = fullText;
+      return [...prev, entry];
+    });
+  }, []);
 
   // Ctrl+O appends an "expanded" entry below containing the full text of
   // the most recent collapsed entry. Existing entries are immutable (they
@@ -377,13 +367,13 @@ export function App({ initialProvider, state, mcp }: Props) {
           },
           onRetry: (attempt, delayMs, why) => {
             setWorkingStatus(`retrying (#${attempt} in ${Math.round(delayMs / 1000)}s)`);
-            append('progress', `retrying after ${why} · attempt ${attempt} · waiting ${Math.round(delayMs / 1000)}s`);
+            append(
+              'progress',
+              `retrying after ${why} · attempt ${attempt} · waiting ${Math.round(delayMs / 1000)}s`,
+            );
           },
           onAttachment: (a: { kind: string; path: string; caption?: string }) => {
-            append(
-              'system',
-              `📎 ${a.kind}: ${a.path}${a.caption ? `\n   "${a.caption}"` : ''}`,
-            );
+            append('system', `📎 ${a.kind}: ${a.path}${a.caption ? `\n   "${a.caption}"` : ''}`);
             if (a.kind === 'image' && detectInlineProtocol()) {
               renderInlineImage(a.path);
             }
@@ -392,7 +382,8 @@ export function App({ initialProvider, state, mcp }: Props) {
             const tag = result.exitCode === 0 ? 'hook' : 'hook-err';
             const parts = [`${tag}: ${result.hook}`];
             if (result.stdout.trim()) parts.push(result.stdout.trim());
-            if (result.exitCode !== 0 && result.stderr.trim()) parts.push(`stderr: ${result.stderr.trim()}`);
+            if (result.exitCode !== 0 && result.stderr.trim())
+              parts.push(`stderr: ${result.stderr.trim()}`);
             append(result.exitCode === 0 ? 'tool-result' : 'error', parts.join(' · '));
           },
         });
@@ -424,7 +415,10 @@ export function App({ initialProvider, state, mcp }: Props) {
         if (turn.reason === 'max-turns') {
           append('error', 'reached the per-turn safety cap; stopping');
         } else if (turn.reason === 'context-overflow') {
-          append('error', 'the conversation exceeded the model context window — try /clear to reset');
+          append(
+            'error',
+            'the conversation exceeded the model context window — try /clear to reset',
+          );
         } else if (turn.reason === 'auth-error') {
           append('error', 'authentication failed — check ANTHROPIC_API_KEY or run /config');
         } else if (turn.reason === 'aborted') {
@@ -533,10 +527,7 @@ export function App({ initialProvider, state, mcp }: Props) {
       if (busy) {
         queueRef.current.push(trimmed);
         setQueueLen(queueRef.current.length);
-        append(
-          'progress',
-          `queued: "${truncate(trimmed, 80)}" — will run after current turn`,
-        );
+        append('progress', `queued: "${truncate(trimmed, 80)}" — will run after current turn`);
         return;
       }
 
@@ -666,16 +657,10 @@ export function App({ initialProvider, state, mcp }: Props) {
             {busy && workingSince !== null && (
               <Box marginBottom={1} marginLeft={2}>
                 <WorkingIndicator since={workingSince} status={workingStatus} />
-                {queueLen > 0 && (
-                  <Text dimColor>{`  · ${queueLen} queued`}</Text>
-                )}
+                {queueLen > 0 && <Text dimColor>{`  · ${queueLen} queued`}</Text>}
               </Box>
             )}
-            <Box
-              borderStyle="round"
-              borderColor={menuOpen ? 'cyan' : 'gray'}
-              paddingX={1}
-            >
+            <Box borderStyle="round" borderColor={menuOpen ? 'cyan' : 'gray'} paddingX={1}>
               <Text color="cyan">{'› '}</Text>
               <TextInput
                 value={input}
@@ -802,13 +787,7 @@ function renderSystemPanel(entry: Entry) {
   const lines = entry.text.split('\n');
   return (
     <Box key={entry.id} flexDirection="column" marginTop={1}>
-      <Box
-        borderStyle="round"
-        borderColor="gray"
-        paddingX={2}
-        paddingY={0}
-        flexDirection="column"
-      >
+      <Box borderStyle="round" borderColor="gray" paddingX={2} paddingY={0} flexDirection="column">
         {lines.map((line, i) => {
           const id = `${entry.id}_l_${i}`;
           if (line.length === 0) {

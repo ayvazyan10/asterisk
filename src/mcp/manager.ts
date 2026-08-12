@@ -1,8 +1,8 @@
 // MCP manager — owns the connected-servers lifecycle, exposes the merged
 // tool list, and lets callers reload after config changes.
 
-import type { McpServerConfig } from '../config/schema.ts';
 import { loadConfig } from '../config/load.ts';
+import type { McpServerConfig } from '../config/schema.ts';
 import type { Tool } from '../tools/types.ts';
 import { type ConnectedMcpServer, asLocalTool, connectMcpServer } from './client.ts';
 import { setMcpServerProvider } from './resources.ts';
@@ -36,9 +36,7 @@ export function createMcpManager(): McpManager {
     },
     async reload() {
       await disconnectAll();
-      const enabled = loadConfig().config.mcpServers.filter(
-        (s: McpServerConfig) => s.enabled,
-      );
+      const enabled = loadConfig().config.mcpServers.filter((s: McpServerConfig) => s.enabled);
       const connected: string[] = [];
       const failed: { name: string; error: string }[] = [];
 

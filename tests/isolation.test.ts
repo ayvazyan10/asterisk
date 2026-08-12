@@ -8,11 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import { runWithSession } from '../src/agent/context.ts';
 import { isPlanMode, setPlanMode } from '../src/tools/planmode.ts';
-import {
-  _resetTasksForTesting,
-  taskCreateTool,
-  taskListTool,
-} from '../src/tools/tasks.ts';
+import { _resetTasksForTesting, taskCreateTool, taskListTool } from '../src/tools/tasks.ts';
 
 describe('per-session isolation', () => {
   it('Tasks created in session A are invisible to session B', async () => {

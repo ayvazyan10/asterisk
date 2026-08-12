@@ -32,7 +32,8 @@ If the answer is one word, return one word.`,
 
 const EXPLANATORY: OutputStyle = {
   name: 'explanatory',
-  description: 'Walk through reasoning + tradeoffs alongside the answer (good for learning a codebase).',
+  description:
+    'Walk through reasoning + tradeoffs alongside the answer (good for learning a codebase).',
   prompt: `When you make a non-obvious decision — a refactor approach, a
 library choice, a data-shape, an algorithmic call — show your reasoning in
 one short paragraph alongside the answer. Format:
@@ -48,7 +49,8 @@ trivial, skip the explanation — empty calories defeat the purpose.`,
 
 const LEARNING: OutputStyle = {
   name: 'learning',
-  description: 'Collaborative — propose options, ask the user to pick or contribute, before applying.',
+  description:
+    'Collaborative — propose options, ask the user to pick or contribute, before applying.',
   prompt: `You're working with the user collaboratively, not for them. When
 you reach a non-trivial design decision (data shape, error-handling pattern,
 naming, architectural split), pause and use AskUserQuestion to surface the

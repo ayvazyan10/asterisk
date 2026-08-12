@@ -1,17 +1,17 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { mkdtemp, rm, writeFile, readFile, mkdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // --- output-store ---
-import { shouldPersistOutput, persistOutput } from '../src/agent/output-store.ts';
+import { persistOutput, shouldPersistOutput } from '../src/agent/output-store.ts';
 
 // --- concurrency ---
 import { isConcurrencySafe } from '../src/tools/concurrency.ts';
 
 // --- compaction ---
-import { estimateTokens, compactHistory } from '../src/agent/compaction.ts';
+import { compactHistory, estimateTokens } from '../src/agent/compaction.ts';
 import type { Message, TextBlock, ToolResultBlock } from '../src/types/messages.ts';
 
 // --- bash-safety ---
@@ -38,14 +38,14 @@ vi.mock('../src/tools/registry.ts', () => ({
 import { toolSearchTool } from '../src/tools/tool-search.ts';
 
 // --- file-history ---
-import { recordFileChange, getFileHistory, restoreFile } from '../src/agent/file-history.ts';
+import { getFileHistory, recordFileChange, restoreFile } from '../src/agent/file-history.ts';
 
 // --- persistence ---
 import {
-  saveConversation,
-  loadConversation,
-  listConversations,
   deleteConversation,
+  listConversations,
+  loadConversation,
+  saveConversation,
 } from '../src/agent/persistence.ts';
 
 // ─── helpers ───────────────────────────────────────────────────────────
@@ -137,8 +137,15 @@ describe('output store', () => {
 
 describe('concurrency', () => {
   const safes = [
-    'Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch',
-    'BrowserSnapshot', 'BrowserScreenshot', 'TaskList', 'TaskGet',
+    'Read',
+    'Grep',
+    'Glob',
+    'WebFetch',
+    'WebSearch',
+    'BrowserSnapshot',
+    'BrowserScreenshot',
+    'TaskList',
+    'TaskGet',
   ];
 
   for (const name of safes) {
@@ -199,10 +206,7 @@ describe('compaction', () => {
   });
 
   it('compactHistory is no-op when under threshold', () => {
-    const messages: Message[] = [
-      makeMessage('user', 'hello'),
-      makeMessage('assistant', 'world'),
-    ];
+    const messages: Message[] = [makeMessage('user', 'hello'), makeMessage('assistant', 'world')];
     const result = compactHistory(messages);
     expect(result).toEqual(messages);
   });
@@ -245,7 +249,9 @@ describe('compaction', () => {
     // Need total > 80k tokens = 320k chars. Use 4 x 60k + 6 x 20k = 360k chars = 90k tokens.
     const messages: Message[] = [
       ...Array.from({ length: 4 }, () => makeToolResultMessage('line1\n' + 'z'.repeat(60000))),
-      ...Array.from({ length: 6 }, (_, i) => makeMessage('user', `recent-${i} ` + 'w'.repeat(20000))),
+      ...Array.from({ length: 6 }, (_, i) =>
+        makeMessage('user', `recent-${i} ` + 'w'.repeat(20000)),
+      ),
     ];
 
     const result = compactHistory(messages);
@@ -310,13 +316,17 @@ describe('bash safety', () => {
   });
 
   it('detects API key (sk-) in command', () => {
-    const result = checkBashSafety('curl -H "Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz" https://api.example.com');
+    const result = checkBashSafety(
+      'curl -H "Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz" https://api.example.com',
+    );
     expect(result.safe).toBe(false);
     expect(result.warnings.some((w) => w.includes('API key'))).toBe(true);
   });
 
   it('detects GitHub token in command', () => {
-    const result = checkBashSafety('git clone https://ghp_abcdefghijklmnopqrstuvwxyz1234567890@github.com/repo.git');
+    const result = checkBashSafety(
+      'git clone https://ghp_abcdefghijklmnopqrstuvwxyz1234567890@github.com/repo.git',
+    );
     expect(result.safe).toBe(false);
     expect(result.warnings.some((w) => w.includes('GitHub token'))).toBe(true);
   });
@@ -328,7 +338,9 @@ describe('bash safety', () => {
   });
 
   it('detects Slack token', () => {
-    const result = checkBashSafety('curl -H "Authorization: Bearer xoxb-123456789-abcdef" https://slack.com/api/chat.postMessage');
+    const result = checkBashSafety(
+      'curl -H "Authorization: Bearer xoxb-123456789-abcdef" https://slack.com/api/chat.postMessage',
+    );
     expect(result.safe).toBe(false);
     expect(result.warnings.some((w) => w.includes('Slack token'))).toBe(true);
   });
@@ -574,9 +586,7 @@ describe('conversation persistence', () => {
       makeMessage('user', 'run something'),
       {
         role: 'assistant',
-        content: [
-          { type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } },
-        ],
+        content: [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } }],
       },
       makeToolResultMessage('file1.txt\nfile2.txt'),
       makeMessage('assistant', 'done'),

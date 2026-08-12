@@ -3,12 +3,12 @@
 // active branch. Active worktree path is tracked module-level for the
 // session; the agent should `cd` into it via Bash.
 
-import { execa } from 'execa';
-import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { execa } from 'execa';
 
 import { currentSessionId } from '../agent/context.ts';
-import { type Tool, ok, err } from './types.ts';
+import { type Tool, err, ok } from './types.ts';
 
 interface ActiveWorktree {
   path: string;
@@ -73,7 +73,8 @@ export const enterWorktreeTool: Tool = {
       typeof input['path'] === 'string' && input['path'].trim()
         ? input['path'].trim()
         : join(DEFAULT_ROOT, branch.replace(/[^a-zA-Z0-9_./-]/g, '_'));
-    const base = typeof input['base'] === 'string' && input['base'].trim() ? input['base'].trim() : 'HEAD';
+    const base =
+      typeof input['base'] === 'string' && input['base'].trim() ? input['base'].trim() : 'HEAD';
 
     try {
       const { mkdir } = await import('node:fs/promises');
@@ -82,13 +83,14 @@ export const enterWorktreeTool: Tool = {
 
       // -B: create or reset the branch from `base`. Quietly succeed if branch
       // already exists (and reuses it); otherwise creates fresh.
-      const result = await execa(
-        'git',
-        ['worktree', 'add', '-B', branch, path, base],
-        { reject: false, encoding: 'utf8' },
-      );
+      const result = await execa('git', ['worktree', 'add', '-B', branch, path, base], {
+        reject: false,
+        encoding: 'utf8',
+      });
       if (result.exitCode !== 0) {
-        return err(`git worktree add failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`);
+        return err(
+          `git worktree add failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+        );
       }
 
       setActive({ path, branch, createdAt: Date.now() });
@@ -110,11 +112,15 @@ export const enterWorktreeTool: Tool = {
 
 export const exitWorktreeTool: Tool = {
   name: 'ExitWorktree',
-  description: 'Remove the active worktree (created by EnterWorktree). Refuses if there are uncommitted changes unless force=true.',
+  description:
+    'Remove the active worktree (created by EnterWorktree). Refuses if there are uncommitted changes unless force=true.',
   input_schema: {
     type: 'object',
     properties: {
-      force: { type: 'boolean', description: 'Pass --force to git worktree remove (default false).' },
+      force: {
+        type: 'boolean',
+        description: 'Pass --force to git worktree remove (default false).',
+      },
     },
     additionalProperties: false,
   },
@@ -128,7 +134,9 @@ export const exitWorktreeTool: Tool = {
       args.push(current.path);
       const result = await execa('git', args, { reject: false, encoding: 'utf8' });
       if (result.exitCode !== 0) {
-        return err(`git worktree remove failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`);
+        return err(
+          `git worktree remove failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+        );
       }
       setActive(null);
       return ok(`✓ worktree removed · ${current.path} (branch ${current.branch})`);

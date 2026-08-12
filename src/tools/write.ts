@@ -2,9 +2,9 @@
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { type Tool, ok, err } from './types.ts';
-import { checkWorkspaceWritable } from './workspace.ts';
 import { recordFileChange } from '../agent/file-history.ts';
+import { type Tool, err, ok } from './types.ts';
+import { checkWorkspaceWritable } from './workspace.ts';
 
 export const writeTool: Tool = {
   name: 'Write',

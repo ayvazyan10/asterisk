@@ -13,7 +13,8 @@ import type { Skill } from './loader.ts';
 export const BUNDLED_SKILLS: Skill[] = [
   {
     name: 'simplify',
-    description: 'Review your recent changes for reuse, quality, and efficiency, then fix what you find',
+    description:
+      'Review your recent changes for reuse, quality, and efficiency, then fix what you find',
     scope: 'bundled',
     path: 'bundled:simplify',
     prompt: `You are reviewing the user's recent changes.
@@ -123,7 +124,8 @@ Steps:
   },
   {
     name: 'verify',
-    description: 'Run the project\'s checks (typecheck, lint, tests, build) and report what passed, what failed, and what to fix',
+    description:
+      "Run the project's checks (typecheck, lint, tests, build) and report what passed, what failed, and what to fix",
     scope: 'bundled',
     path: 'bundled:verify',
     prompt: `Verify the current project is in a healthy state. The goal is to give the user a clear "green / yellow / red" verdict, not just dump command output.
@@ -147,7 +149,8 @@ Honesty rule: don't soften "red" into "yellow" because the user might be sad. If
   },
   {
     name: 'debug',
-    description: 'Diagnose a specific failure end-to-end — read the error, hunt for the root cause across files, propose a fix',
+    description:
+      'Diagnose a specific failure end-to-end — read the error, hunt for the root cause across files, propose a fix',
     scope: 'bundled',
     path: 'bundled:debug',
     prompt: `Diagnose a specific failure the user has hit. The output is a root cause + fix recipe, not a generic checklist.
@@ -165,7 +168,8 @@ Don't propose "more logging" as the fix unless the user explicitly asks. The poi
   },
   {
     name: 'prp-plan',
-    description: 'PRP step 1 — capture a one-page Plan-Requirements-Pitch doc the implementer can build against.',
+    description:
+      'PRP step 1 — capture a one-page Plan-Requirements-Pitch doc the implementer can build against.',
     scope: 'bundled',
     path: 'bundled:prp-plan',
     prompt: `You're producing the planning doc for a feature in the PRP
@@ -226,7 +230,8 @@ through.`,
   },
   {
     name: 'prp-pr',
-    description: 'PRP step 3 — open a pull request from the current branch with a real summary + test plan.',
+    description:
+      'PRP step 3 — open a pull request from the current branch with a real summary + test plan.',
     scope: 'bundled',
     path: 'bundled:prp-pr',
     prompt: `You open a pull request for the current branch's work. Goal: a
@@ -281,7 +286,8 @@ If a pre-commit hook fails, FIX the underlying issue and retry — never
   },
   {
     name: 'santa-loop',
-    description: 'Adversarial dual-review — two reviewer sub-agents must both approve before the work is "done".',
+    description:
+      'Adversarial dual-review — two reviewer sub-agents must both approve before the work is "done".',
     scope: 'bundled',
     path: 'bundled:santa-loop',
     prompt: `You drive a dual-review convergence loop: two independent
@@ -374,7 +380,8 @@ starting.`,
   },
   {
     name: 'schedule',
-    description: 'Schedule a future or recurring task via ScheduleWakeup / CronCreate. Friendly wrapper.',
+    description:
+      'Schedule a future or recurring task via ScheduleWakeup / CronCreate. Friendly wrapper.',
     scope: 'bundled',
     path: 'bundled:schedule',
     prompt: `You set up a future or recurring task. Pick the right tool:
@@ -402,7 +409,8 @@ Don't fabricate cron expressions. If you're not sure how to spell
   },
   {
     name: 'dep-audit',
-    description: 'Run the language\'s dependency-vulnerability scanner, classify findings, propose upgrades.',
+    description:
+      "Run the language's dependency-vulnerability scanner, classify findings, propose upgrades.",
     scope: 'bundled',
     path: 'bundled:dep-audit',
     prompt: `You audit the project's dependencies for known vulnerabilities.
@@ -462,7 +470,8 @@ top, ask which one.`,
   },
   {
     name: 'pr-review',
-    description: 'Review an open GitHub PR end-to-end via gh — diff, classify findings, post a summary comment.',
+    description:
+      'Review an open GitHub PR end-to-end via gh — diff, classify findings, post a summary comment.',
     scope: 'bundled',
     path: 'bundled:pr-review',
     prompt: `You review an open pull request. The parent will give you a PR
@@ -496,7 +505,8 @@ stylistic preferences the project's formatter already enforces.`,
   },
   {
     name: 'audit-memory',
-    description: 'Inventory all rules / souls / hooks currently loaded into the agent and flag stale entries.',
+    description:
+      'Inventory all rules / souls / hooks currently loaded into the agent and flag stale entries.',
     scope: 'bundled',
     path: 'bundled:audit-memory',
     prompt: `You audit what's currently shaping the agent's behaviour
@@ -526,7 +536,8 @@ referenced since is still probably load-bearing.`,
   },
   {
     name: 'skill-stocktake',
-    description: 'Inventory installed skills + agents and identify dead weight (rarely / never invoked).',
+    description:
+      'Inventory installed skills + agents and identify dead weight (rarely / never invoked).',
     scope: 'bundled',
     path: 'bundled:skill-stocktake',
     prompt: `You take stock of the agent's skill + agent catalogue. Goal:
@@ -556,7 +567,8 @@ be load-bearing; the audit just surfaces candidates.`,
   },
   {
     name: 'ai-regression-testing',
-    description: 'Catch behaviour drift in LLM outputs: golden-trace regression, semantic deltas, prompt-change diffs.',
+    description:
+      'Catch behaviour drift in LLM outputs: golden-trace regression, semantic deltas, prompt-change diffs.',
     scope: 'bundled',
     path: 'bundled:ai-regression-testing',
     prompt: `You set up regression testing for LLM-driven code paths. Goal:
@@ -623,7 +635,8 @@ manually before declaring "this version is better".`,
   },
   {
     name: 'mcp-server-patterns',
-    description: 'Build an MCP server with @modelcontextprotocol/sdk — tools, resources, prompts, transport.',
+    description:
+      'Build an MCP server with @modelcontextprotocol/sdk — tools, resources, prompts, transport.',
     scope: 'bundled',
     path: 'bundled:mcp-server-patterns',
     prompt: `You build (or audit) a Model Context Protocol server. Asterisk
@@ -662,7 +675,8 @@ Cite the spec when in doubt: https://modelcontextprotocol.io/specification`,
   },
   {
     name: 'regex-vs-llm-structured-text',
-    description: 'Tactical guide — when to reach for regex / parser vs ask the model to extract structure.',
+    description:
+      'Tactical guide — when to reach for regex / parser vs ask the model to extract structure.',
     scope: 'bundled',
     path: 'bundled:regex-vs-llm-structured-text',
     prompt: `You're choosing between a regex / parser and an LLM call for
@@ -741,7 +755,8 @@ Don't fall in love with a "more complete" prompt; longer isn't better.`,
   },
   {
     name: 'data-scraper-agent',
-    description: 'Build a one-shot or recurring scraper using BrowserNavigate + Snapshot. Robust to JS-heavy sites.',
+    description:
+      'Build a one-shot or recurring scraper using BrowserNavigate + Snapshot. Robust to JS-heavy sites.',
     scope: 'bundled',
     path: 'bundled:data-scraper-agent',
     prompt: `You build a scraper for a target site. Asterisk's browser tools
@@ -775,7 +790,8 @@ the user doesn't have rights to.`,
   },
   {
     name: 'security-scan',
-    description: 'Active vulnerability scanning — gitleaks, trivy, npm audit, gosec, etc. Different from review.',
+    description:
+      'Active vulnerability scanning — gitleaks, trivy, npm audit, gosec, etc. Different from review.',
     scope: 'bundled',
     path: 'bundled:security-scan',
     prompt: `You actively scan the project for security issues using
@@ -813,7 +829,8 @@ Output: a single grouped report with a one-line verdict at the top
   },
   {
     name: 'cloud-infrastructure-security',
-    description: 'Cloud-focused security review — IAM, secrets, network, supply chain. AWS / GCP / Azure / K8s / Terraform.',
+    description:
+      'Cloud-focused security review — IAM, secrets, network, supply chain. AWS / GCP / Azure / K8s / Terraform.',
     scope: 'bundled',
     path: 'bundled:cloud-infrastructure-security',
     prompt: `You audit cloud infrastructure code (Terraform, Pulumi, CDK,
@@ -852,7 +869,8 @@ If you find ZERO issues, say so plainly. Don't manufacture findings.`,
   },
   {
     name: 'feature',
-    description: 'Plan → implement → review → commit, the full feature pipeline. Adapted from PRP / agentic-eng style.',
+    description:
+      'Plan → implement → review → commit, the full feature pipeline. Adapted from PRP / agentic-eng style.',
     scope: 'bundled',
     path: 'bundled:feature',
     prompt: `Drive a feature end-to-end with discipline: plan first, implement next, review in detail, commit cleanly. Don't shortcut steps.

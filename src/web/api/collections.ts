@@ -9,7 +9,7 @@ import {
   upsertHook,
   upsertMcpServer,
 } from '../../db/collections.ts';
-import { audit, type Handler, HttpError, json, readJsonObject } from '../http.ts';
+import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
 
 export const getMcpServers: Handler = ({ db }) => json({ servers: listMcpServers(db) });
 

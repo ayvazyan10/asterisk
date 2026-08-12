@@ -45,7 +45,10 @@ const STEPS: Step[] = [
     initial: (s) => s.config.ollama.baseUrl,
     apply: (s, v) => ({
       ...s,
-      config: { ...s.config, ollama: { ...s.config.ollama, baseUrl: v.trim() || s.config.ollama.baseUrl } },
+      config: {
+        ...s.config,
+        ollama: { ...s.config.ollama, baseUrl: v.trim() || s.config.ollama.baseUrl },
+      },
     }),
   },
   {
@@ -54,7 +57,10 @@ const STEPS: Step[] = [
     initial: (s) => s.config.ollama.model,
     apply: (s, v) => ({
       ...s,
-      config: { ...s.config, ollama: { ...s.config.ollama, model: v.trim() || s.config.ollama.model } },
+      config: {
+        ...s.config,
+        ollama: { ...s.config.ollama, model: v.trim() || s.config.ollama.model },
+      },
     }),
   },
   {
@@ -246,9 +252,12 @@ export function ConfigureWizard() {
   const onSubmit = (raw: string) => {
     const value = raw.length > 0 ? raw : step.initial(state);
     const nextState = step.apply(state, value);
-    const display = step.key.toLowerCase().includes('token') || step.key.includes('API_KEY')
-      ? value ? '<redacted>' : '(skipped)'
-      : value || '(default)';
+    const display =
+      step.key.toLowerCase().includes('token') || step.key.includes('API_KEY')
+        ? value
+          ? '<redacted>'
+          : '(skipped)'
+        : value || '(default)';
     const next: string[] = [...history, `${step.prompt}: ${display}`];
 
     if (stepIndex + 1 >= STEPS.length) {

@@ -41,5 +41,4 @@ describe('stripThinkTags', () => {
   it('is case-insensitive on the tag itself', () => {
     expect(stripThinkTags('<THINK>x</THINK>after')).toBe('after');
   });
-
 });

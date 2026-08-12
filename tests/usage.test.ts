@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { openDriver, type SqliteDriver } from '../src/db/driver.ts';
+import { dayLabel, formatCost, formatTokens } from '../src/commands/usage-report.ts';
+import { type SqliteDriver, openDriver } from '../src/db/driver.ts';
 import { migrate } from '../src/db/migrations.ts';
 import {
   costOf,
@@ -21,7 +22,6 @@ import {
   usageByModel,
   usageSince,
 } from '../src/db/usage.ts';
-import { dayLabel, formatCost, formatTokens } from '../src/commands/usage-report.ts';
 
 let db: SqliteDriver;
 
@@ -95,9 +95,7 @@ describe('pricing', () => {
   });
 
   it('rejects negative rates', () => {
-    expect(() =>
-      upsertPricing(db, { model: 'x', inputPerMTok: -1, outputPerMTok: 1 }),
-    ).toThrow();
+    expect(() => upsertPricing(db, { model: 'x', inputPerMTok: -1, outputPerMTok: 1 })).toThrow();
   });
 });
 
@@ -240,9 +238,7 @@ describe('formatting', () => {
     const d = new Date(midnight);
     const expected = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     expect(dayLabel(midnight)).toBe(expected);
-    expect(dayLabel(midnight)).toBe(
-      new Date(midnight).toLocaleDateString('en-CA').slice(5),
-    );
+    expect(dayLabel(midnight)).toBe(new Date(midnight).toLocaleDateString('en-CA').slice(5));
   });
 
   it('keeps sub-cent costs visible instead of rounding them to zero', () => {

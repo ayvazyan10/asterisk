@@ -2,15 +2,15 @@
 // Reference: https://developers.facebook.com/docs/whatsapp/cloud-api
 
 import { createReadStream } from 'node:fs';
+import { type IncomingMessage as HttpIncoming, type ServerResponse, createServer } from 'node:http';
 import { basename } from 'node:path';
-import { createServer, type IncomingMessage as HttpIncoming, type ServerResponse } from 'node:http';
 
 import {
-  asOutgoingMessage,
   type Attachment,
   type BotAdapter,
   type Handler,
   type IncomingMessage,
+  asOutgoingMessage,
 } from '../adapter.ts';
 
 export interface MetaCloudOptions {
@@ -41,9 +41,9 @@ interface MetaWebhookBody {
 
 export function createWhatsappMetaCloudAdapter(opts: MetaCloudOptions): BotAdapter {
   if (!opts.accessToken) throw new Error('Meta Cloud adapter needs ASTERISK_WHATSAPP_META_TOKEN');
-  if (!opts.verifyToken)
-    throw new Error('Meta Cloud adapter needs ASTERISK_WHATSAPP_VERIFY_TOKEN');
-  if (!opts.phoneNumberId) throw new Error('Meta Cloud adapter needs whatsapp.metaCloud.phoneNumberId');
+  if (!opts.verifyToken) throw new Error('Meta Cloud adapter needs ASTERISK_WHATSAPP_VERIFY_TOKEN');
+  if (!opts.phoneNumberId)
+    throw new Error('Meta Cloud adapter needs whatsapp.metaCloud.phoneNumberId');
 
   let server: ReturnType<typeof createServer> | undefined;
 
@@ -181,9 +181,19 @@ async function sendText(opts: MetaCloudOptions, to: string, text: string): Promi
 async function sendMedia(opts: MetaCloudOptions, to: string, a: Attachment): Promise<void> {
   const id = await uploadMedia(opts, a);
   const url = `https://graph.facebook.com/v20.0/${opts.phoneNumberId}/messages`;
-  const payloadKey = a.kind === 'image' ? 'image' : a.kind === 'video' ? 'video' : a.kind === 'audio' ? 'audio' : 'document';
+  const payloadKey =
+    a.kind === 'image'
+      ? 'image'
+      : a.kind === 'video'
+        ? 'video'
+        : a.kind === 'audio'
+          ? 'audio'
+          : 'document';
   const mediaPayload: Record<string, unknown> = { id };
-  if (a.caption && (payloadKey === 'image' || payloadKey === 'video' || payloadKey === 'document')) {
+  if (
+    a.caption &&
+    (payloadKey === 'image' || payloadKey === 'video' || payloadKey === 'document')
+  ) {
     mediaPayload['caption'] = a.caption;
   }
   if (payloadKey === 'document') mediaPayload['filename'] = basename(a.path);

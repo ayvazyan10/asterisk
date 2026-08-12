@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  OUTPUT_STYLES,
   findOutputStyle,
   outputStyleToPromptSection,
-  OUTPUT_STYLES,
 } from '../src/output-styles/styles.ts';
 
 describe('output styles', () => {

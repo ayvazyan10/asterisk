@@ -41,8 +41,9 @@ function readVersion(root: string): string {
 }
 
 async function main(): Promise<void> {
-  const installDir = process.env['ASTERISK_INSTALL_DIR']
-    ?? resolve(process.env['HOME'] ?? '~', '.local/share/asterisk');
+  const installDir =
+    process.env['ASTERISK_INSTALL_DIR'] ??
+    resolve(process.env['HOME'] ?? '~', '.local/share/asterisk');
   const branch = process.env['ASTERISK_BRANCH'] ?? 'master';
 
   process.stdout.write('\n');
@@ -75,14 +76,8 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  const commitCount = run(
-    `git rev-list HEAD..origin/${branch} --count`,
-    installDir,
-  );
-  const changelog = run(
-    `git log HEAD..origin/${branch} --oneline --no-decorate -20`,
-    installDir,
-  );
+  const commitCount = run(`git rev-list HEAD..origin/${branch} --count`, installDir);
+  const changelog = run(`git log HEAD..origin/${branch} --oneline --no-decorate -20`, installDir);
 
   step(`${commitCount} new commit${commitCount === '1' ? '' : 's'}:`);
   for (const line of changelog.split('\n')) {

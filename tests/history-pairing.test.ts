@@ -84,9 +84,7 @@ describe('findUnpaired / isPaired', () => {
   });
 
   it('reports a tool_use answered by nothing at the end of history', () => {
-    const history: Message[] = [
-      { role: 'assistant', content: [use('a'), use('b')] },
-    ];
+    const history: Message[] = [{ role: 'assistant', content: [use('a'), use('b')] }];
     expect(findUnpaired(history)).toEqual(['a', 'b']);
   });
 
@@ -172,9 +170,7 @@ describe('repairHistory', () => {
   });
 
   it('is idempotent', () => {
-    const history: Message[] = [
-      { role: 'assistant', content: [use('a'), use('b')] },
-    ];
+    const history: Message[] = [{ role: 'assistant', content: [use('a'), use('b')] }];
     const once = repairHistory(history);
     expect(repairHistory(once)).toEqual(once);
   });

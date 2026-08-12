@@ -22,7 +22,8 @@ describe('WebFetch', () => {
 
 describe('htmlToText', () => {
   it('strips tags and entities', () => {
-    const html = '<html><head><title>T</title></head><body><p>Hello, <b>world</b>&amp;Co.</p><script>alert(1)</script></body></html>';
+    const html =
+      '<html><head><title>T</title></head><body><p>Hello, <b>world</b>&amp;Co.</p><script>alert(1)</script></body></html>';
     const text = htmlToText(html);
     expect(text).toContain('Hello,');
     expect(text).toContain('world');

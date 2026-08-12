@@ -10,10 +10,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { getDb, closeDb } from '../src/db/index.ts';
-import { openDriver } from '../src/db/driver.ts';
 import { persistOutput } from '../src/agent/output-store.ts';
 import { saveConversation } from '../src/agent/persistence.ts';
+import { openDriver } from '../src/db/driver.ts';
+import { closeDb, getDb } from '../src/db/index.ts';
 import { findExposedFiles, writeOwnerOnlyAtomic } from '../src/utils/fs-safe.ts';
 
 const EXPOSED_BITS = 0o077;
@@ -88,7 +88,9 @@ describe('owner-only state files', () => {
   });
 
   it('writes conversation transcripts owner-only', () => {
-    saveConversation('chat-1', [{ role: 'user', content: [{ type: 'text', text: 'secret question' }] }]);
+    saveConversation('chat-1', [
+      { role: 'user', content: [{ type: 'text', text: 'secret question' }] },
+    ]);
     expect(mode(join(home, 'conversations', 'chat-1.json'))).toBe(0o600);
     expect(isExposed(join(home, 'conversations'))).toBe(false);
   });

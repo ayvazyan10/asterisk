@@ -6,7 +6,7 @@
 
 import { isLocalProvider } from '../providers/kinds.ts';
 import type { SqliteDriver } from './driver.ts';
-import { costOf, findPrice, type TokenCounts } from './pricing.ts';
+import { type TokenCounts, costOf, findPrice } from './pricing.ts';
 
 export interface UsageRecord {
   sessionScope: string;

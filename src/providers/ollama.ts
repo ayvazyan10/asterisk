@@ -202,7 +202,9 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
         else req.signal.addEventListener('abort', onParentAbort, { once: true });
       }
       const totalTimer = setTimeout(() => {
-        ctrl.abort(new Error(`model response timed out after ${Math.round(cfg.modelTimeoutMs / 1000)}s`));
+        ctrl.abort(
+          new Error(`model response timed out after ${Math.round(cfg.modelTimeoutMs / 1000)}s`),
+        );
       }, cfg.modelTimeoutMs);
 
       const fetchInit: RequestInit = {
@@ -221,9 +223,13 @@ export function createOllamaProvider(overrides: Partial<OllamaConfig> = {}): Pro
             const msg = reason instanceof Error ? reason.message : 'request aborted';
             throw new ProviderError('aborted', msg, { cause: e });
           }
-          throw new ProviderError('network', `network error reaching ${url}: ${(e as Error).message}`, {
-            cause: e,
-          });
+          throw new ProviderError(
+            'network',
+            `network error reaching ${url}: ${(e as Error).message}`,
+            {
+              cause: e,
+            },
+          );
         }
 
         if (!res.ok) {
@@ -299,7 +305,9 @@ async function readStreamingChat(
     if (idleTimer !== undefined) clearTimeout(idleTimer);
     if (idleTimeoutMs && ctrl) {
       idleTimer = setTimeout(() => {
-        ctrl.abort(new Error(`model idle timeout — no data for ${Math.round(idleTimeoutMs / 1000)}s`));
+        ctrl.abort(
+          new Error(`model idle timeout — no data for ${Math.round(idleTimeoutMs / 1000)}s`),
+        );
       }, idleTimeoutMs);
     }
   };
@@ -307,7 +315,9 @@ async function readStreamingChat(
 
   // Cancel the reader when the AbortController fires so reader.read()
   // rejects instead of blocking forever on a stalled stream.
-  const onAbort = () => { reader.cancel().catch(() => {}); };
+  const onAbort = () => {
+    reader.cancel().catch(() => {});
+  };
   if (ctrl) {
     if (ctrl.signal.aborted) reader.cancel().catch(() => {});
     else ctrl.signal.addEventListener('abort', onAbort, { once: true });
@@ -507,4 +517,3 @@ function createThinkFilter(): {
     },
   };
 }
-

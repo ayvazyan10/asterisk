@@ -22,10 +22,7 @@ describe('KeyedQueue', () => {
     };
 
     // The slow job is submitted first; the fast one must still wait.
-    await Promise.all([
-      queue.run('chat', job('a', 30)),
-      queue.run('chat', job('b', 1)),
-    ]);
+    await Promise.all([queue.run('chat', job('a', 30)), queue.run('chat', job('b', 1))]);
 
     expect(events).toEqual(['a:start', 'a:end', 'b:start', 'b:end']);
   });

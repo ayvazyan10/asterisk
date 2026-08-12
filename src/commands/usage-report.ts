@@ -5,13 +5,13 @@
 import { getDb } from '../db/index.ts';
 import { listPricing } from '../db/pricing.ts';
 import {
+  type UsageTotals,
   sessionUsage,
   startOfLocalDay,
   totalUsage,
   usageByDay,
   usageByModel,
   usageSince,
-  type UsageTotals,
 } from '../db/usage.ts';
 
 /** Compact token counts: 1234 -> 1.2k, 4500000 -> 4.5M. */
@@ -77,7 +77,8 @@ export function renderCost(scope: string, id: string): string {
     out.push('', 'By model');
     for (const row of byModel) {
       const name = `${row.provider}:${row.model}`;
-      const cost = row.unpricedTurns > 0 && row.costUsd === 0 ? 'unpriced' : formatCost(row.costUsd);
+      const cost =
+        row.unpricedTurns > 0 && row.costUsd === 0 ? 'unpriced' : formatCost(row.costUsd);
       out.push(
         `  ${name.length > 34 ? `${name.slice(0, 33)}…` : name.padEnd(34)} ` +
           `${cost.padStart(11)}  ${formatTokens(row.inputTokens)} in · ` +

@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 
 import type { SqliteDriver } from '../db/driver.ts';
 import { authenticate } from './auth.ts';
-import { fail, HttpError, type RequestContext } from './http.ts';
+import { HttpError, type RequestContext, fail } from './http.ts';
 import { checkRequestOrigin } from './origin-guard.ts';
 import { matchRoute } from './router.ts';
 import { renderIndexHtml } from './ui/index.ts';
@@ -57,7 +57,10 @@ export function createRequestHandler(opts: WebServerOptions): (req: Request) => 
       return fail(originProblem, 403);
     }
 
-    const auth = authenticate(db, req, { required: authRequired, secure: url.protocol === 'https:' });
+    const auth = authenticate(db, req, {
+      required: authRequired,
+      secure: url.protocol === 'https:',
+    });
     const cookieHeader = auth.setCookie ? { 'set-cookie': auth.setCookie } : {};
 
     if (!auth.ok) {

@@ -7,8 +7,8 @@ import React from 'react';
 
 import { createAgentState } from '../agent/loop.ts';
 import { loadConversation } from '../agent/persistence.ts';
-import { createMcpManager } from '../mcp/manager.ts';
 import { loadConfig } from '../config/load.ts';
+import { createMcpManager } from '../mcp/manager.ts';
 import { chooseProvider } from '../providers/factory.ts';
 import { App } from '../repl/App.tsx';
 import { setExtraTools } from '../tools/registry.ts';

@@ -134,10 +134,7 @@ function numericBounds(def: ZodDef): Pick<FieldDescriptor, 'min' | 'max' | 'inte
   return out;
 }
 
-function describeLeaf(
-  path: string,
-  schema: z.ZodTypeAny,
-): FieldDescriptor | undefined {
+function describeLeaf(path: string, schema: z.ZodTypeAny): FieldDescriptor | undefined {
   const { inner, default: dflt, optional } = unwrap(schema);
   const def = defOf(inner);
   const segments = path.split('.');
@@ -231,7 +228,10 @@ export function settingsByGroup(): Array<{ group: string; fields: FieldDescripto
  * Validates a single field's value against its slice of the schema, so the API
  * can reject one bad edit without materialising a whole config object.
  */
-export function validateField(path: string, value: unknown): { ok: true } | { ok: false; error: string } {
+export function validateField(
+  path: string,
+  value: unknown,
+): { ok: true } | { ok: false; error: string } {
   const segments = path.split('.');
   let current: z.ZodTypeAny = ConfigSchema;
 

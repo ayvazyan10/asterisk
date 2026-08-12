@@ -1,7 +1,7 @@
 // Grep tool — wraps ripgrep when available, falls back to system grep -r.
 
 import { execa } from 'execa';
-import { type Tool, ok, err } from './types.ts';
+import { type Tool, err, ok } from './types.ts';
 
 async function hasRipgrep(): Promise<boolean> {
   try {

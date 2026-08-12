@@ -45,7 +45,10 @@ describe('Ollama streaming', () => {
         JSON.stringify({ message: { role: 'assistant', content: 'world!' }, done: false }),
         JSON.stringify({ message: { role: 'assistant', content: '' }, done: true }),
       ]);
-      return new Response(stream, { status: 200, headers: { 'content-type': 'application/x-ndjson' } });
+      return new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'application/x-ndjson' },
+      });
     }) as unknown as typeof fetch;
 
     const provider = createOllamaProvider({ baseUrl: 'http://x', model: 'm' });
@@ -68,7 +71,10 @@ describe('Ollama streaming', () => {
     globalThis.fetch = (async () => {
       const stream = ndjsonStream([
         JSON.stringify({ message: { role: 'assistant', content: '<think>hmm' }, done: false }),
-        JSON.stringify({ message: { role: 'assistant', content: ' planning</think>' }, done: false }),
+        JSON.stringify({
+          message: { role: 'assistant', content: ' planning</think>' },
+          done: false,
+        }),
         JSON.stringify({ message: { role: 'assistant', content: 'Done.' }, done: true }),
       ]);
       return new Response(stream, { status: 200 });
@@ -101,7 +107,10 @@ describe('Ollama streaming', () => {
       const stream = ndjsonStream([
         JSON.stringify({ message: { role: 'assistant', content: '<think>let me' }, done: false }),
         JSON.stringify({ message: { role: 'assistant', content: ' think about it' }, done: false }),
-        JSON.stringify({ message: { role: 'assistant', content: ' carefully</think>' }, done: false }),
+        JSON.stringify({
+          message: { role: 'assistant', content: ' carefully</think>' },
+          done: false,
+        }),
         JSON.stringify({ message: { role: 'assistant', content: 'final answer' }, done: true }),
       ]);
       return new Response(stream, { status: 200 });
@@ -168,8 +177,14 @@ describe('Ollama streaming', () => {
     globalThis.fetch = (async () => {
       const stream = ndjsonStream([
         // Reasoning + close tag in same chunk — filter catches it.
-        JSON.stringify({ message: { role: 'assistant', content: 'reasoning about task</think>' }, done: false }),
-        JSON.stringify({ message: { role: 'assistant', content: 'The answer is 42.' }, done: false }),
+        JSON.stringify({
+          message: { role: 'assistant', content: 'reasoning about task</think>' },
+          done: false,
+        }),
+        JSON.stringify({
+          message: { role: 'assistant', content: 'The answer is 42.' },
+          done: false,
+        }),
         JSON.stringify({ message: { role: 'assistant', content: '' }, done: true }),
       ]);
       return new Response(stream, { status: 200 });
@@ -228,9 +243,12 @@ describe('Ollama streaming', () => {
       const stream = new ReadableStream<Uint8Array>({
         start(ctrl) {
           const enc = new TextEncoder();
-          ctrl.enqueue(enc.encode(
-            JSON.stringify({ message: { role: 'assistant', content: 'start' }, done: false }) + '\n',
-          ));
+          ctrl.enqueue(
+            enc.encode(
+              JSON.stringify({ message: { role: 'assistant', content: 'start' }, done: false }) +
+                '\n',
+            ),
+          );
           // Never sends more data — triggers idle timeout.
         },
       });
@@ -257,9 +275,12 @@ describe('Ollama streaming', () => {
           const enc = new TextEncoder();
           interval = setInterval(() => {
             try {
-              ctrl.enqueue(enc.encode(
-                JSON.stringify({ message: { role: 'assistant', content: '.' }, done: false }) + '\n',
-              ));
+              ctrl.enqueue(
+                enc.encode(
+                  JSON.stringify({ message: { role: 'assistant', content: '.' }, done: false }) +
+                    '\n',
+                ),
+              );
             } catch {
               clearInterval(interval);
             }
