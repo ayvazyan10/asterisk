@@ -36,10 +36,10 @@ function harness(provider?: Provider) {
     sent,
     server,
     /** Sends a request and returns the response with the matching id. */
-    async call(method: string, params: Record<string, unknown> = {}, id?: number | string) {
+    async call(method: string, params: Record<string, unknown> = {}, explicitId?: number | string) {
       // Unique per call: responses are matched by id, so reusing one makes the
       // second call find the first call's answer.
-      id = id ?? `req-${++nextId}`;
+      const id = explicitId ?? `req-${++nextId}`;
       await server.handle({ jsonrpc: '2.0', id, method, params });
       return sent.find((m) => m.id === id);
     },
