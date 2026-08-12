@@ -193,6 +193,7 @@ authentication is refused outright.
 | `/tasks`           | List the agent's in-flight tasks for this session           |
 | `/hooks`           | Manage agent-loop lifecycle hooks (visual)                  |
 | `/permissions`     | Inspect and edit what `Bash` may run without asking         |
+| `/plugins`         | List loaded plugins and anything that failed to load         |
 | `/doctor`          | Diagnostics — checks Ollama, Anthropic, system tools, MCP   |
 | `/quit`            | Exit the REPL                                               |
 

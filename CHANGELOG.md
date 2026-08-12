@@ -5,6 +5,25 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`asterisk mcp-server`** — serve Asterisk's memory, skills and rules to
+  other agents over MCP. Bash, Write and Edit are deliberately not exposed.
+- **Plugins** — in-process TypeScript modules that can register tools and
+  lifecycle handlers. Off by default; the sandbox does not confine them.
+- **`/plugins`** — what is loaded, what failed, and what would load.
+
+### Changed
+
+- REPL coverage from 7% to 77%, repo-wide lines 50% to 65%. Fixed a stray
+  character typed into the prompt by Ctrl+O, and removed dead duplicate modal
+  handlers the tests exposed.
+- The build script pins its output root. The ninth entrypoint made Bun mirror
+  the source tree into `dist/` instead of flattening it, which silently missed
+  every path in the dispatcher.
+
 ## [0.3.0] - 2026-08-12
 
 Everything that turned the permission boundary into a real one, gave the agent

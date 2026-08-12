@@ -225,6 +225,29 @@ are fixture-driven — Ollama was not running.
 Implements the documented core and answers method-not-found for the rest,
 which the capabilities honestly advertise. Unproven against a real ACP client.
 
+### ~~Plugin lifecycle hooks~~ ✓ shipped, with the prerequisite corrected
+`before_turn` / `after_turn` etc. existed as shell commands; a TypeScript
+surface now exists too. The note here said it "probably needs a sandbox /
+permission model first" — having built both, that turned out to be the wrong
+prerequisite. bubblewrap confines child *processes*; a plugin is a function
+call, so it runs with the secret store, the tool registry and the permission
+gate itself. Nothing changes that.
+
+So the split is stated instead of engineered around: code you wrote or read is
+a plugin, code you did not is an MCP server, where the isolation is that it is
+a separate process. Off by default, every plugin named by path, no directory
+scan.
+
+### ~~Asterisk as an MCP server~~ ✓ shipped
+`asterisk mcp-server` serves memory as tools, skills as prompts and rules as
+resources. Bash, Write, Edit and a full agent turn are deliberately absent:
+Bash's boundary is a consent prompt with a human behind it, and Write/Edit are
+bounded by a workspace guard rooted at a cwd the *client* chooses.
+
+### ~~REPL test coverage~~ ✓ shipped
+`src/repl` from 7.45% to 77.14%, repo-wide lines 50 → 65, no new dependency.
+Found a stray character typed by Ctrl+O and a set of dead duplicate handlers.
+
 ## Tier 3 — Speculative, not committed
 
 ### ~~Web dashboard~~ ✓ shipped as the control panel
@@ -247,11 +270,7 @@ power, more sources of drift. Probably needs sandboxing.
 JSON-file based persistence in `~/.asterisk/conversations/`. Daemon
 auto-saves after each turn, restores on chat reconnect. 7-day expiry.
 
-### Plugin lifecycle hooks
-`before_turn` / `after_turn` etc. exist as shell-command hooks. A
-TypeScript hook surface (load a `.ts` file, register a function) would
-be more powerful but adds a security surface (arbitrary code load).
-Probably needs a sandbox / permission model first.
+
 
 ---
 
