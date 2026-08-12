@@ -13,7 +13,10 @@
 //   https://bun.sh/docs/api/sqlite
 //   https://nodejs.org/api/sqlite.html
 
+import { chmodSync } from 'node:fs';
 import { createRequire } from 'node:module';
+
+import { OWNER_ONLY_FILE, touchOwnerOnly } from '../utils/fs-safe.ts';
 
 const require = createRequire(import.meta.url);
 
@@ -69,16 +72,43 @@ function openRaw(file: string): RawDatabase {
 }
 
 /**
+ * Restricts the -wal and -shm sidecars to the owner.
+ *
+ * Creating the main database 0600 first is normally enough for SQLite to
+ * inherit the mode, but not every build does, and the sidecars are recreated
+ * whenever the last connection drops. Belt and braces: this is cheap and the
+ * failure mode it guards against is plaintext secrets in a world-readable file.
+ */
+export function restrictSidecars(file: string): void {
+  for (const suffix of ['-wal', '-shm']) {
+    try {
+      chmodSync(`${file}${suffix}`, OWNER_ONLY_FILE);
+    } catch {
+      // The sidecars only exist while a WAL connection is open, so ENOENT here
+      // is the normal case rather than an error.
+    }
+  }
+}
+
+/**
  * Opens (creating if needed) the SQLite database at `file`. Pass ':memory:'
  * for an ephemeral database — used throughout the test suite.
  */
 export function openDriver(file: string): SqliteDriver {
+  // Create the database 0600 *before* SQLite opens it. Enabling WAL below makes
+  // SQLite create the -wal and -shm sidecars, and it derives their mode from
+  // the main database file. Restricting the database afterwards — which is what
+  // this used to do — left the sidecars at the process umask, and the -wal holds
+  // a verbatim copy of recent writes, including every API key and bot token.
+  if (file !== ':memory:') touchOwnerOnly(file);
+
   const db = openRaw(file);
 
   // WAL lets the daemon, the REPL and `asterisk web` share one database file
   // without blocking each other on reads. Not available for in-memory DBs.
   if (file !== ':memory:') {
     db.exec('PRAGMA journal_mode = WAL');
+    restrictSidecars(file);
   }
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA busy_timeout = 5000');

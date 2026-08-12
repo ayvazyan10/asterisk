@@ -107,7 +107,9 @@ describe('output store', () => {
 
     const files = readdirSync(outputDir) as string[];
     expect(files.length).toBe(1);
-    expect(files[0]).toMatch(/^\d+-Bash\.txt$/);
+    // timestamp + random suffix: two large results can land in the same
+    // millisecond, and the timestamp alone used to collide.
+    expect(files[0]).toMatch(/^\d+-[0-9a-f]{8}-Bash\.txt$/);
 
     const content = readFileSync(join(outputDir, files[0]!), 'utf8');
     expect(content).toBe(output);
@@ -119,7 +121,7 @@ describe('output store', () => {
 
     const outputDir = join(tempDir, 'outputs');
     const files = readdirSync(outputDir) as string[];
-    expect(files[0]).toMatch(/^\d+-Weird_Tool_Name_\.txt$/);
+    expect(files[0]).toMatch(/^\d+-[0-9a-f]{8}-Weird_Tool_Name_\.txt$/);
   });
 
   it('persistOutput preview is capped at 500 chars', () => {

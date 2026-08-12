@@ -5,10 +5,8 @@
 // bare module-level singleton — otherwise the second test in a file would keep
 // talking to the first test's database.
 
-import { chmodSync } from 'node:fs';
-
 import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
-import { openDriver, type SqliteDriver } from './driver.ts';
+import { openDriver, restrictSidecars, type SqliteDriver } from './driver.ts';
 import { migrate } from './migrations.ts';
 import { seedBuiltinPricing } from './pricing.ts';
 
@@ -29,22 +27,14 @@ export function getDb(file?: string): SqliteDriver {
   if (existing) return existing;
 
   if (target !== ':memory:') ensurePaths(asteriskPaths());
+
+  // openDriver creates the database 0600 before enabling WAL, so the sidecars
+  // inherit the restriction rather than the umask. Migrating writes through the
+  // WAL, which can recreate them, so re-restrict once the schema is settled.
   const db = openDriver(target);
   migrate(db);
   seedBuiltinPricing(db);
-
-  // The database holds API keys and bot tokens, so it gets the same 0600 the
-  // old secrets.env had. Applied after open so the file definitely exists;
-  // the -wal and -shm sidecars inherit the main file's mode from SQLite.
-  if (target !== ':memory:') {
-    try {
-      chmodSync(target, 0o600);
-    } catch {
-      // Some filesystems (notably Windows shares and certain FUSE mounts)
-      // reject chmod. Refusing to start over file permissions would be worse
-      // than continuing, so this is best-effort.
-    }
-  }
+  if (target !== ':memory:') restrictSidecars(target);
 
   open.set(target, db);
   return db;

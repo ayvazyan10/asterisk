@@ -1,7 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Message } from '../types/messages.ts';
+import { ensureOwnerOnlyDir, writeOwnerOnlyAtomic } from '../utils/fs-safe.ts';
+import { repairHistory } from './history.ts';
 
 interface PersistedConversation {
   id: string;
@@ -14,7 +16,7 @@ function persistDir(): string {
     process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'),
     'conversations',
   );
-  mkdirSync(dir, { recursive: true });
+  ensureOwnerOnlyDir(dir);
   return dir;
 }
 
@@ -30,7 +32,10 @@ export function saveConversation(id: string, messages: Message[]): void {
     messages,
   };
   try {
-    writeFileSync(filePath(id), JSON.stringify(data), 'utf8');
+    // Atomic: a crash mid-write used to leave a truncated file, which
+    // loadConversation reports as an empty history — silently losing the
+    // conversation rather than failing loudly.
+    writeOwnerOnlyAtomic(filePath(id), JSON.stringify(data));
   } catch {
     // best-effort
   }
@@ -48,7 +53,10 @@ export function loadConversation(id: string): Message[] {
       try { unlinkSync(path); } catch {}
       return [];
     }
-    return data.messages;
+    // Transcripts written before the abort path was fixed can hold tool_use
+    // blocks that were never answered, which makes every turn of the restored
+    // conversation fail with a non-retryable 400. Heal on the way in.
+    return repairHistory(data.messages);
   } catch {
     return [];
   }

@@ -1,9 +1,10 @@
 // Filesystem paths used by the daemon. All under ~/.asterisk by default;
 // override the root via ASTERISK_HOME.
 
-import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+import { ensureOwnerOnlyDir } from '../utils/fs-safe.ts';
 
 export interface AsteriskPaths {
   root: string;
@@ -30,7 +31,14 @@ export function asteriskPaths(): AsteriskPaths {
   };
 }
 
+/**
+ * Creates the state directories, owner-only.
+ *
+ * The whole tree is 0700: the database holds credentials, the logs hold tool
+ * input at debug level, and the transcripts hold everything the agent has ever
+ * been shown. None of it should be readable by other local users.
+ */
 export function ensurePaths(p: AsteriskPaths): void {
-  mkdirSync(p.root, { recursive: true });
-  mkdirSync(p.logsDir, { recursive: true });
+  ensureOwnerOnlyDir(p.root);
+  ensureOwnerOnlyDir(p.logsDir);
 }

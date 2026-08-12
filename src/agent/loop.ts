@@ -26,6 +26,7 @@ import { retry } from '../utils/retry.ts';
 import { type AgentSession, runWithSession } from './context.ts';
 import { shouldPersistOutput, persistOutput } from './output-store.ts';
 import { compactHistory } from './compaction.ts';
+import { completeToolResults, repairHistory } from './history.ts';
 import { getDb } from '../db/index.ts';
 import { isEmptyUsage, recordUsage } from '../db/usage.ts';
 import { isConcurrencySafe } from '../tools/concurrency.ts';
@@ -310,8 +311,12 @@ async function runAgentTurnInner(
         break;
       }
 
-      // Compact old tool results when history gets too long.
-      state.history = compactHistory(state.history);
+      // Compact old tool results when history gets too long, then re-establish
+      // the tool_use/tool_result pairing invariant. Repair is a no-op copy on a
+      // well-formed history; it earns its place on the first turn after a
+      // conversation is restored from disk, which is where an unanswered
+      // tool_use written by an older build would otherwise fail every turn.
+      state.history = repairHistory(compactHistory(state.history));
 
       let response;
       try {
@@ -453,21 +458,53 @@ async function runAgentTurnInner(
             );
             for (const r of before) {
               opts.onHook?.(r);
-              if (r.exitCode !== 0) continue;
-              if (r.decision?.action === 'block') {
-                const reason = r.decision.reason || 'blocked by hook';
-                opts.onToolResult?.(use.name, reason, true);
+              // Hooks fail closed, by one rule: a hook denies the call if it
+              // says `block`, or if it exits non-zero.
+              //
+              // Both halves matter. The conventional deny idiom is
+              // `echo '{"action":"block"}'; exit 2`, and the old code skipped
+              // every non-zero exit before looking at the decision — so the one
+              // idiom people actually write failed *open*. And a hook that
+              // crashed cannot be read as approval: it may have died before
+              // reaching its own check, or after deciding the input needed
+              // rewriting, in which case running the original input is the
+              // thing it was trying to prevent.
+              //
+              // A hook whose last command exits non-zero benignly (`grep -q`
+              // finding nothing is the usual one) should end with `|| true`.
+              const denied = r.decision?.action === 'block' || r.exitCode !== 0;
+              if (denied) {
+                const why =
+                  r.decision?.reason ||
+                  (r.exitCode !== 0 ? `hook exited ${r.exitCode}` : 'blocked by hook');
+                opts.onToolResult?.(use.name, why, true);
                 return {
                   type: 'tool_result',
                   tool_use_id: use.id,
-                  content: `tool blocked by hook "${r.hook}": ${reason}`,
+                  content: `tool blocked by hook "${r.hook}": ${why}`,
                   is_error: true,
                 };
               }
-              if (r.decision?.action === 'rewrite') {
+              // A rewrite from a hook that failed is not trustworthy input.
+              if (r.exitCode === 0 && r.decision?.action === 'rewrite') {
                 toolInput = { ...r.decision.input };
               }
             }
+          }
+          // allowedTools filters the definitions sent to the model, but a model
+          // will happily emit a tool it saw earlier in the conversation, so the
+          // list has to be enforced here too. Without this a read-only
+          // sub-agent — explore, planner, code-reviewer — whose allowedTools
+          // excludes Write could still write to disk.
+          if (opts.allowedTools?.length && !opts.allowedTools.includes(use.name)) {
+            const why = `tool "${use.name}" is not available to this agent`;
+            opts.onToolResult?.(use.name, why, true);
+            return {
+              type: 'tool_result',
+              tool_use_id: use.id,
+              content: why,
+              is_error: true,
+            };
           }
           const tool = getTool(use.name);
           let output: string;
@@ -539,8 +576,17 @@ async function runAgentTurnInner(
         }
       }
 
+      // Answer the tool_use blocks pushed above unconditionally — including on
+      // the abort path, which used to break out first and strand them. An
+      // unanswered tool_use makes every later request fail with a 400 that is
+      // classified non-retryable, and the caller persists this history, so the
+      // conversation stays broken across restarts and /resume.
+      state.history.push({
+        role: 'user',
+        content: completeToolResults(response.content, toolResults),
+      });
+
       if ((reason as TerminalReason) === 'aborted') break;
-      state.history.push({ role: 'user', content: toolResults });
 
       if (turn === maxTurns - 1) {
         reason = 'max-turns';
