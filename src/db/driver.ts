@@ -150,7 +150,13 @@ export function openDriver(file: string): SqliteDriver {
     transaction<T>(fn: () => T): T {
       if (depth > 0) return fn();
       depth++;
-      db.exec('BEGIN');
+      // IMMEDIATE, not deferred. Under WAL a deferred BEGIN upgrades to a write
+      // lock lazily, and if another connection wrote in between, SQLite fails
+      // the upgrade with SQLITE_BUSY_SNAPSHOT — which busy_timeout does *not*
+      // retry. Taking the write lock upfront makes contention wait out the
+      // busy_timeout instead of erroring, which is what lets three Asterisk
+      // processes share one database file.
+      db.exec('BEGIN IMMEDIATE');
       try {
         const out = fn();
         db.exec('COMMIT');

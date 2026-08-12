@@ -148,16 +148,22 @@ export function migrate(db: SqliteDriver): number {
     );
   `);
 
-  const applied = new Set(
-    db.all<MigrationRow>('SELECT version FROM schema_migrations').map((r) => r.version),
-  );
+  // The applied set has to be read *inside* the write transaction. Reading it
+  // outside let the REPL, the daemon and `asterisk web` — which routinely start
+  // together on a fresh install — all observe an empty set, and then two of
+  // them ran the same CREATE TABLE and died with "table settings already
+  // exists" thrown out of getDb() with no handler. transaction() opens with
+  // BEGIN IMMEDIATE, so the readers serialise on the write lock instead.
+  return db.transaction(() => {
+    const applied = new Set(
+      db.all<MigrationRow>('SELECT version FROM schema_migrations').map((r) => r.version),
+    );
 
-  const pending = MIGRATIONS.filter((m) => !applied.has(m.version)).sort(
-    (a, b) => a.version - b.version,
-  );
-  if (pending.length === 0) return 0;
+    const pending = MIGRATIONS.filter((m) => !applied.has(m.version)).sort(
+      (a, b) => a.version - b.version,
+    );
+    if (pending.length === 0) return 0;
 
-  db.transaction(() => {
     for (const m of pending) {
       db.exec(m.sql);
       db.run('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)', [
@@ -166,9 +172,8 @@ export function migrate(db: SqliteDriver): number {
         Date.now(),
       ]);
     }
+    return pending.length;
   });
-
-  return pending.length;
 }
 
 /** Highest migration version this build knows about. */

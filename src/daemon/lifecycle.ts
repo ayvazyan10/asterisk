@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import { ensurePaths, asteriskPaths } from './paths.ts';
-import { clearPid, statusFromPidFile, writePid } from './pidfile.ts';
+import { clearPid, statusFromPidFile, writePid, writePidExclusive } from './pidfile.ts';
 
 // Walk up from this file's location until we find package.json. Works in both
 // source mode (file is src/daemon/lifecycle.ts) and bundled mode (file is
@@ -48,6 +48,16 @@ export async function start(): Promise<LifecycleResult> {
   }
   if (status.stale) clearPid(paths.pidFile);
 
+  // Reserve the pidfile before spawning. Checking the status and then spawning
+  // left a window in which two `asterisk start` calls both passed the check and
+  // both spawned a daemon, orphaning the first one — two bots answering every
+  // message, only one of them stoppable. The exclusive create picks a winner;
+  // the loser reports "already running" without spawning anything.
+  if (!writePidExclusive(paths.pidFile, process.pid)) {
+    const winner = statusFromPidFile(paths.pidFile);
+    return { ok: false, message: `daemon already starting (pid ${winner.pid ?? 'unknown'})` };
+  }
+
   const out = openSync(paths.daemonLog, 'a');
   const err = openSync(paths.daemonLog, 'a');
 
@@ -60,9 +70,11 @@ export async function start(): Promise<LifecycleResult> {
   child.unref();
 
   if (!child.pid) {
+    clearPid(paths.pidFile);
     return { ok: false, message: 'failed to spawn daemon' };
   }
 
+  // Replace the reservation with the real child pid and its start time.
   writePid(paths.pidFile, child.pid);
 
   // Give the daemon a moment to crash if it's going to.
