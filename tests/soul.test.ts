@@ -112,7 +112,7 @@ describe('soul loader', () => {
     await writeFile(join(userHome, '.asterisk', 'SOUL.md'), 'OPERATOR PERSONA');
     await mkdir(join(projectRoot, '.asterisk'), { recursive: true });
     await writeFile(join(projectRoot, '.asterisk', 'SOUL.md'), 'PROJECT PERSONA');
-    const session = { id: 'wa:+374', scope: 'whatsapp' as const };
+    const session = { id: 'bot:374', scope: 'telegram' as const };
     writeSessionSoul(session, 'PERSONAL PERSONA');
 
     const souls = loadSouls(projectRoot, session);
@@ -133,9 +133,9 @@ describe('soul loader', () => {
   });
 
   it('sessionSoulPath sanitises chatId punctuation', () => {
-    const path = sessionSoulPath({ id: 'bot:+374:99/abc', scope: 'whatsapp' });
+    const path = sessionSoulPath({ id: 'bot:+374:99/abc', scope: 'telegram' });
     // `:`, `+`, and `/` all become `_` so the filename is portable.
-    expect(path).toMatch(/whatsapp-bot__374_99_abc\.md$/);
+    expect(path).toMatch(/telegram-bot__374_99_abc\.md$/);
     expect(path).not.toContain(':');
     expect(path).not.toMatch(/\/bot_/); // session id must not be its own dir
   });
