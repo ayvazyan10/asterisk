@@ -10,19 +10,24 @@ export default defineConfig({
       reporter: ['text', 'html'],
       include: ['src/**/*.ts', 'src/**/*.tsx'],
       exclude: ['src/types/**', 'src/**/*.d.ts'],
-      // A ratchet, not an aspiration. These thresholds were 60/60/50/60 while
-      // @vitest/coverage-v8 was not installed, so `--coverage` errored out and
-      // the numbers were never once checked — actual coverage is roughly ten
-      // points below what was declared. They now sit just under the measured
-      // values so the gate is real and blocks regressions; raise them as
-      // coverage improves. Target remains 60/60/50/60.
-      // Ratcheted up with the Bash permission work (measured 49.01 / 47.51 /
-      // 41.54 / 50.08); the new modules sit at 87–100%.
+      // A ratchet, not an aspiration: each number sits just under what was
+      // actually measured, so the gate blocks regressions rather than stating
+      // a hope. These once read 60/60/50/60 while @vitest/coverage-v8 was not
+      // even installed and `--coverage` errored out, so they had never been
+      // checked once.
+      //
+      // Measured now: 64.07 / 64.42 / 56.72 / 65.39, up from 49 / 47 / 41 / 50.
+      // `src/repl` went from 7.45% to 77.14% and was most of that gap.
+      //
+      // The old 60/60/50/60 target is met on statements, functions and lines.
+      // Branches at 56.72 is the one still short, and the remaining mass is
+      // nameable rather than mysterious: the bot transports (telegram ~25%,
+      // whatsapp ~12%) and the command modules.
       thresholds: {
-        lines: 48,
-        functions: 46,
-        branches: 40,
-        statements: 49,
+        lines: 64,
+        functions: 63,
+        branches: 55,
+        statements: 63,
       },
     },
   },

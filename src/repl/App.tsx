@@ -14,7 +14,12 @@ import type { McpManager } from '../mcp/manager.ts';
 import { findOutputStyle } from '../output-styles/styles.ts';
 import { loadRules } from '../rules/loader.ts';
 import { loadSouls } from '../soul/loader.ts';
-import { type ApprovalRequest, onApprovalRequest, resolveApproval } from '../tools/approval.ts';
+import {
+  type ApprovalOutcome,
+  type ApprovalRequest,
+  onApprovalRequest,
+  resolveApproval,
+} from '../tools/approval.ts';
 import {
   type AskQuestion,
   answerAskQuestion,
@@ -32,21 +37,20 @@ import { Form } from './forms/Form.tsx';
 import { ListPicker } from './forms/ListPicker.tsx';
 import type { CommandResult, FormSpec, ListSpec } from './forms/types.ts';
 import { detectInlineProtocol, renderInlineImage } from './inline-image.ts';
+import {
+  type Entry,
+  type EntryKind,
+  expandLastCollapsed,
+  parseKeyValue,
+  renderCollapseHint,
+  summariseToolResult,
+  summariseToolUse,
+  truncate,
+} from './transcript.ts';
 
 type Modal = FormSpec | ListSpec | null;
 
 const VERSION = getVersion();
-
-type EntryKind = 'user' | 'assistant' | 'tool' | 'tool-result' | 'system' | 'progress' | 'error';
-
-interface Entry {
-  id: string;
-  kind: EntryKind;
-  /** Short, always-shown form (1–2 lines). */
-  text: string;
-  /** Full payload, revealed when expanded. Absent → text is the whole thing. */
-  fullText?: string;
-}
 
 interface Props {
   initialProvider: Provider;
@@ -58,6 +62,25 @@ export function App({ initialProvider, state, mcp }: Props) {
   const { exit } = useApp();
   const [provider, setProvider] = useState<Provider>(initialProvider);
   const [input, setInput] = useState('');
+  // The prompt value, mirrored in a ref that updates synchronously — React
+  // state is a render behind while a keystroke is still being dispatched.
+  const promptNow = useRef('');
+  // Set when a keyboard chord has just been handled here. ink-text-input
+  // filters exactly one chord (Ctrl+C) and inserts every other one as its
+  // bare letter, so Ctrl+O would otherwise type an "o" into the prompt and
+  // send it to the model on the next Enter. Ink dispatches to this component
+  // before the text input, so the echo can be dropped as it arrives.
+  const chordEcho = useRef(false);
+  const setPrompt = useCallback((next: string) => {
+    if (chordEcho.current) {
+      chordEcho.current = false;
+      // Only ever swallow the single character the chord echoed, never a
+      // real edit that happens to follow it.
+      if (next.length === promptNow.current.length + 1) return;
+    }
+    promptNow.current = next;
+    setInput(next);
+  }, []);
   const [busy, setBusy] = useState(false);
   const [entries, setEntries] = useState<Entry[]>([]);
   // In-progress streaming assistant text. Lives OUTSIDE the <Static> log
@@ -112,24 +135,16 @@ export function App({ initialProvider, state, mcp }: Props) {
   // live inside <Static>) — flipping their expand state would require
   // re-rendering the whole transcript, which is what causes the flicker we
   // had previously. Append-only is cheap and stays compatible with Static.
+  const promptVisible = !modal && !approval && !askQuestion;
   useInput(
     (inputChar, key) => {
-      if (modal) return;
+      if (!promptVisible) return;
       if (key.ctrl && (inputChar === 'o' || inputChar === 'O')) {
-        setEntries((prev) => {
-          const lastCollapsed = [...prev].reverse().find((e) => e.fullText);
-          if (!lastCollapsed) return prev;
-          const id = `${prev.length}_${Date.now()}_x`;
-          const expanded: Entry = {
-            id,
-            kind: 'system',
-            text: `expanded: ${lastCollapsed.text}\n${lastCollapsed.fullText}`,
-          };
-          return [...prev, expanded];
-        });
+        setEntries((prev) => expandLastCollapsed(prev));
+        chordEcho.current = true;
       }
     },
-    { isActive: !modal },
+    { isActive: promptVisible },
   );
 
   // Recursively apply a CommandResult: text → transcript, null → no-op,
@@ -202,6 +217,29 @@ export function App({ initialProvider, state, mcp }: Props) {
     [append, applyResult],
   );
 
+  // Answering a prompt is one decision, written once. Both the widget props
+  // and the spec objects below route through these, because a ListPicker
+  // takes its handlers from the props and ignores the spec's — a difference
+  // subtle enough that the two copies this replaces could have disagreed
+  // without anything failing.
+  const answerApproval = useCallback((id: string, outcome: ApprovalOutcome) => {
+    resolveApproval(id, outcome);
+    setApproval(null);
+    return null;
+  }, []);
+
+  const answerAsk = useCallback((id: string, answer: string) => {
+    answerAskQuestion(id, answer);
+    setAskQuestion(null);
+    return null;
+  }, []);
+
+  const cancelAsk = useCallback((id: string) => {
+    cancelAskQuestion(id);
+    setAskQuestion(null);
+    return null;
+  }, []);
+
   // ESC while the agent is busy → abort the current turn and flush the queue.
   useInput(
     (_char, key) => {
@@ -225,7 +263,7 @@ export function App({ initialProvider, state, mcp }: Props) {
       if (!menuOpen || busy) return;
       const matches = filterCommands(input);
       if (matches.length === 0) {
-        if (key.escape) setInput('');
+        if (key.escape) setPrompt('');
         return;
       }
 
@@ -241,11 +279,11 @@ export function App({ initialProvider, state, mcp }: Props) {
         const target = matches[clampSelection(input, menuIndex)];
         if (!target) return;
         const wantsArgs = !!target.usage && /\s/.test(target.usage.trim());
-        setInput(wantsArgs ? `${target.name} ` : target.name);
+        setPrompt(wantsArgs ? `${target.name} ` : target.name);
         return;
       }
       if (key.escape) {
-        setInput('');
+        setPrompt('');
       }
     },
     { isActive: menuOpen },
@@ -343,27 +381,14 @@ export function App({ initialProvider, state, mcp }: Props) {
           onToolUse: (name, toolInput) => {
             tally[name] = (tally[name] ?? 0) + 1;
             lastTool = name;
-            const argsString = formatArgs(toolInput);
-            setWorkingStatus(`${name}(${truncate(argsString, 60)})`);
-            const oneLine = `${name}(${truncate(argsString, 80)})`;
-            const full = `${name}(${argsString})`;
-            if (oneLine === full) {
-              append('tool', oneLine);
-            } else {
-              append('tool', oneLine, full);
-            }
+            const summary = summariseToolUse(name, toolInput);
+            setWorkingStatus(summary.status);
+            append('tool', summary.text, summary.fullText);
           },
           onToolResult: (name, output, isError) => {
             setWorkingStatus('thinking');
-            const firstLine = output.split('\n')[0] ?? '';
-            const oneLine = `${name} → ${truncate(firstLine, 200)}`;
-            const full = `${name} →\n${output}`;
-            const kind = isError ? 'error' : 'tool-result';
-            if (output.length <= 200 && !output.includes('\n')) {
-              append(kind, `${name} → ${output}`);
-            } else {
-              append(kind, oneLine, full);
-            }
+            const summary = summariseToolResult(name, output, isError);
+            append(summary.kind, summary.text, summary.fullText);
           },
           onRetry: (attempt, delayMs, why) => {
             setWorkingStatus(`retrying (#${attempt} in ${Math.round(delayMs / 1000)}s)`);
@@ -460,7 +485,7 @@ export function App({ initialProvider, state, mcp }: Props) {
             },
             exit,
             mcp,
-            injectInput: (text) => setInput(text),
+            injectInput: (text) => setPrompt(text),
           },
           cmd.args,
         );
@@ -470,7 +495,7 @@ export function App({ initialProvider, state, mcp }: Props) {
         append('error', `command error: ${(e as Error).message}`);
       }
     },
-    [append, applyResult, exit, mcp, provider, state],
+    [append, applyResult, exit, mcp, provider, setPrompt, state],
   );
 
   // Resolve a single submitted line into the right action. Used both for
@@ -520,7 +545,7 @@ export function App({ initialProvider, state, mcp }: Props) {
     async (raw: string) => {
       const trimmed = raw.trim();
       if (!trimmed) return;
-      setInput('');
+      setPrompt('');
 
       // Agent is busy → queue the message. The drainer effect below will
       // run it when the current turn finishes.
@@ -533,7 +558,7 @@ export function App({ initialProvider, state, mcp }: Props) {
 
       await dispatch(trimmed);
     },
-    [append, busy, dispatch],
+    [append, busy, dispatch, setPrompt],
   );
 
   // Drain the queue when the agent transitions from busy → idle.
@@ -605,24 +630,17 @@ export function App({ initialProvider, state, mcp }: Props) {
                   description: 'Refuse, and tell the agent not to retry.',
                 },
               ],
-              onPick: (v) => {
-                resolveApproval(approval.id, v as 'allow-once' | 'allow-always' | 'deny');
-                setApproval(null);
-                return null;
-              },
-              onCancel: () => {
-                resolveApproval(approval.id, 'deny');
-                setApproval(null);
-                return null;
-              },
+              // ListPicker answers through the props below; the spec's copies
+              // exist only to satisfy ListSpec. Both call the same function so
+              // the two cannot drift into disagreeing about what Esc means.
+              onPick: (v) => answerApproval(approval.id, v as ApprovalOutcome),
+              onCancel: () => answerApproval(approval.id, 'deny'),
             }}
             onPick={(v) => {
-              resolveApproval(approval.id, v as 'allow-once' | 'allow-always' | 'deny');
-              setApproval(null);
+              answerApproval(approval.id, v as ApprovalOutcome);
             }}
             onCancel={() => {
-              resolveApproval(approval.id, 'deny');
-              setApproval(null);
+              answerApproval(approval.id, 'deny');
             }}
           />
         ) : askQuestion ? (
@@ -633,24 +651,14 @@ export function App({ initialProvider, state, mcp }: Props) {
                 kind: 'list',
                 title: `❓ ${askQuestion.question}`,
                 items: askQuestion.options.map((o) => ({ value: o, label: o })),
-                onPick: (v) => {
-                  answerAskQuestion(askQuestion.id, v);
-                  setAskQuestion(null);
-                  return null;
-                },
-                onCancel: () => {
-                  cancelAskQuestion(askQuestion.id);
-                  setAskQuestion(null);
-                  return null;
-                },
+                onPick: (v) => answerAsk(askQuestion.id, v),
+                onCancel: () => cancelAsk(askQuestion.id),
               }}
               onPick={(v) => {
-                answerAskQuestion(askQuestion.id, v);
-                setAskQuestion(null);
+                answerAsk(askQuestion.id, v);
               }}
               onCancel={() => {
-                cancelAskQuestion(askQuestion.id);
-                setAskQuestion(null);
+                cancelAsk(askQuestion.id);
               }}
             />
           ) : (
@@ -669,24 +677,14 @@ export function App({ initialProvider, state, mcp }: Props) {
                       : {}),
                   },
                 ],
-                onSubmit: (vals) => {
-                  answerAskQuestion(askQuestion.id, vals['answer'] ?? '');
-                  setAskQuestion(null);
-                  return null;
-                },
-                onCancel: () => {
-                  cancelAskQuestion(askQuestion.id);
-                  setAskQuestion(null);
-                  return null;
-                },
+                onSubmit: (vals) => answerAsk(askQuestion.id, vals['answer'] ?? ''),
+                onCancel: () => cancelAsk(askQuestion.id),
               }}
               onSubmit={(vals) => {
-                answerAskQuestion(askQuestion.id, vals['answer'] ?? '');
-                setAskQuestion(null);
+                answerAsk(askQuestion.id, vals['answer'] ?? '');
               }}
               onCancel={() => {
-                cancelAskQuestion(askQuestion.id);
-                setAskQuestion(null);
+                cancelAsk(askQuestion.id);
               }}
             />
           )
@@ -718,7 +716,7 @@ export function App({ initialProvider, state, mcp }: Props) {
               <Text color="cyan">{'› '}</Text>
               <TextInput
                 value={input}
-                onChange={setInput}
+                onChange={setPrompt}
                 onSubmit={onSubmit}
                 placeholder={
                   busy
@@ -826,14 +824,6 @@ function renderEntry(entry: Entry) {
   }
 }
 
-function renderCollapseHint(short: string, full: string): string {
-  const fullLines = full.split('\n').length;
-  const shortLines = short.split('\n').length;
-  const hiddenLines = Math.max(0, fullLines - shortLines);
-  if (hiddenLines > 0) return `[+${hiddenLines} more lines · Ctrl+O to expand]`;
-  return `[+${full.length - short.length} more chars · Ctrl+O to expand]`;
-}
-
 // System output (slash-command results) — render in a soft bordered panel
 // with bright text and key/value coloring on lines that look like
 // "Label   value" (two-or-more-space separator).
@@ -876,24 +866,4 @@ function renderSystemPanel(entry: Entry) {
       </Box>
     </Box>
   );
-}
-
-// Match "Label   value" — at least two spaces separate the columns. Also
-// match "label: value" with one space if the colon is glued to the label.
-function parseKeyValue(line: string): { label: string; gap: string; value: string } | null {
-  const m = /^([A-Za-z][\w/.\- ]{0,18})(\s{2,})(\S.*)$/.exec(line);
-  if (m?.[1] && m[2] && m[3]) return { label: m[1], gap: m[2], value: m[3] };
-  const c = /^([A-Za-z][\w/.\- ]{0,18}:)(\s+)(\S.*)$/.exec(line);
-  if (c?.[1] && c[2] && c[3]) return { label: c[1], gap: c[2], value: c[3] };
-  return null;
-}
-
-function formatArgs(input: Record<string, unknown>): string {
-  const json = JSON.stringify(input);
-  return truncate(json, 120);
-}
-
-function truncate(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return `${text.slice(0, max)}…[+${text.length - max} chars]`;
 }

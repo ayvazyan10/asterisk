@@ -1,125 +1,59 @@
 // Lightweight inline-markdown renderer for assistant messages. Handles the
 // subset that matters in chat output: **bold**, *italic*, `inline code`,
 // fenced code blocks, headers, ordered/unordered lists, and blockquotes.
-// Implementation is regex-based — a full CommonMark parser would be heavier
-// than the value it adds here.
+//
+// The grammar itself lives in ./markdown.ts — this file is only the mapping
+// from block descriptors to Ink elements.
 
 import { Box, Text } from 'ink';
-import type { ReactNode } from 'react';
+
+import { type InlinePart, type MarkdownBlock, parseBlocks, parseInline } from './markdown.ts';
+
+// Re-exported because this module is where callers reach for the renderer and
+// its parser together.
+export { parseInline, parseBlocks };
+export type { InlinePart, MarkdownBlock };
 
 interface Props {
   text: string;
-}
-
-interface Block {
-  key: string;
-  node: ReactNode;
 }
 
 export function MarkdownText({ text }: Props) {
   const blocks = parseBlocks(text);
   return (
     <Box flexDirection="column">
-      {blocks.map((b) => (
-        <Box key={b.key} flexDirection="column">
-          {b.node}
+      {blocks.map((block, i) => (
+        <Box key={`b${i}:${block.kind}`} flexDirection="column">
+          <BlockView block={block} />
         </Box>
       ))}
     </Box>
   );
 }
 
-function parseBlocks(text: string): Block[] {
-  const lines = text.split('\n');
-  const blocks: Block[] = [];
-  let idx = 0;
-
-  while (idx < lines.length) {
-    const line = lines[idx] ?? '';
-
-    // Fenced code block: ``` or ~~~
-    const fence = /^(```|~~~)(.*)$/.exec(line);
-    if (fence) {
-      const lang = (fence[2] ?? '').trim();
-      const code: string[] = [];
-      idx++;
-      while (idx < lines.length && !/^(```|~~~)\s*$/.test(lines[idx] ?? '')) {
-        code.push(lines[idx] ?? '');
-        idx++;
-      }
-      idx++;
-      blocks.push({
-        key: `b${blocks.length}`,
-        node: <CodeBlock lang={lang} code={code.join('\n')} />,
-      });
-      continue;
-    }
-
-    // Heading: # … to ###### …
-    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
-    if (heading) {
-      const level = heading[1]?.length ?? 1;
-      const content = heading[2] ?? '';
-      blocks.push({ key: `b${blocks.length}`, node: <Heading level={level} text={content} /> });
-      idx++;
-      continue;
-    }
-
-    // Bullet list: - …, * …, + …
-    if (/^\s*[-*+]\s+/.test(line)) {
-      const items: string[] = [];
-      while (idx < lines.length && /^\s*[-*+]\s+/.test(lines[idx] ?? '')) {
-        items.push((lines[idx] ?? '').replace(/^\s*[-*+]\s+/, ''));
-        idx++;
-      }
-      blocks.push({ key: `b${blocks.length}`, node: <BulletList items={items} /> });
-      continue;
-    }
-
-    // Ordered list: 1. …
-    if (/^\s*\d+\.\s+/.test(line)) {
-      const items: string[] = [];
-      while (idx < lines.length && /^\s*\d+\.\s+/.test(lines[idx] ?? '')) {
-        items.push((lines[idx] ?? '').replace(/^\s*\d+\.\s+/, ''));
-        idx++;
-      }
-      blocks.push({ key: `b${blocks.length}`, node: <OrderedList items={items} /> });
-      continue;
-    }
-
-    // Blockquote
-    if (/^\s*>\s?/.test(line)) {
-      const quoted: string[] = [];
-      while (idx < lines.length && /^\s*>\s?/.test(lines[idx] ?? '')) {
-        quoted.push((lines[idx] ?? '').replace(/^\s*>\s?/, ''));
-        idx++;
-      }
-      blocks.push({ key: `b${blocks.length}`, node: <Quote lines={quoted} /> });
-      continue;
-    }
-
-    // Blank line
-    if (line.trim() === '') {
-      blocks.push({ key: `b${blocks.length}`, node: <Text> </Text> });
-      idx++;
-      continue;
-    }
-
-    // Plain paragraph (one line). MarkdownText is line-oriented; we don't
-    // try to coalesce wrapped paragraphs because Ink's <Text> already wraps
-    // long lines automatically.
-    blocks.push({ key: `b${blocks.length}`, node: <Inline text={line} /> });
-    idx++;
+function BlockView({ block }: { block: MarkdownBlock }) {
+  switch (block.kind) {
+    case 'code':
+      return <CodeBlock lang={block.lang} code={block.code} />;
+    case 'heading':
+      return <Heading level={block.level} text={block.text} />;
+    case 'bullets':
+      return <BulletList items={block.items} />;
+    case 'ordered':
+      return <OrderedList items={block.items} />;
+    case 'quote':
+      return <Quote lines={block.lines} />;
+    case 'blank':
+      return <Text> </Text>;
+    default:
+      return <Inline text={block.text} />;
   }
-
-  return blocks;
 }
 
 function Heading({ level, text }: { level: number; text: string }) {
-  const colorByLevel = ['cyan', 'cyan', 'cyan', 'cyan', 'cyan', 'cyan'] as const;
   return (
     <Box marginTop={1}>
-      <Text color={colorByLevel[level - 1] ?? 'cyan'} bold>
+      <Text color="cyan" bold>
         {`${'#'.repeat(level)} ${text}`}
       </Text>
     </Box>
@@ -183,46 +117,6 @@ function Quote({ lines }: { lines: string[] }) {
       ))}
     </Box>
   );
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Inline parser
-
-type InlinePart =
-  | { kind: 'text'; value: string }
-  | { kind: 'bold'; value: string }
-  | { kind: 'italic'; value: string }
-  | { kind: 'code'; value: string }
-  | { kind: 'link'; value: string; href: string };
-
-const INLINE_RE =
-  /(\*\*[^*\n]+?\*\*)|(__[^_\n]+?__)|(\*[^*\n]+?\*)|(_[^_\n]+?_)|(`[^`\n]+?`)|(\[[^\]\n]+?\]\([^)\n]+?\))/g;
-
-export function parseInline(text: string): InlinePart[] {
-  const out: InlinePart[] = [];
-  let lastIndex = 0;
-  for (const m of text.matchAll(INLINE_RE)) {
-    const matchStart = m.index ?? 0;
-    if (matchStart > lastIndex) {
-      out.push({ kind: 'text', value: text.slice(lastIndex, matchStart) });
-    }
-    if (m[1]) out.push({ kind: 'bold', value: m[1].slice(2, -2) });
-    else if (m[2]) out.push({ kind: 'bold', value: m[2].slice(2, -2) });
-    else if (m[3]) out.push({ kind: 'italic', value: m[3].slice(1, -1) });
-    else if (m[4]) out.push({ kind: 'italic', value: m[4].slice(1, -1) });
-    else if (m[5]) out.push({ kind: 'code', value: m[5].slice(1, -1) });
-    else if (m[6]) {
-      const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(m[6]);
-      if (linkMatch?.[1] && linkMatch[2]) {
-        out.push({ kind: 'link', value: linkMatch[1], href: linkMatch[2] });
-      } else {
-        out.push({ kind: 'text', value: m[6] });
-      }
-    }
-    lastIndex = matchStart + m[0].length;
-  }
-  if (lastIndex < text.length) out.push({ kind: 'text', value: text.slice(lastIndex) });
-  return out;
 }
 
 function Inline({ text }: { text: string }) {
