@@ -1,4 +1,5 @@
-// Control-panel client: shared helpers, shell chrome, overview and settings.
+// Control-panel client: shared helpers, component builders, shell chrome,
+// overview and settings.
 //
 // Vanilla DOM on purpose — no build step, no framework, and the whole page
 // stays inlineable under a CSP nonce. Concatenated with APP_VIEWS at render
@@ -6,6 +7,10 @@
 //
 // Every value that reaches innerHTML goes through esc(); listeners are
 // attached via delegation because the CSP forbids inline handlers.
+//
+// The `ui.*` builders below are the markup counterpart to ./components.ts —
+// one function per shadcn component, so a card or a badge is described in one
+// place rather than re-spelled at each of its two dozen call sites.
 
 export const APP_CORE = String.raw`
 const state = {
@@ -49,12 +54,85 @@ function when(ms) {
   return new Date(ms).toLocaleDateString();
 }
 
+// --- component builders --------------------------------------------------
+
+const ui = {
+  badge(label, variant, dot) {
+    return '<span class="badge badge-' + (variant || 'secondary') + (dot ? ' badge-dot' : '') + '">' +
+      esc(label) + '</span>';
+  },
+
+  // on/off is the panel's most repeated state, and it always renders the same
+  // way: a dotted badge, green when live and grey when not.
+  stateBadge(on, onLabel, offLabel) {
+    return ui.badge(on ? (onLabel || 'on') : (offLabel || 'off'), on ? 'success' : 'muted', true);
+  },
+
+  btn(label, opts) {
+    const o = opts || {};
+    return '<button class="btn btn-' + (o.variant || 'outline') + (o.size ? ' btn-' + o.size : '') + '"' +
+      (o.attrs || '') + (o.disabled ? ' disabled' : '') + '>' + esc(label) + '</button>';
+  },
+
+  // A card whose header carries a title and an optional right-aligned count or
+  // status. \`divided\` draws the rule under the header that list cards want and
+  // form cards do not.
+  card(title, body, opts) {
+    const o = opts || {};
+    const aside = o.aside === undefined || o.aside === null ? '' : o.aside;
+    return '<section class="card' + (o.divided === false ? '' : ' card-divided') + '">' +
+      '<header class="card-header"><h3 class="card-title">' + esc(title) + '</h3>' + aside + '</header>' +
+      body + '</section>';
+  },
+
+  statCard(label, value, opts) {
+    const o = opts || {};
+    return '<div class="stat-card">' +
+      '<div class="stat-label">' + esc(label) + (o.badge || '') + '</div>' +
+      '<div class="stat-value' + (o.small ? ' stat-value-sm' : '') +
+        (o.tone ? ' stat-value-' + o.tone : '') + '">' + esc(value) + '</div>' +
+      (o.hint ? '<div class="stat-hint">' + esc(o.hint) + '</div>' : '') +
+    '</div>';
+  },
+
+  listRow(title, detail, actions, leading) {
+    return '<div class="list-row">' + (leading || '') +
+      '<div class="list-row-grow"><div class="list-row-title">' + title + '</div>' +
+      (detail ? '<div class="list-row-detail">' + esc(detail) + '</div>' : '') + '</div>' +
+      (actions ? '<div class="section-actions">' + actions + '</div>' : '') +
+    '</div>';
+  },
+
+  empty(message) {
+    return '<div class="empty">' + esc(message) + '</div>';
+  },
+
+  // Skeletons rather than the word "Loading…": the shape of what is coming is
+  // already known, and showing it stops the page reflowing when data lands.
+  skeletonRows(count) {
+    let out = '';
+    for (let i = 0; i < (count || 3); i++) {
+      out += '<div class="skeleton-row"><div class="skeleton skeleton-line w40"></div>' +
+        '<div class="skeleton skeleton-line w70"></div></div>';
+    }
+    return out;
+  },
+
+  // The title is escaped; the description is not, because every caller passes
+  // markup through it (<code> spans naming a path or a command). Keep that
+  // asymmetry in mind before routing anything user-supplied into either.
+  pageHeader(title, description) {
+    return '<header class="page-header"><h2 class="page-title">' + esc(title) + '</h2>' +
+      '<p class="page-description">' + description + '</p></header>';
+  },
+};
+
 function toast(message, kind, detail) {
   const host = $('.toasts');
   const node = document.createElement('div');
-  node.className = 'toast ' + (kind || '');
-  node.innerHTML = '<div>' + esc(message) + '</div>' +
-    (detail ? '<div class="detail">' + esc(detail) + '</div>' : '');
+  node.className = 'toast ' + (kind === 'bad' ? 'toast-error' : kind === 'good' ? 'toast-success' : '');
+  node.innerHTML = '<div class="toast-title">' + esc(message) + '</div>' +
+    (detail ? '<div class="toast-detail">' + esc(detail) + '</div>' : '');
   host.appendChild(node);
   setTimeout(() => node.remove(), kind === 'bad' ? 8000 : 3500);
 }
@@ -89,9 +167,9 @@ async function guard(fn, successMessage) {
   }
 }
 
-// --- shell --------------------------------------------------------------
+// --- shell ---------------------------------------------------------------
 
-// Counts come from /status where possible so the rail is accurate on first
+// Counts come from /status where possible so the sidebar is accurate on first
 // paint, before the corresponding tab has ever been opened. A count of null
 // renders nothing, which is honest about "not loaded yet".
 const TABS = [
@@ -115,93 +193,101 @@ const TABS = [
   ]},
 ];
 
-function renderRail() {
-  const nav = TABS.map((section) => (
+function renderSidebar() {
+  $('.nav').innerHTML = TABS.map((section) => (
     '<div class="nav-group">' + esc(section.group) + '</div>' +
     section.items.map((tab) => {
       const count = tab.count ? tab.count() : null;
-      return '<button data-tab="' + esc(tab.id) + '" aria-current="' +
-        (state.tab === tab.id) + '">' + esc(tab.label) +
-        (count === null || count === undefined ? '' : '<span class="count">' + count + '</span>') +
+      return '<button class="nav-item" data-tab="' + esc(tab.id) + '" aria-current="' +
+        (state.tab === tab.id) + '"><span>' + esc(tab.label) + '</span>' +
+        (count === null || count === undefined ? '' : '<span class="nav-count">' + count + '</span>') +
         '</button>';
     }).join('')
   )).join('');
 
-  $('.nav').innerHTML = nav;
   const s = state.status;
-  $('.brand .meta').textContent = s ? 'v' + s.version + ' · ' + s.runtime : 'connecting…';
+  $('.brand-meta').textContent = s ? 'v' + s.version + ' · ' + s.runtime : 'connecting…';
 }
 
-function renderTopbar() {
+function renderHeader() {
   const s = state.status;
   if (!s) return;
-  $('.topbar').innerHTML =
-    '<div class="stat"><b>Provider</b><code>' + esc(s.provider) + '</code></div>' +
-    '<div class="stat"><b>Model</b><code>' + esc(s.model) + '</code></div>' +
-    '<div class="stat"><b>Daemon</b><span class="chip ' + (s.daemon.running ? 'on' : 'off') + '">' +
-      (s.daemon.running ? 'running' : 'stopped') + '</span></div>' +
-    '<div class="spacer"></div>' +
-    '<button class="btn sm" data-action="theme">Theme</button>' +
-    '<button class="btn sm" data-action="refresh">Refresh</button>';
-}
-
-// --- overview -----------------------------------------------------------
-
-function viewOverview() {
-  const s = state.status;
-  if (!s) return '<div class="empty">Loading…</div>';
-
-  return '' +
-    '<header><h2>Overview</h2><p>Live state of this Asterisk install. Everything below is stored in ' +
-      '<code>' + esc(s.database.path) + '</code>.</p></header>' +
-    '<div class="readouts">' +
-      readout('Provider', s.provider, 'sm') +
-      readout('MCP servers', s.counts.enabledMcpServers + '/' + s.counts.mcpServers) +
-      readout('Hooks', s.counts.enabledHooks + '/' + s.counts.hooks) +
-      readout('Database', bytes(s.database.bytes), 'sm') +
-      readout('Daemon', s.daemon.running ? 'up' : 'down', 'sm ' + (s.daemon.running ? 'on' : 'off')) +
-    '</div>' +
-    '<div class="panel"><h3>Daemon</h3>' +
-      '<div class="item"><div class="grow"><div class="name">Process</div>' +
-        '<div class="detail">' + esc(s.daemon.message) + '</div></div>' +
-        '<div class="actions">' +
-          '<button class="btn" data-daemon="start"' + (s.daemon.running ? ' disabled' : '') + '>Start</button>' +
-          '<button class="btn" data-daemon="restart"' + (s.daemon.running ? '' : ' disabled') + '>Restart</button>' +
-          '<button class="btn danger" data-daemon="stop"' + (s.daemon.running ? '' : ' disabled') + '>Stop</button>' +
-        '</div></div>' +
-      '<div class="item"><div class="grow"><div class="name">Bot bridges</div>' +
-        '<div class="detail">telegram ' + (s.bots.telegram ? 'enabled' : 'disabled') + '</div></div></div>' +
-    '</div>' +
-    '<div class="panel"><h3>Configuration file</h3>' +
-      '<div class="item"><div class="grow"><div class="name">Export / import</div>' +
-        '<div class="detail">JSON snapshot of every setting. Secrets are never included.</div></div>' +
-        '<div class="actions">' +
-          '<button class="btn" data-action="export">Download JSON</button>' +
-          '<button class="btn" data-action="import">Upload JSON</button>' +
-        '</div></div>' +
+  $('.header').innerHTML =
+    '<div class="header-stat"><span class="header-stat-label">Provider</span>' +
+      '<span class="header-stat-value">' + esc(s.provider) + '</span></div>' +
+    '<div class="header-stat"><span class="header-stat-label">Model</span>' +
+      '<span class="header-stat-value">' + esc(s.model) + '</span></div>' +
+    '<div class="header-stat">' + ui.stateBadge(s.daemon.running, 'daemon up', 'daemon down') + '</div>' +
+    '<div class="header-spacer"></div>' +
+    '<div class="header-actions">' +
+      ui.btn('Theme', { variant: 'ghost', size: 'sm', attrs: ' data-action="theme"' }) +
+      ui.btn('Refresh', { variant: 'outline', size: 'sm', attrs: ' data-action="refresh"' }) +
     '</div>';
 }
 
-function readout(label, value, cls) {
-  return '<div class="readout"><b>' + esc(label) + '</b>' +
-    '<div class="value ' + (cls || '') + '">' + esc(value) + '</div></div>';
+// --- overview ------------------------------------------------------------
+
+function viewOverview() {
+  const s = state.status;
+  if (!s) {
+    return ui.pageHeader('Overview', 'Live state of this Asterisk install.') +
+      '<div class="stat-grid">' +
+        '<div class="stat-card"><div class="skeleton skeleton-line w60"></div>' +
+        '<div class="skeleton skeleton-line w40"></div></div>' +
+        '<div class="stat-card"><div class="skeleton skeleton-line w60"></div>' +
+        '<div class="skeleton skeleton-line w40"></div></div>' +
+        '<div class="stat-card"><div class="skeleton skeleton-line w60"></div>' +
+        '<div class="skeleton skeleton-line w40"></div></div>' +
+      '</div>';
+  }
+
+  const stats =
+    ui.statCard('Provider', s.provider, { small: true }) +
+    ui.statCard('MCP servers', s.counts.enabledMcpServers + '/' + s.counts.mcpServers,
+      { hint: 'enabled / configured' }) +
+    ui.statCard('Hooks', s.counts.enabledHooks + '/' + s.counts.hooks,
+      { hint: 'enabled / configured' }) +
+    ui.statCard('Database', bytes(s.database.bytes), { small: true, hint: 'on disk' }) +
+    ui.statCard('Daemon', s.daemon.running ? 'up' : 'down',
+      { small: true, tone: s.daemon.running ? 'success' : 'muted' });
+
+  const daemon = ui.card('Daemon', ui.listRow(
+      'Process', s.daemon.message,
+      ui.btn('Start', { attrs: ' data-daemon="start"', disabled: s.daemon.running }) +
+      ui.btn('Restart', { attrs: ' data-daemon="restart"', disabled: !s.daemon.running }) +
+      ui.btn('Stop', { variant: 'outline-destructive', attrs: ' data-daemon="stop"', disabled: !s.daemon.running })
+    ) + ui.listRow('Bot bridges', null,
+      ui.stateBadge(s.bots.telegram, 'telegram on', 'telegram off')
+    ),
+    { aside: ui.stateBadge(s.daemon.running, 'running', 'stopped') });
+
+  const config = ui.card('Configuration file', ui.listRow(
+    'Export / import',
+    'JSON snapshot of every setting. Secrets are never included.',
+    ui.btn('Download JSON', { attrs: ' data-action="export"' }) +
+    ui.btn('Upload JSON', { attrs: ' data-action="import"' })
+  ));
+
+  return ui.pageHeader('Overview',
+      'Live state of this Asterisk install. Everything below is stored in <code class="code-inline">' +
+      esc(s.database.path) + '</code>.') +
+    '<div class="stat-grid">' + stats + '</div>' + daemon + config;
 }
 
-// --- settings -----------------------------------------------------------
+// --- settings ------------------------------------------------------------
 
 function viewSettings() {
-  if (!state.settings) return '<div class="empty">Loading…</div>';
+  const header = ui.pageHeader('Settings',
+    'Generated from the configuration schema — every field Asterisk understands appears here, with ' +
+    'its own validation bounds. Edits are staged until you apply them.');
 
-  const groups = state.settings.groups.map((group) =>
-    '<div class="panel"><h3>' + esc(group.group) + '</h3>' +
-      group.fields.map(fieldRow).join('') +
-    '</div>'
-  ).join('');
+  if (!state.settings) return header + ui.card('Loading', ui.skeletonRows(4));
 
-  return '' +
-    '<header><h2>Settings</h2><p>Generated from the configuration schema — every field Asterisk ' +
-      'understands appears here, with its own validation bounds. Edits are staged until you apply them.</p></header>' +
-    groups + '<div id="save-bar"></div>';
+  const groups = state.settings.groups
+    .map((group) => ui.card(group.group, group.fields.map(fieldRow).join('')))
+    .join('');
+
+  return header + groups + '<div id="save-bar"></div>';
 }
 
 function fieldRow(field) {
@@ -209,42 +295,45 @@ function fieldRow(field) {
   const value = staged ? state.dirty.get(field.path) : field.value;
   const id = 'f_' + field.path.replace(/\./g, '_');
 
-  return '<div class="row' + (staged ? ' dirty' : '') + '" data-field="' + esc(field.path) + '">' +
+  return '<div class="field' + (staged ? ' field-dirty' : '') + '" data-field="' + esc(field.path) + '">' +
     '<div><label class="label" for="' + esc(id) + '">' + esc(field.label) + '</label>' +
-      '<code class="path">' + esc(field.path) + '</code>' +
-      (field.description ? '<div class="help">' + esc(field.description) + '</div>' : '') +
+      '<code class="field-path">' + esc(field.path) + '</code>' +
+      (field.description ? '<div class="field-help">' + esc(field.description) + '</div>' : '') +
     '</div>' +
-    '<div class="control">' + control(field, value, id) +
-      (staged ? '<button class="btn sm" data-revert="' + esc(field.path) + '">Revert</button>' : '') +
-      '<button class="btn sm" data-reset="' + esc(field.path) + '">Default</button>' +
+    '<div class="field-control">' + control(field, value, id) +
+      (staged ? ui.btn('Revert', { size: 'sm', variant: 'ghost', attrs: ' data-revert="' + esc(field.path) + '"' }) : '') +
+      ui.btn('Default', { size: 'sm', variant: 'ghost', attrs: ' data-reset="' + esc(field.path) + '"' }) +
     '</div></div>';
 }
 
 function control(field, value, id) {
   if (field.kind === 'boolean') {
-    return '<button class="toggle" id="' + esc(id) + '" role="switch" data-toggle="' +
-      esc(field.path) + '" aria-pressed="' + (value === true) + '" aria-label="' +
+    // role="switch" pairs with aria-checked, not aria-pressed — the latter
+    // belongs to toggle buttons and reads wrong to a screen reader here.
+    return '<button class="switch" id="' + esc(id) + '" role="switch" data-toggle="' +
+      esc(field.path) + '" aria-checked="' + (value === true) + '" aria-label="' +
       esc(field.label) + '"></button>' +
-      '<span class="chip ' + (value ? 'on' : 'off') + '">' + (value ? 'on' : 'off') + '</span>';
+      ui.stateBadge(value === true);
   }
   if (field.kind === 'enum') {
-    return '<select id="' + esc(id) + '" data-input="' + esc(field.path) + '">' +
+    return '<select class="select" id="' + esc(id) + '" data-input="' + esc(field.path) + '">' +
       field.options.map((opt) =>
         '<option value="' + esc(opt) + '"' + (opt === value ? ' selected' : '') + '>' + esc(opt) + '</option>'
       ).join('') + '</select>';
   }
   if (field.kind === 'number') {
-    return '<input type="number" id="' + esc(id) + '" data-input="' + esc(field.path) + '"' +
+    return '<input class="input input-mono" type="number" id="' + esc(id) + '" data-input="' + esc(field.path) + '"' +
       (field.min !== undefined ? ' min="' + field.min + '"' : '') +
       (field.max !== undefined ? ' max="' + field.max + '"' : '') +
       (field.integer ? ' step="1"' : '') +
       ' value="' + esc(value) + '">';
   }
   if (field.kind === 'number-array' || field.kind === 'string-array') {
-    return '<input type="text" id="' + esc(id) + '" data-input="' + esc(field.path) + '"' +
+    return '<input class="input input-mono" type="text" id="' + esc(id) + '" data-input="' + esc(field.path) + '"' +
       ' placeholder="comma separated" value="' + esc((value || []).join(', ')) + '">';
   }
-  return '<input type="text" id="' + esc(id) + '" data-input="' + esc(field.path) + '" value="' + esc(value) + '">';
+  return '<input class="input input-mono" type="text" id="' + esc(id) + '" data-input="' +
+    esc(field.path) + '" value="' + esc(value) + '">';
 }
 
 function parseFieldValue(field, raw) {
@@ -283,17 +372,19 @@ function stageEdit(path, value) {
   else state.dirty.set(path, value);
   renderSaveBar();
   const row = document.querySelector('[data-field="' + CSS.escape(path) + '"]');
-  if (row) row.classList.toggle('dirty', state.dirty.has(path));
+  if (row) row.classList.toggle('field-dirty', state.dirty.has(path));
 }
 
 function renderSaveBar() {
   const bar = $('#save-bar');
   if (!bar) return;
   if (state.dirty.size === 0) { bar.innerHTML = ''; return; }
-  bar.innerHTML = '<div class="sticky-save">' +
-    '<span class="count">' + state.dirty.size + ' pending change' + (state.dirty.size === 1 ? '' : 's') + '</span>' +
-    '<button class="btn" data-action="discard">Discard</button>' +
-    '<button class="btn primary" data-action="apply">Apply</button></div>';
+  bar.innerHTML = '<div class="save-bar">' +
+    '<span class="save-bar-count">' + state.dirty.size + ' pending change' +
+      (state.dirty.size === 1 ? '' : 's') + '</span>' +
+    ui.btn('Discard', { variant: 'ghost', attrs: ' data-action="discard"' }) +
+    ui.btn('Apply', { variant: 'default', attrs: ' data-action="apply"' }) +
+  '</div>';
 }
 
 async function applySettings() {

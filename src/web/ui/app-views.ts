@@ -1,40 +1,42 @@
 // Control-panel client, second half: the remaining views, data loading and
-// the delegated event wiring. Shares scope with APP_CORE.
+// the delegated event wiring. Shares scope with APP_CORE, including its `ui.*`
+// component builders.
 
 export const APP_VIEWS = String.raw`
-// --- mcp servers --------------------------------------------------------
+// --- mcp servers ---------------------------------------------------------
 
 function viewMcp() {
   const rows = state.mcp.length === 0
-    ? '<div class="empty">No MCP servers configured.</div>'
-    : state.mcp.map((s) =>
-        '<div class="item">' +
-          '<span class="chip ' + (s.enabled ? 'on' : 'off') + '">' + (s.enabled ? 'on' : 'off') + '</span>' +
-          '<div class="grow"><div class="name">' + esc(s.name) + '</div>' +
-            '<div class="detail">' + esc(s.transport === 'stdio'
-              ? s.command + ' ' + (s.args || []).join(' ')
-              : s.url) + '</div></div>' +
-          '<div class="actions">' +
-            '<button class="btn sm" data-mcp-toggle="' + esc(s.name) + '">' + (s.enabled ? 'Disable' : 'Enable') + '</button>' +
-            '<button class="btn sm danger" data-mcp-delete="' + esc(s.name) + '">Delete</button>' +
-          '</div></div>'
-      ).join('');
+    ? ui.empty('No MCP servers configured.')
+    : state.mcp.map((s) => ui.listRow(
+        esc(s.name),
+        s.transport === 'stdio' ? s.command + ' ' + (s.args || []).join(' ') : s.url,
+        ui.btn(s.enabled ? 'Disable' : 'Enable', { size: 'sm', attrs: ' data-mcp-toggle="' + esc(s.name) + '"' }) +
+        ui.btn('Delete', { size: 'sm', variant: 'destructive-ghost', attrs: ' data-mcp-delete="' + esc(s.name) + '"' }),
+        ui.stateBadge(s.enabled)
+      )).join('');
 
-  return '' +
-    '<header><h2>MCP servers</h2><p>Model Context Protocol servers loaded at startup. ' +
-      'stdio servers are spawned as subprocesses; http servers are reached over Streamable HTTP.</p></header>' +
-    '<div class="panel"><h3>Configured<span>' + state.mcp.length + '</span></h3>' + rows + '</div>' +
-    '<div class="panel"><h3>Add or replace</h3><div class="form-grid">' +
-      '<label for="mcp-name">Name</label><input type="text" id="mcp-name" placeholder="filesystem">' +
-      '<label for="mcp-transport">Transport</label>' +
-      '<select id="mcp-transport"><option value="stdio">stdio</option><option value="http">http</option></select>' +
-      '<label for="mcp-command">Command / URL</label>' +
-      '<input type="text" id="mcp-command" placeholder="npx -y @modelcontextprotocol/server-filesystem /tmp">' +
-      '<label for="mcp-env">Env / headers</label>' +
-      '<input type="text" id="mcp-env" placeholder="KEY=value, OTHER=value">' +
-      '<div class="span actions"><button class="btn primary" data-action="mcp-save">Save server</button>' +
-      '<span class="detail">A matching name replaces the existing entry.</span></div>' +
-    '</div></div>';
+  const form = '<div class="card-content"><div class="form-grid">' +
+    '<label class="label" for="mcp-name">Name</label>' +
+    '<input class="input" type="text" id="mcp-name" placeholder="filesystem">' +
+    '<label class="label" for="mcp-transport">Transport</label>' +
+    '<select class="select" id="mcp-transport"><option value="stdio">stdio</option>' +
+      '<option value="http">http</option></select>' +
+    '<label class="label" for="mcp-command">Command / URL</label>' +
+    '<input class="input input-mono" type="text" id="mcp-command" ' +
+      'placeholder="npx -y @modelcontextprotocol/server-filesystem /tmp">' +
+    '<label class="label" for="mcp-env">Env / headers</label>' +
+    '<input class="input input-mono" type="text" id="mcp-env" placeholder="KEY=value, OTHER=value">' +
+    '<div class="form-span section-actions">' +
+      ui.btn('Save server', { variant: 'default', attrs: ' data-action="mcp-save"' }) +
+      '<span class="form-hint">A matching name replaces the existing entry.</span>' +
+    '</div></div></div>';
+
+  return ui.pageHeader('MCP servers',
+      'Model Context Protocol servers loaded at startup. stdio servers are spawned as subprocesses; ' +
+      'http servers are reached over Streamable HTTP.') +
+    ui.card('Configured', rows, { aside: ui.badge(state.mcp.length, 'secondary') }) +
+    ui.card('Add or replace', form);
 }
 
 function parsePairs(raw) {
@@ -66,38 +68,42 @@ async function saveMcp() {
   if (ok) { await loadMcp(); await loadStatus(); render(); }
 }
 
-// --- hooks --------------------------------------------------------------
+// --- hooks ---------------------------------------------------------------
 
 const HOOK_EVENTS = ['before_turn', 'after_turn', 'before_tool', 'after_tool', 'on_error'];
 
 function viewHooks() {
   const rows = state.hooks.length === 0
-    ? '<div class="empty">No hooks configured.</div>'
-    : state.hooks.map((h) =>
-        '<div class="item">' +
-          '<span class="chip ' + (h.enabled ? 'on' : 'off') + '">' + (h.enabled ? 'on' : 'off') + '</span>' +
-          '<div class="grow"><div class="name">' + esc(h.name) +
-            ' <span class="detail">' + esc(h.event) + (h.matcher ? ' · ' + esc(h.matcher) : '') + '</span></div>' +
-            '<div class="detail">' + esc(h.command) + '</div></div>' +
-          '<div class="actions">' +
-            '<button class="btn sm" data-hook-toggle="' + esc(h.name) + '">' + (h.enabled ? 'Disable' : 'Enable') + '</button>' +
-            '<button class="btn sm danger" data-hook-delete="' + esc(h.name) + '">Delete</button>' +
-          '</div></div>'
-      ).join('');
+    ? ui.empty('No hooks configured.')
+    : state.hooks.map((h) => ui.listRow(
+        esc(h.name) + ' ' + ui.badge(h.event + (h.matcher ? ' · ' + h.matcher : ''), 'outline'),
+        h.command,
+        ui.btn(h.enabled ? 'Disable' : 'Enable', { size: 'sm', attrs: ' data-hook-toggle="' + esc(h.name) + '"' }) +
+        ui.btn('Delete', { size: 'sm', variant: 'destructive-ghost', attrs: ' data-hook-delete="' + esc(h.name) + '"' }),
+        ui.stateBadge(h.enabled)
+      )).join('');
 
-  return '' +
-    '<header><h2>Hooks</h2><p>Shell commands fired at agent-loop lifecycle events. The event payload ' +
-      'arrives on stdin as JSON. These run with your full user privileges — treat them like any other shell script.</p></header>' +
-    '<div class="panel"><h3>Configured<span>' + state.hooks.length + '</span></h3>' + rows + '</div>' +
-    '<div class="panel"><h3>Add or replace</h3><div class="form-grid">' +
-      '<label for="hook-name">Name</label><input type="text" id="hook-name" placeholder="format-on-edit">' +
-      '<label for="hook-event">Event</label><select id="hook-event">' +
-        HOOK_EVENTS.map((e) => '<option value="' + e + '">' + e + '</option>').join('') + '</select>' +
-      '<label for="hook-matcher">Matcher</label><input type="text" id="hook-matcher" placeholder="Edit (optional)">' +
-      '<label for="hook-command">Command</label><input type="text" id="hook-command" placeholder="biome check --write">' +
-      '<label for="hook-timeout">Timeout (s)</label><input type="number" id="hook-timeout" value="30" min="1" max="300">' +
-      '<div class="span actions"><button class="btn primary" data-action="hook-save">Save hook</button></div>' +
-    '</div></div>';
+  const form = '<div class="card-content"><div class="form-grid">' +
+    '<label class="label" for="hook-name">Name</label>' +
+    '<input class="input" type="text" id="hook-name" placeholder="format-on-edit">' +
+    '<label class="label" for="hook-event">Event</label>' +
+    '<select class="select" id="hook-event">' +
+      HOOK_EVENTS.map((e) => '<option value="' + e + '">' + e + '</option>').join('') + '</select>' +
+    '<label class="label" for="hook-matcher">Matcher</label>' +
+    '<input class="input input-mono" type="text" id="hook-matcher" placeholder="Edit (optional)">' +
+    '<label class="label" for="hook-command">Command</label>' +
+    '<input class="input input-mono" type="text" id="hook-command" placeholder="biome check --write">' +
+    '<label class="label" for="hook-timeout">Timeout (s)</label>' +
+    '<input class="input input-mono" type="number" id="hook-timeout" value="30" min="1" max="300">' +
+    '<div class="form-span section-actions">' +
+      ui.btn('Save hook', { variant: 'default', attrs: ' data-action="hook-save"' }) +
+    '</div></div></div>';
+
+  return ui.pageHeader('Hooks',
+      'Shell commands fired at agent-loop lifecycle events. The event payload arrives on stdin as JSON. ' +
+      'These run with your full user privileges — treat them like any other shell script.') +
+    ui.card('Configured', rows, { aside: ui.badge(state.hooks.length, 'secondary') }) +
+    ui.card('Add or replace', form);
 }
 
 async function saveHook() {
@@ -116,71 +122,84 @@ async function saveHook() {
   if (ok) { await loadHooks(); await loadStatus(); render(); }
 }
 
-// --- secrets ------------------------------------------------------------
+// --- secrets -------------------------------------------------------------
 
 function viewSecrets() {
   const rows = state.secrets.map((s) =>
-    '<div class="row"><div><span class="label">' + esc(s.key) + '</span>' +
-      '<code class="path">' + (s.set ? esc(s.masked) : 'not set') + '</code>' +
+    '<div class="field"><div><span class="label">' + esc(s.key) + '</span>' +
+      '<code class="field-path">' + (s.set ? esc(s.masked) : 'not set') + '</code>' +
       (s.overriddenByEnv
-        ? '<div class="help">An environment variable of the same name is set and takes precedence over this value.</div>'
+        ? '<div class="field-help">An environment variable of the same name is set and takes ' +
+          'precedence over this value.</div>'
         : '') +
-    '</div><div class="control">' +
-      '<input type="password" data-secret="' + esc(s.key) + '" placeholder="paste to replace" autocomplete="off">' +
-      '<button class="btn sm" data-secret-save="' + esc(s.key) + '">Save</button>' +
-      (s.set ? '<button class="btn sm danger" data-secret-clear="' + esc(s.key) + '">Clear</button>' : '') +
+    '</div><div class="field-control">' +
+      '<input class="input input-mono" type="password" data-secret="' + esc(s.key) +
+        '" placeholder="paste to replace" autocomplete="off">' +
+      ui.btn('Save', { size: 'sm', attrs: ' data-secret-save="' + esc(s.key) + '"' }) +
+      (s.set ? ui.btn('Clear', { size: 'sm', variant: 'destructive-ghost',
+        attrs: ' data-secret-clear="' + esc(s.key) + '"' }) : '') +
     '</div></div>'
   ).join('');
 
-  return '' +
-    '<header><h2>Secrets</h2><p>Stored in the database, which is <code>chmod 600</code>. Values are never ' +
-      'sent back to the browser — only a masked fingerprint. Environment variables override anything set here.</p></header>' +
-    '<div class="panel"><h3>API keys and tokens</h3>' + rows + '</div>';
+  return ui.pageHeader('Secrets',
+      'Stored in the database, which is <code class="code-inline">chmod 600</code>. Values are never ' +
+      'sent back to the browser — only a masked fingerprint. Environment variables override anything ' +
+      'set here.') +
+    ui.card('API keys and tokens', rows || ui.empty('No secrets defined.'));
 }
 
-// --- content editor -----------------------------------------------------
+// --- content editor ------------------------------------------------------
 
 function viewContent() {
   const kinds = state.content;
-  if (kinds.length === 0) return '<div class="empty">Loading…</div>';
+  // Plain '&' — pageHeader escapes the title for us. The description below is
+  // the one that arrives as markup, because it carries <code> spans.
+  const header = ui.pageHeader('Rules & skills',
+    'Markdown that shapes the agent: layered rules, on-demand skills, sub-agent definitions and ' +
+    'persona files. Saved straight to disk under your Asterisk home.');
 
-  const list = kinds.map((k) =>
-    '<div class="panel"><h3>' + esc(k.kind) + '<span>' + k.files.length + '</span></h3>' +
-      '<div class="file-list">' +
-        (k.files.length === 0
-          ? '<div class="empty">No files.</div>'
-          : k.files.map((f) =>
-              '<button data-open="' + esc(k.kind) + '|' + esc(f.path) + '" aria-current="' +
-              (state.editor.kind === k.kind && state.editor.path === f.path) + '">' +
-              esc(f.path) + '</button>').join('')) +
-      '</div></div>'
+  if (kinds.length === 0) return header + ui.card('Files', ui.skeletonRows(3));
+
+  const list = kinds.map((k) => ui.card(k.kind,
+    '<div class="file-list">' +
+      (k.files.length === 0
+        ? ui.empty('No files.')
+        : k.files.map((f) =>
+            '<button class="file-item" data-open="' + esc(k.kind) + '|' + esc(f.path) + '" aria-current="' +
+            (state.editor.kind === k.kind && state.editor.path === f.path) + '">' +
+            esc(f.path) + '</button>').join('')) +
+    '</div>',
+    { aside: ui.badge(k.files.length, 'secondary') })
   ).join('');
+
+  const newFile = ui.card('New file',
+    '<div class="card-content"><div class="form-grid">' +
+      '<label class="label" for="new-kind">Kind</label>' +
+      '<select class="select" id="new-kind">' +
+        kinds.map((k) => '<option value="' + esc(k.kind) + '">' + esc(k.kind) + '</option>').join('') +
+      '</select>' +
+      '<label class="label" for="new-path">Path</label>' +
+      '<input class="input input-mono" type="text" id="new-path" placeholder="common/style.md">' +
+      '<div class="form-span section-actions">' +
+        ui.btn('Create', { variant: 'default', attrs: ' data-action="content-create"' }) +
+      '</div>' +
+    '</div></div>');
 
   const e = state.editor;
   const changed = e.content !== e.original;
   const pane = e.path
-    ? '<div class="panel"><h3>' + esc(e.kind + ' / ' + e.path) +
-        '<span>' + (changed ? 'unsaved' : 'saved') + '</span></h3>' +
-        '<div class="pad"><textarea id="editor-body" spellcheck="false">' + esc(e.content) + '</textarea>' +
-        '<div class="actions mt">' +
-          '<button class="btn primary" data-action="content-save"' + (changed ? '' : ' disabled') + '>Save</button>' +
-          '<button class="btn" data-action="content-revert"' + (changed ? '' : ' disabled') + '>Revert</button>' +
-          '<button class="btn danger" data-action="content-delete">Delete file</button>' +
-        '</div></div></div>'
-    : '<div class="panel"><h3>Editor</h3><div class="empty">Select a file, or create a new one below.</div></div>';
+    ? ui.card(e.kind + ' / ' + e.path,
+        '<div class="card-content mt"><textarea class="textarea" id="editor-body" spellcheck="false">' +
+        esc(e.content) + '</textarea>' +
+        '<div class="section-actions mt">' +
+          ui.btn('Save', { variant: 'default', attrs: ' data-action="content-save"', disabled: !changed }) +
+          ui.btn('Revert', { attrs: ' data-action="content-revert"', disabled: !changed }) +
+          ui.btn('Delete file', { variant: 'destructive-ghost', attrs: ' data-action="content-delete"' }) +
+        '</div></div>',
+        { aside: ui.badge(changed ? 'unsaved' : 'saved', changed ? 'destructive' : 'muted', true) })
+    : ui.card('Editor', ui.empty('Select a file, or create a new one below.'));
 
-  return '' +
-    '<header><h2>Rules &amp; skills</h2><p>Markdown that shapes the agent: layered rules, on-demand skills, ' +
-      'sub-agent definitions and persona files. Saved straight to disk under your Asterisk home.</p></header>' +
-    '<div class="editor-grid"><div>' + list +
-      '<div class="panel"><h3>New file</h3><div class="form-grid">' +
-        '<label for="new-kind">Kind</label><select id="new-kind">' +
-          kinds.map((k) => '<option value="' + esc(k.kind) + '">' + esc(k.kind) + '</option>').join('') +
-        '</select>' +
-        '<label for="new-path">Path</label><input type="text" id="new-path" placeholder="common/style.md">' +
-        '<div class="span actions"><button class="btn primary" data-action="content-create">Create</button></div>' +
-      '</div></div>' +
-    '</div><div>' + pane + '</div></div>';
+  return header + '<div class="editor-grid"><div>' + list + newFile + '</div><div>' + pane + '</div></div>';
 }
 
 async function openFile(kind, path) {
@@ -204,67 +223,76 @@ async function saveFile() {
   render();
 }
 
-// --- tokens -------------------------------------------------------------
+// --- tokens --------------------------------------------------------------
 
 function viewTokens() {
   const rows = state.tokens.length === 0
-    ? '<div class="empty">No tokens issued.</div>'
-    : state.tokens.map((t) =>
-        '<div class="item"><div class="grow"><div class="name">' + esc(t.label) + '</div>' +
-          '<div class="detail">created ' + esc(when(t.created_at)) +
-          ' · last used ' + esc(when(t.last_used_at)) + '</div></div>' +
-          '<button class="btn sm danger" data-token-revoke="' + t.id + '">Revoke</button></div>'
-      ).join('');
+    ? ui.empty('No tokens issued.')
+    : state.tokens.map((t) => ui.listRow(
+        esc(t.label),
+        'created ' + when(t.created_at) + ' · last used ' + when(t.last_used_at),
+        ui.btn('Revoke', { size: 'sm', variant: 'destructive-ghost',
+          attrs: ' data-token-revoke="' + t.id + '"' })
+      )).join('');
 
-  return '' +
-    '<header><h2>Access tokens</h2><p>Tokens authenticate browser sessions for this panel. Only hashes are ' +
-      'stored, so a token is shown exactly once — at creation. Revoking one ends its sessions.</p></header>' +
-    '<div class="panel"><h3>Issued<span>' + state.tokens.length + '</span></h3>' + rows + '</div>' +
-    '<div class="panel"><h3>Issue new</h3><div class="form-grid">' +
-      '<label for="token-label">Label</label><input type="text" id="token-label" placeholder="laptop">' +
-      '<div class="span actions"><button class="btn primary" data-action="token-new">Issue token</button></div>' +
-    '</div></div>';
+  const form = '<div class="card-content"><div class="form-grid">' +
+    '<label class="label" for="token-label">Label</label>' +
+    '<input class="input" type="text" id="token-label" placeholder="laptop">' +
+    '<div class="form-span section-actions">' +
+      ui.btn('Issue token', { variant: 'default', attrs: ' data-action="token-new"' }) +
+    '</div></div></div>';
+
+  return ui.pageHeader('Access tokens',
+      'Tokens authenticate browser sessions for this panel. Only hashes are stored, so a token is ' +
+      'shown exactly once — at creation. Revoking one ends its sessions.') +
+    ui.card('Issued', rows, { aside: ui.badge(state.tokens.length, 'secondary') }) +
+    ui.card('Issue new', form);
 }
 
-// --- diagnostics, logs, audit -------------------------------------------
+// --- diagnostics, logs, audit --------------------------------------------
 
 function viewDoctor() {
   const d = state.doctor;
-  if (!d) return '<div class="empty">Running checks…</div>';
-  return '' +
-    '<header><h2>Diagnostics</h2><p>Connectivity and environment checks, same ground as <code>/doctor</code> ' +
-      'in the REPL.</p></header>' +
-    '<div class="panel"><h3>Checks<span>' + d.checks.filter((c) => c.ok).length + '/' + d.checks.length + '</span></h3>' +
-      d.checks.map((c) =>
-        '<div class="item"><span class="chip ' + (c.ok ? 'on' : 'bad') + '">' + (c.ok ? 'ok' : 'fail') + '</span>' +
-        '<div class="grow"><div class="name">' + esc(c.name) + '</div>' +
-        '<div class="detail">' + esc(c.detail) + '</div></div></div>').join('') +
-    '</div>' +
-    '<div class="actions"><button class="btn" data-action="doctor-rerun">Run again</button></div>';
+  const header = ui.pageHeader('Diagnostics',
+    'Connectivity and environment checks, same ground as <code class="code-inline">/doctor</code> in the REPL.');
+
+  if (!d) return header + ui.card('Checks', ui.skeletonRows(4));
+
+  const passed = d.checks.filter((c) => c.ok).length;
+  const rows = d.checks.map((c) => ui.listRow(
+    esc(c.name), c.detail, '',
+    ui.badge(c.ok ? 'ok' : 'fail', c.ok ? 'success' : 'destructive', true)
+  )).join('');
+
+  return header +
+    ui.card('Checks', rows, {
+      aside: ui.badge(passed + '/' + d.checks.length, passed === d.checks.length ? 'success' : 'destructive'),
+    }) +
+    '<div class="section-actions">' +
+      ui.btn('Run again', { attrs: ' data-action="doctor-rerun"' }) + '</div>';
 }
 
 function viewLogs() {
-  return '' +
-    '<header><h2>Daemon log</h2><p>Tail of <code>~/.asterisk/logs/daemon.log</code>.</p></header>' +
-    '<div class="actions mb">' +
-      '<button class="btn" data-action="logs-refresh">Refresh</button></div>' +
-    '<div class="panel"><pre class="log">' + esc(state.logText || '(empty)') + '</pre></div>';
+  return ui.pageHeader('Daemon log',
+      'Tail of <code class="code-inline">~/.asterisk/logs/daemon.log</code>.') +
+    '<div class="section-actions mb">' +
+      ui.btn('Refresh', { attrs: ' data-action="logs-refresh"' }) + '</div>' +
+    ui.card('Output', '<pre class="code-block">' + esc(state.logText || '(empty)') + '</pre>');
 }
 
 function viewAudit() {
   const rows = state.audit.length === 0
-    ? '<div class="empty">Nothing recorded yet.</div>'
-    : state.audit.map((a) =>
-        '<div class="item"><div class="grow">' +
-          '<div class="name">' + esc(a.action) + ' <span class="detail">' + esc(a.target) + '</span></div>' +
-          '<div class="detail">' + esc(when(a.at)) + ' · ' + esc(a.actor) + '</div></div></div>'
-      ).join('');
-  return '' +
-    '<header><h2>Audit trail</h2><p>Every change made through this panel.</p></header>' +
-    '<div class="panel"><h3>Recent</h3>' + rows + '</div>';
+    ? ui.empty('Nothing recorded yet.')
+    : state.audit.map((a) => ui.listRow(
+        esc(a.action) + ' ' + ui.badge(a.target, 'outline'),
+        when(a.at) + ' · ' + a.actor
+      )).join('');
+
+  return ui.pageHeader('Audit trail', 'Every change made through this panel.') +
+    ui.card('Recent', rows, { aside: ui.badge(state.audit.length, 'secondary') });
 }
 
-// --- data loading -------------------------------------------------------
+// --- data loading --------------------------------------------------------
 
 async function loadStatus()   { state.status   = await guard(() => api('/status')); }
 async function loadSettings() { state.settings = await guard(() => api('/settings')); }
@@ -276,6 +304,7 @@ async function loadTokens()   { const r = await guard(() => api('/tokens'));   s
 async function loadAudit()    { const r = await guard(() => api('/audit'));    state.audit = r ? r.entries : []; }
 async function loadLogs()     { const r = await guard(() => api('/logs'));     state.logText = r ? r.text : ''; }
 async function loadDoctor()   { state.doctor = await guard(() => api('/doctor')); }
+
 const LOADERS = {
   overview: loadStatus, settings: loadSettings, mcp: loadMcp, hooks: loadHooks,
   secrets: loadSecrets, content: loadContent, tokens: loadTokens,
@@ -289,8 +318,8 @@ const VIEWS = {
 };
 
 function render() {
-  renderRail();
-  renderTopbar();
+  renderSidebar();
+  renderHeader();
   const view = VIEWS[state.tab] || viewOverview;
   $('.view').innerHTML = view();
   renderSaveBar();
@@ -304,12 +333,12 @@ async function goto(tab) {
   if (load) { await load(); state.loaded.add(tab); render(); }
 }
 
-// --- events -------------------------------------------------------------
+// --- events --------------------------------------------------------------
 
 document.addEventListener('click', async (ev) => {
   const t = ev.target.closest('[data-tab],[data-action],[data-daemon],[data-toggle],[data-reset],' +
     '[data-revert],[data-mcp-toggle],[data-mcp-delete],[data-hook-toggle],[data-hook-delete],' +
-    '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-price-delete]');
+    '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open]');
   if (!t) return;
   const d = t.dataset;
 
@@ -503,7 +532,7 @@ window.addEventListener('beforeunload', (ev) => {
   }
 });
 
-// --- boot ---------------------------------------------------------------
+// --- boot ----------------------------------------------------------------
 
 (async () => {
   try {

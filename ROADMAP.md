@@ -20,8 +20,13 @@ from issues, not from this file.
 `src/bots/telegram` was the surface this paragraph used to name at ~32%. All of
 `src/bots` is done now — a fake Bot API drives the adapter, and `adapter.ts`,
 `commands.ts` and `manager.ts` sit at 100% statements, functions and branches,
-with `telegram/index.ts` at 98/94/96. The untested surfaces now are `src/web`
-(0%, no HTTP-level tests) and `src/tools/code` (~3%, the interpreter).
+with `telegram/index.ts` at 98/94/96.
+
+`src/web` was listed here as the other 0% hole. That was simply wrong —
+`web.test.ts`, `web-panel.test.ts` and `web-origin-guard.test.ts` have had it
+near 85% for some time. Its render layer was the thin part, and
+`tests/web-ui.test.ts` now covers that. The one real gap left is
+`src/tools/code` (~3%, the interpreter).
 
 ### ~~Skill marketplace~~ — dropped
 Cut on 2026-07-31. The bundled set stays the whole story; skills are still
