@@ -1,9 +1,10 @@
-// Control-panel client: shared helpers, component builders, shell chrome,
-// overview and settings.
+// Control-panel client: shared helpers, component builders, shell chrome and
+// the overview. Settings, the system figure, skills and the log reader each
+// have their own module beside this one.
 //
 // Vanilla DOM on purpose — no build step, no framework, and the whole page
-// stays inlineable under a CSP nonce. Concatenated with APP_STAR and APP_VIEWS
-// at render time, so all three share one scope.
+// stays inlineable under a CSP nonce. All the modules are concatenated at
+// render time, so they share one scope.
 //
 // Every value that reaches innerHTML goes through esc(); listeners are
 // attached via delegation because the CSP forbids inline handlers.
@@ -24,13 +25,28 @@ const state = {
   doctor: null,
   editor: { kind: null, path: null, content: '', original: '' },
   loaded: new Set(),
+
+  // Settings is an index before it is a form — see ./app-settings.ts. Groups
+  // start shut; searching opens whatever it matches.
+  settingsQuery: '',
+  settingsFilter: 'all',
+  openGroups: new Set(),
+
+  // The log reader parses pino's JSON lines rather than printing them.
   logsTab: 'daemon',
-  // The Skills section keeps its own state — it reads the resolved set from
-  // /api/skills rather than the file tree. See ./app-skills.ts.
+  logLevel: 'all',
+  logQuery: '',
+  logFollow: false,
+  logLines: 200,
+
+  // Skills read the resolved set from /api/skills, not the file tree.
   skills: null,
   skill: null,
   skillDraft: null,
   skillFilter: '',
+
+  // Which list row is expanded, keyed by section.
+  expanded: '',
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -278,129 +294,4 @@ function viewOverview() {
     '</div>';
 }
 
-// --- settings ------------------------------------------------------------
-
-function viewSettings() {
-  const header = ui.pageHeader('Settings',
-    'Generated from the configuration schema, so every field Asterisk understands is here with its ' +
-    'own bounds. Edits are staged until you apply them.');
-
-  if (!state.settings) return header + '<section class="card">' + ui.skeletonRows(4) + '</section>';
-
-  const groups = state.settings.groups
-    .map((group) => ui.card(group.group, group.fields.map(fieldRow).join('')))
-    .join('');
-
-  return header + groups + '<div id="save-bar"></div>';
-}
-
-function fieldRow(field) {
-  const staged = state.dirty.has(field.path);
-  const value = staged ? state.dirty.get(field.path) : field.value;
-  const id = 'f_' + field.path.replace(/\./g, '_');
-
-  return '<div class="field' + (staged ? ' field-dirty' : '') + '" data-field="' + esc(field.path) + '">' +
-    '<div><label class="label" for="' + esc(id) + '">' + esc(field.label) + '</label>' +
-      '<code class="field-path">' + esc(field.path) + '</code>' +
-      (field.description ? '<div class="field-help">' + esc(field.description) + '</div>' : '') +
-    '</div>' +
-    '<div class="field-control">' + control(field, value, id) +
-      (staged ? ui.btn('Revert', { size: 'sm', variant: 'ghost', attrs: ' data-revert="' + esc(field.path) + '"' }) : '') +
-      ui.btn('Default', { size: 'sm', variant: 'ghost', attrs: ' data-reset="' + esc(field.path) + '"' }) +
-    '</div></div>';
-}
-
-function control(field, value, id) {
-  if (field.kind === 'boolean') {
-    // role="switch" pairs with aria-checked, not aria-pressed — the latter
-    // belongs to toggle buttons and reads wrong to a screen reader here.
-    return '<button class="switch" id="' + esc(id) + '" role="switch" data-toggle="' +
-      esc(field.path) + '" aria-checked="' + (value === true) + '" aria-label="' +
-      esc(field.label) + '"></button>' +
-      ui.stateBadge(value === true);
-  }
-  if (field.kind === 'enum') {
-    return '<select class="select" id="' + esc(id) + '" data-input="' + esc(field.path) + '">' +
-      field.options.map((opt) =>
-        '<option value="' + esc(opt) + '"' + (opt === value ? ' selected' : '') + '>' + esc(opt) + '</option>'
-      ).join('') + '</select>';
-  }
-  if (field.kind === 'number') {
-    return '<input class="input" type="number" id="' + esc(id) + '" data-input="' + esc(field.path) + '"' +
-      (field.min !== undefined ? ' min="' + field.min + '"' : '') +
-      (field.max !== undefined ? ' max="' + field.max + '"' : '') +
-      (field.integer ? ' step="1"' : '') +
-      ' value="' + esc(value) + '">';
-  }
-  if (field.kind === 'number-array' || field.kind === 'string-array') {
-    return '<input class="input" type="text" id="' + esc(id) + '" data-input="' + esc(field.path) + '"' +
-      ' placeholder="comma separated" value="' + esc((value || []).join(', ')) + '">';
-  }
-  return '<input class="input" type="text" id="' + esc(id) + '" data-input="' +
-    esc(field.path) + '" value="' + esc(value) + '">';
-}
-
-function parseFieldValue(field, raw) {
-  if (field.kind === 'number') {
-    const n = Number(raw);
-    if (!Number.isFinite(n)) throw new Error('"' + field.label + '" must be a number');
-    return n;
-  }
-  if (field.kind === 'number-array') {
-    return String(raw).split(',').map((s) => s.trim()).filter(Boolean).map((s) => {
-      const n = Number(s);
-      if (!Number.isFinite(n)) throw new Error('"' + field.label + '" takes numbers only');
-      return n;
-    });
-  }
-  if (field.kind === 'string-array') {
-    return String(raw).split(',').map((s) => s.trim()).filter(Boolean);
-  }
-  return raw;
-}
-
-function findField(path) {
-  for (const group of state.settings.groups) {
-    const found = group.fields.find((f) => f.path === path);
-    if (found) return found;
-  }
-  return null;
-}
-
-function stageEdit(path, value) {
-  const field = findField(path);
-  if (!field) return;
-  // Staging back to the stored value clears the edit rather than leaving a
-  // no-op pending change.
-  if (JSON.stringify(value) === JSON.stringify(field.value)) state.dirty.delete(path);
-  else state.dirty.set(path, value);
-  renderSaveBar();
-  const row = document.querySelector('[data-field="' + CSS.escape(path) + '"]');
-  if (row) row.classList.toggle('field-dirty', state.dirty.has(path));
-}
-
-function renderSaveBar() {
-  const bar = $('#save-bar');
-  if (!bar) return;
-  if (state.dirty.size === 0) { bar.innerHTML = ''; return; }
-  bar.innerHTML = '<div class="save-bar">' +
-    '<span class="save-bar-count">' + state.dirty.size + ' change' +
-      (state.dirty.size === 1 ? '' : 's') + ' staged</span>' +
-    ui.btn('Discard', { variant: 'ghost', attrs: ' data-action="discard"' }) +
-    ui.btn('Apply', { variant: 'default', attrs: ' data-action="apply"' }) +
-  '</div>';
-}
-
-async function applySettings() {
-  const updates = Object.fromEntries(state.dirty);
-  const ok = await guard(() => api('/settings', {
-    method: 'PATCH',
-    body: JSON.stringify({ updates }),
-  }), 'Settings applied');
-  if (!ok) return;
-  state.dirty.clear();
-  await loadSettings();
-  await loadStatus();
-  render();
-}
 `;

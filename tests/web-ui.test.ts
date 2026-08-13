@@ -14,17 +14,23 @@
 //   - Light and dark are authored separately, so a token added to one and
 //     forgotten in the other degrades quietly to the wrong colour.
 
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { CONTENT_KINDS } from '../src/web/api/content.ts';
 import { APP_CORE } from '../src/web/ui/app-core.ts';
+import { APP_LOGS } from '../src/web/ui/app-logs.ts';
+import { APP_SETTINGS } from '../src/web/ui/app-settings.ts';
+import { APP_SKILLS } from '../src/web/ui/app-skills.ts';
 import { APP_STAR } from '../src/web/ui/app-star.ts';
 import { APP_VIEWS } from '../src/web/ui/app-views.ts';
 import { renderIndexHtml } from '../src/web/ui/index.ts';
 import { STYLES } from '../src/web/ui/styles.ts';
 
-// The same concatenation ./index.ts inlines, in the same order.
-const CLIENT = `${APP_CORE}\n${APP_STAR}\n${APP_VIEWS}`;
+// The same concatenation ./index.ts inlines, in the same order. Every module
+// belongs here: the checks below are about the script the browser runs, and a
+// module left out is a module none of them cover.
+const CLIENT = [APP_CORE, APP_STAR, APP_SETTINGS, APP_LOGS, APP_SKILLS, APP_VIEWS].join('\n');
 
 /** A top-level `const NAME = [ … ];` array literal, as source text. */
 function arrayLiteral(name: string): string {
@@ -52,6 +58,17 @@ function customProperties(block: string): Set<string> {
 }
 
 describe('the client script', () => {
+  it('is assembled from every module the page inlines', () => {
+    // CLIENT above is written by hand, and a module missing from it is a
+    // module none of these checks cover — which is how the log reader briefly
+    // escaped them. Read what index.ts actually interpolates and compare.
+    const src = readFileSync(new URL('../src/web/ui/index.ts', import.meta.url), 'utf8');
+    const inlined = [...src.matchAll(/\$\{(APP_[A-Z_]+)\}/g)].map((m) => m[1] as string);
+    expect(new Set(inlined)).toEqual(
+      new Set(['APP_CORE', 'APP_STAR', 'APP_SETTINGS', 'APP_LOGS', 'APP_SKILLS', 'APP_VIEWS']),
+    );
+  });
+
   it('parses as JavaScript', () => {
     // The whole reason this test exists: the script lives inside a template
     // literal, so nothing else in the toolchain ever parses it.

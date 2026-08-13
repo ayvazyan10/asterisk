@@ -3,6 +3,19 @@
 // component builders.
 
 export const APP_VIEWS = String.raw`
+/**
+ * An add-form kept behind a button. These pages are read far more often than
+ * they are written to, and a permanently open five-field form pushed the list
+ * it belongs to off the first screen.
+ */
+function addPanel(id, label, form) {
+  const open = state.expanded === id;
+  return '<div class="section-actions mb">' +
+    ui.btn(open ? 'Cancel' : label,
+      { variant: open ? 'ghost' : 'default', attrs: ' data-expand="' + id + '"' }) +
+  '</div>' + (open ? ui.card(label, '<div class="card-content">' + form + '</div>') : '');
+}
+
 // --- mcp servers ---------------------------------------------------------
 
 function viewMcp() {
@@ -16,27 +29,27 @@ function viewMcp() {
         ui.stateBadge(s.enabled)
       )).join('');
 
-  const form = '<div class="card-content"><div class="form-grid">' +
+  const form = '<div class="form-grid">' +
     '<label class="label" for="mcp-name">Name</label>' +
     '<input class="input" type="text" id="mcp-name" placeholder="filesystem">' +
     '<label class="label" for="mcp-transport">Transport</label>' +
     '<select class="select" id="mcp-transport"><option value="stdio">stdio</option>' +
       '<option value="http">http</option></select>' +
     '<label class="label" for="mcp-command">Command / URL</label>' +
-    '<input class="input input-mono" type="text" id="mcp-command" ' +
+    '<input class="input" type="text" id="mcp-command" ' +
       'placeholder="npx -y @modelcontextprotocol/server-filesystem /tmp">' +
     '<label class="label" for="mcp-env">Env / headers</label>' +
-    '<input class="input input-mono" type="text" id="mcp-env" placeholder="KEY=value, OTHER=value">' +
+    '<input class="input" type="text" id="mcp-env" placeholder="KEY=value, OTHER=value">' +
     '<div class="form-span section-actions">' +
       ui.btn('Save server', { variant: 'default', attrs: ' data-action="mcp-save"' }) +
       '<span class="form-hint">A matching name replaces the existing entry.</span>' +
-    '</div></div></div>';
+    '</div></div>';
 
   return ui.pageHeader('MCP servers',
-      'Model Context Protocol servers loaded at startup. stdio servers are spawned as subprocesses; ' +
+      'Model Context Protocol servers loaded at startup. stdio servers run as subprocesses; ' +
       'http servers are reached over Streamable HTTP.') +
-    ui.card('Configured', rows, { aside: ui.badge(state.mcp.length, 'secondary') }) +
-    ui.card('Add or replace', form);
+    addPanel('mcp-add', 'Add a server', form) +
+    ui.card('Configured', rows, { aside: ui.badge(state.mcp.length, 'secondary') });
 }
 
 function parsePairs(raw) {
@@ -83,27 +96,27 @@ function viewHooks() {
         ui.stateBadge(h.enabled)
       )).join('');
 
-  const form = '<div class="card-content"><div class="form-grid">' +
+  const form = '<div class="form-grid">' +
     '<label class="label" for="hook-name">Name</label>' +
     '<input class="input" type="text" id="hook-name" placeholder="format-on-edit">' +
     '<label class="label" for="hook-event">Event</label>' +
     '<select class="select" id="hook-event">' +
       HOOK_EVENTS.map((e) => '<option value="' + e + '">' + e + '</option>').join('') + '</select>' +
     '<label class="label" for="hook-matcher">Matcher</label>' +
-    '<input class="input input-mono" type="text" id="hook-matcher" placeholder="Edit (optional)">' +
+    '<input class="input" type="text" id="hook-matcher" placeholder="Edit (optional)">' +
     '<label class="label" for="hook-command">Command</label>' +
-    '<input class="input input-mono" type="text" id="hook-command" placeholder="biome check --write">' +
+    '<input class="input" type="text" id="hook-command" placeholder="biome check --write">' +
     '<label class="label" for="hook-timeout">Timeout (s)</label>' +
-    '<input class="input input-mono" type="number" id="hook-timeout" value="30" min="1" max="300">' +
+    '<input class="input" type="number" id="hook-timeout" value="30" min="1" max="300">' +
     '<div class="form-span section-actions">' +
       ui.btn('Save hook', { variant: 'default', attrs: ' data-action="hook-save"' }) +
-    '</div></div></div>';
+    '</div></div>';
 
   return ui.pageHeader('Hooks',
-      'Shell commands fired at agent-loop lifecycle events. The event payload arrives on stdin as JSON. ' +
-      'These run with your full user privileges — treat them like any other shell script.') +
-    ui.card('Configured', rows, { aside: ui.badge(state.hooks.length, 'secondary') }) +
-    ui.card('Add or replace', form);
+      'Shell commands fired at agent-loop lifecycle events, with the event payload on stdin as JSON. ' +
+      'They run with your full user privileges — treat them like any other shell script.') +
+    addPanel('hook-add', 'Add a hook', form) +
+    ui.card('Configured', rows, { aside: ui.badge(state.hooks.length, 'secondary') });
 }
 
 async function saveHook() {
@@ -125,27 +138,41 @@ async function saveHook() {
 // --- secrets -------------------------------------------------------------
 
 function viewSecrets() {
+  // An env var of the same name wins over anything stored here, so a key that
+  // is overridden needs to say so where you would otherwise edit it and
+  // wonder why nothing changed — not in small print underneath.
   const rows = state.secrets.map((s) =>
-    '<div class="field"><div><span class="label">' + esc(s.key) + '</span>' +
-      '<code class="field-path">' + (s.set ? esc(s.masked) : 'not set') + '</code>' +
-      (s.overriddenByEnv
-        ? '<div class="field-help">An environment variable of the same name is set and takes ' +
-          'precedence over this value.</div>'
-        : '') +
-    '</div><div class="field-control">' +
-      '<input class="input input-mono" type="password" data-secret="' + esc(s.key) +
-        '" placeholder="paste to replace" autocomplete="off">' +
-      ui.btn('Save', { size: 'sm', attrs: ' data-secret-save="' + esc(s.key) + '"' }) +
-      (s.set ? ui.btn('Clear', { size: 'sm', variant: 'destructive-ghost',
-        attrs: ' data-secret-clear="' + esc(s.key) + '"' }) : '') +
-    '</div></div>'
+    '<div class="field' + (s.overriddenByEnv ? ' field-shadowed' : '') + '">' +
+      '<div><span class="label">' + esc(s.key) + '</span> ' +
+        (s.overriddenByEnv
+          ? ui.badge('overridden by env', 'destructive', true)
+          : ui.stateBadge(s.set, 'set', 'not set')) +
+        '<code class="field-path">' + (s.set ? esc(s.masked) : 'nothing stored') + '</code>' +
+        (s.overriddenByEnv
+          ? '<div class="field-help">The environment variable of the same name is what Asterisk ' +
+            'actually uses. Editing this will not take effect until it is unset.</div>'
+          : '') +
+      '</div>' +
+      '<div class="field-control">' +
+        '<input class="input" type="password" data-secret="' + esc(s.key) +
+          '" placeholder="paste to replace" autocomplete="off">' +
+        ui.btn('Save', { size: 'sm', attrs: ' data-secret-save="' + esc(s.key) + '"' }) +
+        (s.set ? ui.btn('Clear', { size: 'sm', variant: 'destructive-ghost',
+          attrs: ' data-secret-clear="' + esc(s.key) + '"' }) : '') +
+      '</div>' +
+    '</div>'
   ).join('');
 
+  const shadowed = state.secrets.filter((s) => s.overriddenByEnv).length;
+
   return ui.pageHeader('Secrets',
-      'Stored in the database, which is <code class="code-inline">chmod 600</code>. Values are never ' +
-      'sent back to the browser — only a masked fingerprint. Environment variables override anything ' +
-      'set here.') +
-    ui.card('API keys and tokens', rows || ui.empty('No secrets defined.'));
+      'Kept in the database, which is <code class="code-inline">chmod 600</code>. Values never come ' +
+      'back to the browser — only a masked fingerprint.') +
+    ui.card('API keys and tokens', rows || ui.empty('No secrets defined.'), {
+      aside: shadowed > 0
+        ? ui.badge(shadowed + ' overridden by env', 'destructive', true)
+        : ui.badge(state.secrets.filter((s) => s.set).length + ' set', 'secondary'),
+    });
 }
 
 // --- content editor ------------------------------------------------------
@@ -236,18 +263,19 @@ function viewTokens() {
           attrs: ' data-token-revoke="' + t.id + '"' })
       )).join('');
 
-  const form = '<div class="card-content"><div class="form-grid">' +
+  const form = '<div class="form-grid">' +
     '<label class="label" for="token-label">Label</label>' +
     '<input class="input" type="text" id="token-label" placeholder="laptop">' +
     '<div class="form-span section-actions">' +
       ui.btn('Issue token', { variant: 'default', attrs: ' data-action="token-new"' }) +
-    '</div></div></div>';
+      '<span class="form-hint">Shown once, at creation — copy it then.</span>' +
+    '</div></div>';
 
   return ui.pageHeader('Access tokens',
       'Tokens authenticate browser sessions for this panel. Only hashes are stored, so a token is ' +
       'shown exactly once — at creation. Revoking one ends its sessions.') +
-    ui.card('Issued', rows, { aside: ui.badge(state.tokens.length, 'secondary') }) +
-    ui.card('Issue new', form);
+    addPanel('token-add', 'Issue a token', form) +
+    ui.card('Issued', rows, { aside: ui.badge(state.tokens.length, 'secondary') });
 }
 
 // --- diagnostics, logs, audit --------------------------------------------
@@ -255,22 +283,38 @@ function viewTokens() {
 function viewDoctor() {
   const d = state.doctor;
   const header = ui.pageHeader('Diagnostics',
-    'Connectivity and environment checks, same ground as <code class="code-inline">/doctor</code> in the REPL.');
+    'Connectivity and environment checks — the same ground <code class="code-inline">/doctor</code> ' +
+    'covers in the REPL.');
 
-  if (!d) return header + ui.card('Checks', ui.skeletonRows(4));
+  if (!d) return header + '<section class="card">' + ui.skeletonRows(4) + '</section>';
 
-  const passed = d.checks.filter((c) => c.ok).length;
-  const rows = d.checks.map((c) => ui.listRow(
-    esc(c.name), c.detail, '',
-    ui.badge(c.ok ? 'ok' : 'fail', c.ok ? 'success' : 'destructive', true)
-  )).join('');
+  const failing = d.checks.filter((c) => !c.ok);
+  const passing = d.checks.filter((c) => c.ok);
+
+  const row = (c) => '<div class="check' + (c.ok ? '' : ' check-bad') + '">' +
+    '<span class="check-mark">' + (c.ok ? '✓' : '✗') + '</span>' +
+    '<div class="list-row-grow"><div class="check-name">' + esc(c.name) + '</div>' +
+    '<div class="check-detail">' + esc(c.detail) + '</div></div></div>';
+
+  // What is broken comes first and takes the whole width; what works is a
+  // quiet confirmation underneath. A flat list gave both the same weight,
+  // which is the wrong shape for a page you only open when something is off.
+  const problems = failing.length > 0
+    ? ui.card('Needs attention', failing.map(row).join(''),
+        { aside: ui.badge(failing.length, 'destructive', true) })
+    : ui.card('All clear', ui.empty('Every check passed.'),
+        { aside: ui.badge('healthy', 'success', true) });
+
+  const fine = passing.length > 0
+    ? ui.card('Passing', passing.map(row).join(''), { aside: ui.badge(passing.length, 'secondary') })
+    : '';
 
   return header +
-    ui.card('Checks', rows, {
-      aside: ui.badge(passed + '/' + d.checks.length, passed === d.checks.length ? 'success' : 'destructive'),
-    }) +
-    '<div class="section-actions">' +
-      ui.btn('Run again', { attrs: ' data-action="doctor-rerun"' }) + '</div>';
+    '<div class="section-actions mb">' +
+      ui.btn('Run again', { attrs: ' data-action="doctor-rerun"' }) +
+      '<span class="form-hint">' + passing.length + ' of ' + d.checks.length + ' passing</span>' +
+    '</div>' +
+    problems + fine;
 }
 
 // Everything append-only lives here, behind one segmented control: the daemon's
@@ -295,18 +339,14 @@ function viewLogs() {
   return ui.pageHeader('Logs', LOG_DESCRIPTIONS[active] || '', LOG_SUBJECTS[active]) +
     '<div class="section-actions mb">' +
       ui.tabs(LOG_TABS, active, 'logs-tab') +
-      ui.btn('Refresh', { attrs: ' data-action="logs-refresh"' }) +
+      ui.btn('Reload', { attrs: ' data-action="logs-refresh"' }) +
     '</div>' +
     (active === 'audit' ? auditPanel() : daemonLogPanel());
 }
 
-function daemonLogPanel() {
-  return ui.card('Output', '<pre class="code-block">' + esc(state.logText || '(empty)') + '</pre>');
-}
-
 function auditPanel() {
   const rows = state.audit.length === 0
-    ? ui.empty('Nothing recorded yet.')
+    ? ui.empty('Nothing recorded yet. Changes you make here will show up.')
     : state.audit.map((a) => ui.listRow(
         esc(a.action) + ' ' + ui.badge(a.target, 'outline'),
         when(a.at) + ' · ' + a.actor
@@ -385,12 +425,29 @@ document.addEventListener('click', async (ev) => {
   const t = ev.target.closest('[data-tab],[data-action],[data-daemon],[data-toggle],[data-reset],' +
     '[data-revert],[data-mcp-toggle],[data-mcp-delete],[data-hook-toggle],[data-hook-delete],' +
     '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-logs-tab],' +
-    '[data-skill-open]');
+    '[data-skill-open],[data-group],[data-settings-filter],[data-log-level],[data-expand]');
   if (!t) return;
   const d = t.dataset;
 
   if (d.tab) return goto(d.tab);
   if (d.skillOpen) return openSkill(d.skillOpen);
+  if (d.expand) {
+    state.expanded = state.expanded === d.expand ? '' : d.expand;
+    return render();
+  }
+  if (d.group) {
+    if (state.openGroups.has(d.group)) state.openGroups.delete(d.group);
+    else state.openGroups.add(d.group);
+    return refreshSettingsGroups();
+  }
+  if (d.settingsFilter) {
+    state.settingsFilter = d.settingsFilter;
+    return render();
+  }
+  if (d.logLevel) {
+    state.logLevel = d.logLevel;
+    return render();
+  }
   // Both records are already loaded; switching is a re-render, not a fetch.
   if (d.logsTab) { state.logsTab = d.logsTab; return render(); }
   if (d.open) { const [kind, ...rest] = d.open.split('|'); return openFile(kind, rest.join('|')); }
@@ -546,6 +603,12 @@ document.addEventListener('click', async (ev) => {
     case 'skill-revert':
       state.skillDraft = { description: state.skill.description, prompt: state.skill.prompt };
       return render();
+    case 'settings-toggle-all': {
+      if (state.openGroups.size > 0) state.openGroups.clear();
+      else for (const g of state.settings.groups) state.openGroups.add(g.group);
+      return render();
+    }
+    case 'log-follow': setLogFollow(!state.logFollow); return render();
     case 'doctor-rerun': state.doctor = null; render(); await loadDoctor(); return render();
     case 'logs-refresh': await loadLogRecords(); return render();
   }
@@ -591,11 +654,24 @@ document.addEventListener('input', (ev) => {
     return;
   }
 
+  // Every search box below redraws only what it narrows. Re-rendering the
+  // view would take focus out of the box on the first keystroke.
   if (id === 'skill-filter') {
     state.skillFilter = ev.target.value;
-    // Only the list changes, and re-rendering the view would drop focus.
     const card = document.querySelector('.skill-list-body');
     if (card) card.innerHTML = skillGroups(state.skills);
+    return;
+  }
+
+  if (id === 'settings-search') {
+    state.settingsQuery = ev.target.value;
+    return refreshSettingsGroups();
+  }
+
+  if (id === 'log-search') {
+    state.logQuery = ev.target.value;
+    const body = document.querySelector('.log-body');
+    if (body) body.innerHTML = renderLogBody();
   }
 });
 

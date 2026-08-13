@@ -235,6 +235,104 @@ export const COMPONENTS = String.raw`
 .tabs-trigger:hover { color: var(--ink); }
 .tabs-trigger[aria-selected="true"] { background: var(--signal-wash); color: var(--ink); }
 
+/* --- toolbar --------------------------------------------------------------
+   The filter row above a long page. Sticky under the bar, because on a page
+   worth filtering you are usually scrolled away from the top when you decide
+   to filter it. */
+
+.toolbar {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  padding: 0.6rem 0; margin-bottom: 0.75rem;
+  position: sticky; top: var(--bar); z-index: 12;
+  background: var(--bg);
+}
+.toolbar .input { flex: 1 1 16rem; max-width: 26rem; }
+.toolbar-spacer { flex: 1; }
+/* Inside a card the row is part of the panel, not the page. */
+.toolbar-inset {
+  position: static; margin: 0; padding: 0.6rem 0.75rem;
+  background: var(--surface-high); border-bottom: 1px solid var(--border);
+}
+
+/* --- collapsible group ------------------------------------------------------ */
+
+.group {
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--surface); overflow: hidden;
+}
+.group + .group { margin-top: 0.5rem; }
+
+.group-head {
+  display: flex; align-items: center; gap: 0.6rem; width: 100%;
+  padding: 0.65rem 0.9rem; border: 0; background: var(--surface-high);
+  color: inherit; font-family: inherit; font-size: var(--t-sm);
+  text-align: left; cursor: pointer;
+  transition: background-color var(--dur) var(--ease);
+}
+.group-head:hover { background: var(--surface); }
+.group-caret {
+  color: var(--ink-faint); font-size: 0.7rem; flex: none;
+  transition: transform var(--dur) var(--ease);
+}
+.group[data-open="true"] .group-caret { transform: rotate(90deg); }
+.group-name {
+  font-family: var(--font-machine); font-size: var(--t-xs);
+  letter-spacing: var(--track-silk); text-transform: uppercase;
+  color: var(--ink-dim); flex: 1;
+}
+.group-count {
+  font-family: var(--font-machine); font-size: var(--t-xs);
+  color: var(--ink-faint); flex: none;
+}
+.group-body { border-top: 1px solid var(--border); }
+
+/* A field sitting away from its schema default, marked where the eye already
+   is rather than in a column of its own. */
+.field-mark {
+  display: inline-block; width: 5px; height: 5px; margin-left: 0.4rem;
+  border-radius: 50%; background: var(--tide); vertical-align: middle;
+}
+/* A secret an environment variable has taken over. */
+.field-shadowed { background: var(--oxide-wash); }
+
+/* --- diagnostics ------------------------------------------------------------ */
+
+.check {
+  display: flex; align-items: flex-start; gap: 0.75rem;
+  padding: 0.75rem 1rem; border-top: 1px solid var(--border);
+}
+.check:first-child { border-top: 0; }
+.check-mark { font-family: var(--font-machine); color: var(--success); flex: none; line-height: 1.5; }
+.check-bad .check-mark { color: var(--oxide); }
+.check-name { font-size: var(--t-sm); font-weight: 500; }
+.check-detail {
+  margin-top: 0.15rem; font-family: var(--font-machine); font-size: var(--t-xs);
+  color: var(--ink-dim); overflow-wrap: anywhere;
+}
+.check-bad { background: var(--oxide-wash); }
+
+/* --- log reader -------------------------------------------------------------- */
+
+.log-scroll { max-height: 62vh; overflow-y: auto; }
+.log { font-family: var(--font-machine); font-size: var(--t-xs); line-height: 1.6; }
+
+.log-line {
+  display: grid; grid-template-columns: 4.5rem 3.2rem 1fr; gap: 0.75rem;
+  padding: 0.2rem 0.75rem;
+}
+.log-line:hover { background: var(--surface-high); }
+.log-time { color: var(--ink-faint); }
+.log-level { text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-faint); }
+.log-msg { color: var(--ink); overflow-wrap: anywhere; }
+.log-extra { color: var(--ink-faint); }
+
+.log-warn { color: var(--signal); }
+.log-error, .log-fatal { color: var(--oxide); }
+.log-line.is-warn { background: color-mix(in oklch, var(--signal) 7%, transparent); }
+.log-line.is-error { background: var(--oxide-wash); }
+/* Output from a subprocess that never went through pino. */
+.log-line.is-raw .log-msg { color: var(--ink-dim); }
+
 /* --- empty / skeleton ----------------------------------------------------- */
 
 .empty {
