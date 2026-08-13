@@ -5,6 +5,7 @@
 // `ctx.params`, in order. First match wins, so specific routes precede
 // general ones.
 
+import { getAgentDetail, getAgentsReport, getRulesReport, getSoulsReport } from './api/authored.ts';
 import {
   getHooks,
   getMcpServers,
@@ -62,6 +63,13 @@ export const ROUTES: readonly Route[] = [
   { method: 'GET', pattern: '/api/hooks', handler: getHooks },
   { method: 'PUT', pattern: '/api/hooks', handler: putHook },
   { method: 'DELETE', pattern: '/api/hooks/:name', handler: removeHook },
+
+  // What the loaders resolved, as opposed to what is in the directory —
+  // see ./api/authored.ts. Read-only; writing stays on the content routes.
+  { method: 'GET', pattern: '/api/rules', handler: getRulesReport },
+  { method: 'GET', pattern: '/api/agents/:name', handler: getAgentDetail },
+  { method: 'GET', pattern: '/api/agents', handler: getAgentsReport },
+  { method: 'GET', pattern: '/api/souls', handler: getSoulsReport },
 
   // Skills are not just files — see ./api/skills.ts.
   { method: 'GET', pattern: '/api/skills/:name/source', handler: getSkillSource },

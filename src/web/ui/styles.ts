@@ -213,6 +213,20 @@ const LAYOUT = String.raw`
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* Position in a load order, where the number is information: later layers
+   override earlier ones, so the sequence is the point of the list. */
+.order-mark {
+  flex: none; width: 1.4rem;
+  font-family: var(--font-machine); font-size: var(--t-xs);
+  color: var(--ink-faint); text-align: right;
+}
+
+.agent-meta {
+  display: grid; grid-template-columns: 4rem 1fr;
+  gap: 0.4rem 0.75rem; align-items: baseline; margin-top: 0.75rem;
+}
+.agent-meta > div { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+
 .issue-path {
   font-family: var(--font-machine); font-size: var(--t-xs);
   font-weight: 400; color: var(--ink-faint); overflow-wrap: anywhere;

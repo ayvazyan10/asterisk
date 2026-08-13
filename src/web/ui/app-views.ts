@@ -189,7 +189,17 @@ function viewContent(kind) {
 
   // The description is the API's own words for the kind; the root is where
   // the files live, which is the machine's half of the title.
-  const header = ui.pageHeader(label, esc(entry.description), entry.root);
+  return ui.pageHeader(label, esc(entry.description), entry.root) + viewContentBody(kind);
+}
+
+/**
+ * The file list and editor, without a page header. Rules and Souls put their
+ * resolution report above this rather than replacing it — knowing what is in
+ * effect and being able to edit it are both wanted, in that order.
+ */
+function viewContentBody(kind) {
+  const entry = contentEntry(kind);
+  if (!entry) return '<section class="card">' + ui.skeletonRows(3) + '</section>';
 
   const list = ui.card('Files',
     '<div class="file-list">' +
@@ -227,7 +237,7 @@ function viewContent(kind) {
         { aside: ui.badge(changed ? 'unsaved' : 'saved', changed ? 'destructive' : 'muted', true) })
     : ui.card('Editor', ui.empty('Select a file, or create a new one below.'));
 
-  return header + '<div class="editor-grid"><div>' + list + newFile + '</div><div>' + pane + '</div></div>';
+  return '<div class="editor-grid mt"><div>' + list + newFile + '</div><div>' + pane + '</div></div>';
 }
 
 async function openFile(kind, path) {
@@ -376,7 +386,12 @@ async function loadLogRecords() { await Promise.all([loadLogs(), loadAudit()]); 
 // The system figure reads rule and skill counts alongside everything /status
 // returns, so the landing page fetches both and the figure is complete on
 // first paint rather than filling in a beat later.
-async function loadOverview() { await Promise.all([loadStatus(), loadContent(), loadSkills()]); }
+// The rail's counts and the system figure both read resolved sets, so the
+// landing page fetches them alongside /status rather than leaving the numbers
+// blank until you happen to open the section they came from.
+async function loadOverview() {
+  await Promise.all([loadStatus(), loadContent(), loadSkills(), loadRulesReport(), loadAgentsReport()]);
+}
 
 const LOADERS = {
   overview: loadOverview, settings: loadSettings, mcp: loadMcp, hooks: loadHooks,
@@ -398,10 +413,21 @@ for (const k of CONTENT_KINDS) {
   VIEWS[k.id] = () => viewContent(k.id);
 }
 
-// Skills keep the sidebar entry the loop gave them and replace the view: they
-// are not a file tree to the agent. See ./app-skills.ts for why.
+// Every Author kind keeps the sidebar entry the loop gave it and replaces the
+// view. What the loader resolved and what is in the directory are different
+// sets for all four, and the page's job is to say so — see ./app-skills.ts
+// and ./app-authored.ts.
 LOADERS.skills = loadSkills;
 VIEWS.skills = viewSkills;
+
+LOADERS.rules = async () => { await Promise.all([loadContent(), loadRulesReport()]); };
+VIEWS.rules = viewRules;
+
+LOADERS.agents = loadAgentsReport;
+VIEWS.agents = viewAgents;
+
+LOADERS.souls = async () => { await Promise.all([loadContent(), loadSoulsReport()]); };
+VIEWS.souls = viewSouls;
 
 function render() {
   renderSidebar();
@@ -425,12 +451,14 @@ document.addEventListener('click', async (ev) => {
   const t = ev.target.closest('[data-tab],[data-action],[data-daemon],[data-toggle],[data-reset],' +
     '[data-revert],[data-mcp-toggle],[data-mcp-delete],[data-hook-toggle],[data-hook-delete],' +
     '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-logs-tab],' +
-    '[data-skill-open],[data-group],[data-settings-filter],[data-log-level],[data-expand]');
+    '[data-skill-open],[data-agent-open],[data-group],[data-settings-filter],[data-log-level],' +
+    '[data-expand]');
   if (!t) return;
   const d = t.dataset;
 
   if (d.tab) return goto(d.tab);
   if (d.skillOpen) return openSkill(d.skillOpen);
+  if (d.agentOpen) return openAgent(d.agentOpen);
   if (d.expand) {
     state.expanded = state.expanded === d.expand ? '' : d.expand;
     return render();
@@ -660,6 +688,13 @@ document.addEventListener('input', (ev) => {
     state.skillFilter = ev.target.value;
     const card = document.querySelector('.skill-list-body');
     if (card) card.innerHTML = skillGroups(state.skills);
+    return;
+  }
+
+  if (id === 'agent-filter') {
+    state.agentFilter = ev.target.value;
+    const host = document.querySelector('.agent-list-body');
+    if (host) host.innerHTML = agentGroups(state.agents);
     return;
   }
 

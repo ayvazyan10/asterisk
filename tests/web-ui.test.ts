@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { CONTENT_KINDS } from '../src/web/api/content.ts';
+import { APP_AUTHORED } from '../src/web/ui/app-authored.ts';
 import { APP_CORE } from '../src/web/ui/app-core.ts';
 import { APP_LOGS } from '../src/web/ui/app-logs.ts';
 import { APP_SETTINGS } from '../src/web/ui/app-settings.ts';
@@ -30,7 +31,15 @@ import { STYLES } from '../src/web/ui/styles.ts';
 // The same concatenation ./index.ts inlines, in the same order. Every module
 // belongs here: the checks below are about the script the browser runs, and a
 // module left out is a module none of them cover.
-const CLIENT = [APP_CORE, APP_STAR, APP_SETTINGS, APP_LOGS, APP_SKILLS, APP_VIEWS].join('\n');
+const CLIENT = [
+  APP_CORE,
+  APP_STAR,
+  APP_SETTINGS,
+  APP_LOGS,
+  APP_SKILLS,
+  APP_AUTHORED,
+  APP_VIEWS,
+].join('\n');
 
 /** A top-level `const NAME = [ … ];` array literal, as source text. */
 function arrayLiteral(name: string): string {
@@ -65,7 +74,15 @@ describe('the client script', () => {
     const src = readFileSync(new URL('../src/web/ui/index.ts', import.meta.url), 'utf8');
     const inlined = [...src.matchAll(/\$\{(APP_[A-Z_]+)\}/g)].map((m) => m[1] as string);
     expect(new Set(inlined)).toEqual(
-      new Set(['APP_CORE', 'APP_STAR', 'APP_SETTINGS', 'APP_LOGS', 'APP_SKILLS', 'APP_VIEWS']),
+      new Set([
+        'APP_CORE',
+        'APP_STAR',
+        'APP_SETTINGS',
+        'APP_LOGS',
+        'APP_SKILLS',
+        'APP_AUTHORED',
+        'APP_VIEWS',
+      ]),
     );
   });
 

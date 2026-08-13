@@ -39,11 +39,17 @@ const state = {
   logFollow: false,
   logLines: 200,
 
-  // Skills read the resolved set from /api/skills, not the file tree.
+  // The Author pages read what the loaders resolved, not the file tree —
+  // see ./app-skills.ts and ./app-authored.ts.
   skills: null,
   skill: null,
   skillDraft: null,
   skillFilter: '',
+  rules: null,
+  agents: null,
+  agent: null,
+  agentFilter: '',
+  souls: null,
 
   // Which list row is expanded, keyed by section.
   expanded: '',
@@ -197,11 +203,17 @@ function contentEntry(kind) {
   return state.content.find((k) => k.kind === kind) || null;
 }
 
-// Skills count what the loader resolved, not what is on disk: most of them are
-// bundled and have no file, and a file that fails to validate is not a skill.
-// The other kinds are files and nothing else, so a file count is the truth.
+// Kinds with a resolution step count what the loader resolved, not what is on
+// disk — a rule in the wrong language folder and a skill that fails to
+// validate are both files that do nothing, and counting them here would repeat
+// on the rail the same lie the pages were built to stop telling.
+//
+// Souls are the exception and count files: every soul file is usable by some
+// session, so there is no inert set to exclude.
 function kindCount(id) {
   if (id === 'skills') return state.skills ? state.skills.counts.loaded : null;
+  if (id === 'agents') return state.agents ? state.agents.counts.loaded : null;
+  if (id === 'rules') return state.rules ? state.rules.rules.length : null;
   const entry = contentEntry(id);
   return entry ? entry.files.length : null;
 }
