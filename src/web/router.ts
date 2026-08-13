@@ -24,7 +24,7 @@ import {
   resetSetting,
 } from './api/config.ts';
 import { deleteContent, listContent, readContent, writeContent } from './api/content.ts';
-import { deleteSkill, getSkill, getSkillSource, getSkills, putSkill } from './api/skills.ts';
+import { deleteSkill, getSkill, getSkills, putSkill } from './api/skills.ts';
 import {
   daemonAction,
   deleteToken,
@@ -72,7 +72,6 @@ export const ROUTES: readonly Route[] = [
   { method: 'GET', pattern: '/api/souls', handler: getSoulsReport },
 
   // Skills are not just files — see ./api/skills.ts.
-  { method: 'GET', pattern: '/api/skills/:name/source', handler: getSkillSource },
   { method: 'GET', pattern: '/api/skills/:name', handler: getSkill },
   { method: 'PUT', pattern: '/api/skills/:name', handler: putSkill },
   { method: 'DELETE', pattern: '/api/skills/:name', handler: deleteSkill },

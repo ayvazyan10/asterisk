@@ -16,16 +16,10 @@
 // Backed by ../api/authored.ts.
 
 export const APP_AUTHORED = String.raw`
-const LAYER_NOTE = {
-  common: 'applies to every project',
-  lang: 'applies to this language',
-  flat: 'loose file at the top level',
-};
-
 // --- shared ---------------------------------------------------------------
 
 /** The card that names what is sitting there doing nothing, and why. */
-function inertCard(items, root, noun) {
+function inertCard(items, noun) {
   if (!items || items.length === 0) return '';
   return ui.card('Not loaded', items.map((i) =>
     '<div class="check check-bad"><span class="check-mark">✗</span>' +
@@ -72,9 +66,9 @@ function viewRules() {
           '</div></div>').join('');
 
   return header + summary +
-    inertCard(d.inert, d.roots.user, 'inert') +
+    inertCard(d.inert, 'inert') +
     ui.card('In effect, in load order', rows,
-      { aside: ui.badge(LAYER_NOTE.common, 'muted') }) +
+      { aside: ui.badge(d.rules.length + ' loaded', 'secondary') }) +
     viewContentBody('rules');
 }
 
@@ -170,7 +164,7 @@ function viewAgents() {
     '<div class="agent-list-body">' + agentGroups(d) + '</div>',
     { aside: ui.badge(matches.length + ' of ' + d.agents.length, 'secondary') });
 
-  return header + summary + inertCard(d.inert, d.roots.user, 'inert') +
+  return header + summary + inertCard(d.inert, 'inert') +
     '<div class="editor-grid"><div>' + list + '</div><div>' + agentDetailCard() + '</div></div>';
 }
 

@@ -38,6 +38,9 @@ const state = {
   logQuery: '',
   logFollow: false,
   logLines: 200,
+  // Handle of the polling interval while Follow is on, so a second Follow
+  // cannot leave the first one running.
+  logTimer: null,
 
   // The Author pages read what the loaders resolved, not the file tree —
   // see ./app-skills.ts and ./app-authored.ts.
@@ -107,6 +110,10 @@ const ui = {
       body + '</section>';
   },
 
+  // The title is markup — callers compose it from esc() and badges — while
+  // the detail is text and is escaped here. The asymmetry is deliberate but
+  // easy to get wrong: anything user-supplied in the title must be escaped by
+  // the caller, and the detail must not be, or it double-escapes.
   listRow(title, detail, actions, leading) {
     return '<div class="list-row">' + (leading || '') +
       '<div class="list-row-grow"><div class="list-row-title">' + title + '</div>' +

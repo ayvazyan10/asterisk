@@ -48,7 +48,6 @@ function systemSpokes() {
   const c = s.counts;
 
   const enabledTone = (on, all) => (on > 0 ? 'live' : all > 0 ? 'rest' : 'off');
-  const files = (kind) => { const e = contentEntry(kind); return e ? e.files.length : null; };
   const fileTone = (n) => (n === null ? 'off' : n > 0 ? 'rest' : 'off');
 
   return [
@@ -69,9 +68,12 @@ function systemSpokes() {
     { angle: 210, label: 'skills', value: clip(kindCount('skills'), 6),
       tone: fileTone(kindCount('skills')), tab: 'skills',
       title: (kindCount('skills') === null ? 'no' : kindCount('skills')) + ' skills resolved' },
-    { angle: 150, label: 'rules', value: clip(files('rules'), 6),
-      tone: fileTone(files('rules')), tab: 'rules',
-      title: (files('rules') === null ? 'no' : files('rules')) + ' rule files' },
+    // Resolved, not counted on disk — same as skills. A rule in the wrong
+    // language folder is a file, not a rule, and the figure sat next to a rail
+    // reading 4 while it said 8.
+    { angle: 150, label: 'rules', value: clip(kindCount('rules'), 6),
+      tone: fileTone(kindCount('rules')), tab: 'rules',
+      title: (kindCount('rules') === null ? 'no' : kindCount('rules')) + ' rules in effect' },
   ];
 }
 

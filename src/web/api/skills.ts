@@ -16,7 +16,7 @@
 // skills live under the working directory rather than the Asterisk home —
 // a different write boundary than this panel has any business crossing.
 
-import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -141,12 +141,4 @@ export const deleteSkill: Handler = ({ db, params }) => {
   rmSync(dir, { recursive: true });
   audit(db, 'skill.delete', name);
   return json({ ok: true });
-};
-
-/** Reads a user skill's raw SKILL.md, for the panel's plain-text fallback. */
-export const getSkillSource: Handler = ({ params }) => {
-  const name = params[0] ?? '';
-  const file = join(userSkillDir(name), SKILL_FILE);
-  if (!existsSync(file)) throw new HttpError(`no user skill named "${name}"`, 404);
-  return json({ name, content: readFileSync(file, 'utf8') });
 };
