@@ -253,6 +253,28 @@ export const COMPONENTS = String.raw`
 .field-dirty { background: color-mix(in oklch, var(--primary) 8%, transparent); }
 .field-dirty:hover { background: color-mix(in oklch, var(--primary) 12%, transparent); }
 
+/* --- tabs --------------------------------------------------------------- */
+
+.tabs-list {
+  display: inline-flex; align-items: center; gap: 0.125rem;
+  height: 2.25rem; padding: 0.1875rem;
+  border-radius: var(--radius-lg); background: var(--muted);
+  color: var(--muted-foreground);
+}
+.tabs-trigger {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 100%; padding: 0 0.75rem; white-space: nowrap;
+  border: 0; background: transparent; border-radius: var(--radius-md);
+  font-family: inherit; font-size: var(--text-sm); font-weight: 500;
+  color: inherit; cursor: pointer;
+  transition: background-color var(--duration) var(--ease), color var(--duration) var(--ease);
+}
+.tabs-trigger:hover { color: var(--foreground); }
+.tabs-trigger[aria-selected="true"] {
+  background: var(--background); color: var(--foreground);
+  box-shadow: var(--shadow-sm);
+}
+
 /* --- empty / skeleton --------------------------------------------------- */
 
 .empty {

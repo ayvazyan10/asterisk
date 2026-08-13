@@ -127,6 +127,11 @@ const LAYOUT = String.raw`
 .form-grid .form-span { grid-column: 1 / -1; }
 .form-hint { font-size: var(--text-xs); color: var(--muted-foreground); }
 
+/* The editor's left column is 17rem wide, so a 9.5rem label column would
+   leave the field about 70px — enough to show four characters of its
+   placeholder. Forms in there stack instead. */
+.editor-grid .form-grid { grid-template-columns: 1fr; gap: 0.5rem; }
+
 /* --- settings save bar -------------------------------------------------- */
 
 .save-bar {

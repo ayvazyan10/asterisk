@@ -150,34 +150,35 @@ function viewSecrets() {
 
 // --- content editor ------------------------------------------------------
 
-function viewContent() {
-  const kinds = state.content;
-  // Plain '&' — pageHeader escapes the title for us. The description below is
-  // the one that arrives as markup, because it carries <code> spans.
-  const header = ui.pageHeader('Rules & skills',
-    'Markdown that shapes the agent: layered rules, on-demand skills, sub-agent definitions and ' +
-    'persona files. Saved straight to disk under your Asterisk home.');
+// One kind per call — the sidebar now has a destination for each, so this
+// renders exactly the files belonging to the kind it is given and nothing else.
+function viewContent(kind) {
+  const label = (CONTENT_KINDS.find((k) => k.id === kind) || {}).label || kind;
+  const entry = contentEntry(kind);
 
-  if (kinds.length === 0) return header + ui.card('Files', ui.skeletonRows(3));
+  if (!entry) {
+    return ui.pageHeader(label, 'Loading…') + ui.card('Files', ui.skeletonRows(3));
+  }
 
-  const list = kinds.map((k) => ui.card(k.kind,
+  // Both halves come from the API, so both are escaped before they land in
+  // pageHeader — which takes its description as markup, not as text.
+  const header = ui.pageHeader(label,
+    esc(entry.description) + ' Stored under <code class="code-inline">' + esc(entry.root) + '</code>.');
+
+  const list = ui.card('Files',
     '<div class="file-list">' +
-      (k.files.length === 0
-        ? ui.empty('No files.')
-        : k.files.map((f) =>
-            '<button class="file-item" data-open="' + esc(k.kind) + '|' + esc(f.path) + '" aria-current="' +
-            (state.editor.kind === k.kind && state.editor.path === f.path) + '">' +
+      (entry.files.length === 0
+        ? ui.empty('No files yet.')
+        : entry.files.map((f) =>
+            '<button class="file-item" data-open="' + esc(kind) + '|' + esc(f.path) + '" aria-current="' +
+            (state.editor.kind === kind && state.editor.path === f.path) + '">' +
             esc(f.path) + '</button>').join('')) +
     '</div>',
-    { aside: ui.badge(k.files.length, 'secondary') })
-  ).join('');
+    { aside: ui.badge(entry.files.length, 'secondary') });
 
+  // No kind picker any more: the tab you are on is the kind.
   const newFile = ui.card('New file',
     '<div class="card-content"><div class="form-grid">' +
-      '<label class="label" for="new-kind">Kind</label>' +
-      '<select class="select" id="new-kind">' +
-        kinds.map((k) => '<option value="' + esc(k.kind) + '">' + esc(k.kind) + '</option>').join('') +
-      '</select>' +
       '<label class="label" for="new-path">Path</label>' +
       '<input class="input input-mono" type="text" id="new-path" placeholder="common/style.md">' +
       '<div class="form-span section-actions">' +
@@ -187,8 +188,9 @@ function viewContent() {
 
   const e = state.editor;
   const changed = e.content !== e.original;
-  const pane = e.path
-    ? ui.card(e.kind + ' / ' + e.path,
+  // An open file from another kind belongs to that kind's tab, not this one.
+  const pane = e.path && e.kind === kind
+    ? ui.card(e.path,
         '<div class="card-content mt"><textarea class="textarea" id="editor-body" spellcheck="false">' +
         esc(e.content) + '</textarea>' +
         '<div class="section-actions mt">' +
@@ -272,15 +274,33 @@ function viewDoctor() {
       ui.btn('Run again', { attrs: ' data-action="doctor-rerun"' }) + '</div>';
 }
 
+// Everything append-only lives here, behind one segmented control: the daemon's
+// own output, and the panel's record of what was changed through it.
+const LOG_TABS = [
+  { id: 'daemon', label: 'Daemon log' },
+  { id: 'audit', label: 'Audit trail' },
+];
+
+const LOG_DESCRIPTIONS = {
+  daemon: 'Tail of <code class="code-inline">~/.asterisk/logs/daemon.log</code>.',
+  audit: 'Every change made through this panel.',
+};
+
 function viewLogs() {
-  return ui.pageHeader('Daemon log',
-      'Tail of <code class="code-inline">~/.asterisk/logs/daemon.log</code>.') +
+  const active = state.logsTab;
+  return ui.pageHeader('Logs', LOG_DESCRIPTIONS[active] || '') +
     '<div class="section-actions mb">' +
-      ui.btn('Refresh', { attrs: ' data-action="logs-refresh"' }) + '</div>' +
-    ui.card('Output', '<pre class="code-block">' + esc(state.logText || '(empty)') + '</pre>');
+      ui.tabs(LOG_TABS, active, 'logs-tab') +
+      ui.btn('Refresh', { attrs: ' data-action="logs-refresh"' }) +
+    '</div>' +
+    (active === 'audit' ? auditPanel() : daemonLogPanel());
 }
 
-function viewAudit() {
+function daemonLogPanel() {
+  return ui.card('Output', '<pre class="code-block">' + esc(state.logText || '(empty)') + '</pre>');
+}
+
+function auditPanel() {
   const rows = state.audit.length === 0
     ? ui.empty('Nothing recorded yet.')
     : state.audit.map((a) => ui.listRow(
@@ -288,8 +308,7 @@ function viewAudit() {
         when(a.at) + ' · ' + a.actor
       )).join('');
 
-  return ui.pageHeader('Audit trail', 'Every change made through this panel.') +
-    ui.card('Recent', rows, { aside: ui.badge(state.audit.length, 'secondary') });
+  return ui.card('Recent', rows, { aside: ui.badge(state.audit.length, 'secondary') });
 }
 
 // --- data loading --------------------------------------------------------
@@ -305,17 +324,30 @@ async function loadAudit()    { const r = await guard(() => api('/audit'));    s
 async function loadLogs()     { const r = await guard(() => api('/logs'));     state.logText = r ? r.text : ''; }
 async function loadDoctor()   { state.doctor = await guard(() => api('/doctor')); }
 
+// The Logs tab shows one record at a time but fetches both, so switching the
+// segmented control is instant. Two small requests on a monitoring page is the
+// right trade against a spinner every time you toggle.
+async function loadLogRecords() { await Promise.all([loadLogs(), loadAudit()]); }
+
 const LOADERS = {
   overview: loadStatus, settings: loadSettings, mcp: loadMcp, hooks: loadHooks,
-  secrets: loadSecrets, content: loadContent, tokens: loadTokens,
-  audit: loadAudit, logs: loadLogs, doctor: loadDoctor,
+  secrets: loadSecrets, tokens: loadTokens,
+  logs: loadLogRecords, doctor: loadDoctor,
 };
 
 const VIEWS = {
   overview: viewOverview, settings: viewSettings, mcp: viewMcp, hooks: viewHooks,
-  secrets: viewSecrets, content: viewContent, tokens: viewTokens,
-  audit: viewAudit, logs: viewLogs, doctor: viewDoctor,
+  secrets: viewSecrets, tokens: viewTokens,
+  logs: viewLogs, doctor: viewDoctor,
 };
+
+// Every content kind routes to the same pair, parameterised by kind. Derived
+// from CONTENT_KINDS rather than written out four times, so adding a kind to
+// the API means adding one entry there and nothing here.
+for (const k of CONTENT_KINDS) {
+  LOADERS[k.id] = loadContent;
+  VIEWS[k.id] = () => viewContent(k.id);
+}
 
 function render() {
   renderSidebar();
@@ -338,11 +370,13 @@ async function goto(tab) {
 document.addEventListener('click', async (ev) => {
   const t = ev.target.closest('[data-tab],[data-action],[data-daemon],[data-toggle],[data-reset],' +
     '[data-revert],[data-mcp-toggle],[data-mcp-delete],[data-hook-toggle],[data-hook-delete],' +
-    '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open]');
+    '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-logs-tab]');
   if (!t) return;
   const d = t.dataset;
 
   if (d.tab) return goto(d.tab);
+  // Both records are already loaded; switching is a re-render, not a fetch.
+  if (d.logsTab) { state.logsTab = d.logsTab; return render(); }
   if (d.open) { const [kind, ...rest] = d.open.split('|'); return openFile(kind, rest.join('|')); }
 
   if (d.toggle) {
@@ -450,7 +484,8 @@ document.addEventListener('click', async (ev) => {
       return;
     }
     case 'content-create': {
-      const kind = $('#new-kind').value;
+      // The tab you are on is the kind — there is no picker to read any more.
+      const kind = state.tab;
       const path = $('#new-path').value.trim();
       if (!path) { toast('Path is required', 'bad'); return; }
       const ok = await guard(() => api('/content/' + encodeURIComponent(kind) + '/' +
@@ -490,7 +525,7 @@ document.addEventListener('click', async (ev) => {
       return;
     }
     case 'doctor-rerun': state.doctor = null; render(); await loadDoctor(); return render();
-    case 'logs-refresh': await loadLogs(); return render();
+    case 'logs-refresh': await loadLogRecords(); return render();
   }
 });
 

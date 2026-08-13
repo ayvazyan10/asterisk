@@ -50,6 +50,13 @@ const KINDS: Record<ContentKind, KindSpec> = {
   },
 };
 
+/**
+ * Every kind, in the order the panel should offer them. Exported because the
+ * control panel's sidebar has one destination per kind, and a kind added here
+ * but not there would be unreachable from the UI with nothing to say so.
+ */
+export const CONTENT_KINDS = Object.keys(KINDS) as ContentKind[];
+
 function asteriskHome(): string {
   return process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk');
 }

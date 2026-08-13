@@ -16,12 +16,25 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { CONTENT_KINDS } from '../src/web/api/content.ts';
 import { APP_CORE } from '../src/web/ui/app-core.ts';
 import { APP_VIEWS } from '../src/web/ui/app-views.ts';
 import { renderIndexHtml } from '../src/web/ui/index.ts';
 import { STYLES } from '../src/web/ui/styles.ts';
 
 const CLIENT = `${APP_CORE}\n${APP_VIEWS}`;
+
+/** A top-level `const NAME = [ … ];` array literal, as source text. */
+function arrayLiteral(name: string): string {
+  const start = CLIENT.indexOf(`const ${name} = [`);
+  if (start === -1) throw new Error(`no ${name} in the client`);
+  const end = CLIENT.indexOf('\n];', start);
+  return CLIENT.slice(start, end);
+}
+
+function idsIn(name: string): string[] {
+  return [...arrayLiteral(name).matchAll(/id: '([a-z]+)'/g)].map((m) => m[1] as string);
+}
 
 /** Body of a top-level CSS rule, by selector. */
 function ruleBody(css: string, selector: string): string {
@@ -43,15 +56,38 @@ describe('the client script', () => {
     expect(() => new Function(CLIENT)).not.toThrow();
   });
 
-  it('defines every view its router can dispatch to', () => {
-    // VIEWS and LOADERS are keyed by tab id; a tab in the sidebar with no
-    // matching view silently falls back to the overview.
-    const tabs = [...CLIENT.matchAll(/\{ id: '([a-z]+)'/g)].map((m) => m[1] as string);
-    expect(tabs.length).toBeGreaterThan(5);
-    for (const tab of tabs) {
+  it('defines a view and a loader for every hand-written tab', () => {
+    // VIEWS and LOADERS are keyed by tab id; a sidebar entry with no matching
+    // view silently falls back to the overview, which looks like a dead link.
+    const hardCoded = idsIn('TABS');
+    expect(hardCoded.length).toBeGreaterThan(4);
+    for (const tab of hardCoded) {
       expect(CLIENT).toContain(`${tab}: view`);
       expect(CLIENT).toContain(`${tab}: load`);
     }
+  });
+
+  it('registers the content kinds by derivation rather than by hand', () => {
+    // The kind tabs are added in a loop over CONTENT_KINDS. If that loop is
+    // ever unrolled, the test above stops covering them and this one says so.
+    expect(CLIENT).toMatch(/for \(const k of CONTENT_KINDS\)/);
+    expect(CLIENT).toContain('VIEWS[k.id]');
+    expect(CLIENT).toContain('LOADERS[k.id]');
+    expect(idsIn('TABS')).not.toContain('rules');
+  });
+
+  it('offers a sidebar destination for every kind the API serves', () => {
+    // A kind added to the API but not to the sidebar is unreachable from the
+    // panel, with nothing anywhere to point that out.
+    expect(idsIn('CONTENT_KINDS').sort()).toEqual([...CONTENT_KINDS].sort());
+  });
+
+  it('renders a panel for each record the Logs tab offers', () => {
+    // The log sub-tabs are not router tabs — they switch a panel inside one
+    // view, so they need panels rather than entries in VIEWS.
+    expect(idsIn('LOG_TABS')).toEqual(['daemon', 'audit']);
+    expect(CLIENT).toContain('function daemonLogPanel(');
+    expect(CLIENT).toContain('function auditPanel(');
   });
 
   it('emits no inline style attributes', () => {

@@ -394,7 +394,11 @@ describe('bot commands', () => {
       return tryHandleBotCommand('/soul', ctx(state));
     });
     expect(r?.text).toContain('…(truncated)');
-    expect(r?.text?.match(/L/g)).toHaveLength(1500);
+    // A maximal run of exactly 1500, not a count of every L in the message.
+    // The reply prints the soul's path above its body, and that path is the
+    // mkdtemp directory from beforeEach — whose random suffix contains an L
+    // often enough to have made this test fail about one run in three.
+    expect(r?.text).toMatch(/(?<!L)L{1500}(?!L)/);
   });
 
   it('command list is non-empty and well-formed', () => {

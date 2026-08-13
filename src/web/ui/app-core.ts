@@ -28,6 +28,8 @@ const state = {
   doctor: null,
   editor: { kind: null, path: null, content: '', original: '' },
   loaded: new Set(),
+  // Which record the Logs tab is showing: 'daemon' | 'audit'.
+  logsTab: 'daemon',
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -107,6 +109,15 @@ const ui = {
     return '<div class="empty">' + esc(message) + '</div>';
   },
 
+  // Segmented control for switching between sibling views inside one tab.
+  // The attr argument is the dataset key the delegation reads: 'logs-tab'.
+  tabs(items, active, attr) {
+    return '<div class="tabs-list" role="tablist">' + items.map((i) =>
+      '<button class="tabs-trigger" role="tab" aria-selected="' + (i.id === active) +
+      '" data-' + attr + '="' + esc(i.id) + '">' + esc(i.label) + '</button>'
+    ).join('') + '</div>';
+  },
+
   // Skeletons rather than the word "Loading…": the shape of what is coming is
   // already known, and showing it stops the page reflowing when data lands.
   skeletonRows(count) {
@@ -169,6 +180,21 @@ async function guard(fn, successMessage) {
 
 // --- shell ---------------------------------------------------------------
 
+// The four editable content kinds, each its own destination. They used to
+// share a single "Rules & skills" tab, which meant scrolling past three
+// mostly-empty card stacks to reach the fourth. One /content call still backs
+// all four, so opening any one fills in the others' counts.
+const CONTENT_KINDS = [
+  { id: 'rules', label: 'Rules' },
+  { id: 'skills', label: 'Skills' },
+  { id: 'agents', label: 'Agents' },
+  { id: 'souls', label: 'Souls' },
+];
+
+function contentEntry(kind) {
+  return state.content.find((k) => k.kind === kind) || null;
+}
+
 // Counts come from /status where possible so the sidebar is accurate on first
 // paint, before the corresponding tab has ever been opened. A count of null
 // renders nothing, which is honest about "not loaded yet".
@@ -176,8 +202,11 @@ const TABS = [
   { group: 'Monitor', items: [
     { id: 'overview', label: 'Overview' },
     { id: 'doctor', label: 'Diagnostics' },
-    { id: 'logs', label: 'Daemon log' },
-    { id: 'audit', label: 'Audit trail' },
+    // One destination for everything that is a log. The daemon tail and the
+    // audit trail are both append-only records of what happened; splitting
+    // them across two sidebar entries made the section look twice as busy as
+    // it is, and neither name told you the other existed.
+    { id: 'logs', label: 'Logs' },
   ]},
   { group: 'Configure', items: [
     { id: 'settings', label: 'Settings' },
@@ -185,9 +214,11 @@ const TABS = [
     { id: 'mcp', label: 'MCP servers', count: () => state.status && state.status.counts.mcpServers },
     { id: 'hooks', label: 'Hooks', count: () => state.status && state.status.counts.hooks },
   ]},
-  { group: 'Author', items: [
-    { id: 'content', label: 'Rules & skills' },
-  ]},
+  { group: 'Author', items: CONTENT_KINDS.map((k) => ({
+    id: k.id,
+    label: k.label,
+    count: () => { const e = contentEntry(k.id); return e ? e.files.length : null; },
+  })) },
   { group: 'Access', items: [
     { id: 'tokens', label: 'Tokens', count: () => state.loaded.has('tokens') ? state.tokens.length : null },
   ]},
