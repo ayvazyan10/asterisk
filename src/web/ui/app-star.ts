@@ -64,9 +64,11 @@ function systemSpokes() {
     { angle: 270, label: 'telegram', value: s.bots.telegram ? 'on' : 'off',
       tone: s.bots.telegram ? 'live' : 'off', tab: 'settings',
       title: 'Telegram bridge ' + (s.bots.telegram ? 'enabled' : 'disabled') },
-    { angle: 210, label: 'skills', value: clip(files('skills'), 6),
-      tone: fileTone(files('skills')), tab: 'skills',
-      title: (files('skills') === null ? 'no' : files('skills')) + ' skill files' },
+    // Skills report what resolved, not what is on disk — most are bundled and
+    // have no file, and an invalid file is not a skill.
+    { angle: 210, label: 'skills', value: clip(kindCount('skills'), 6),
+      tone: fileTone(kindCount('skills')), tab: 'skills',
+      title: (kindCount('skills') === null ? 'no' : kindCount('skills')) + ' skills resolved' },
     { angle: 150, label: 'rules', value: clip(files('rules'), 6),
       tone: fileTone(files('rules')), tab: 'rules',
       title: (files('rules') === null ? 'no' : files('rules')) + ' rule files' },

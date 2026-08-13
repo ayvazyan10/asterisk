@@ -23,6 +23,7 @@ import {
   resetSetting,
 } from './api/config.ts';
 import { deleteContent, listContent, readContent, writeContent } from './api/content.ts';
+import { deleteSkill, getSkill, getSkillSource, getSkills, putSkill } from './api/skills.ts';
 import {
   daemonAction,
   deleteToken,
@@ -61,6 +62,13 @@ export const ROUTES: readonly Route[] = [
   { method: 'GET', pattern: '/api/hooks', handler: getHooks },
   { method: 'PUT', pattern: '/api/hooks', handler: putHook },
   { method: 'DELETE', pattern: '/api/hooks/:name', handler: removeHook },
+
+  // Skills are not just files — see ./api/skills.ts.
+  { method: 'GET', pattern: '/api/skills/:name/source', handler: getSkillSource },
+  { method: 'GET', pattern: '/api/skills/:name', handler: getSkill },
+  { method: 'PUT', pattern: '/api/skills/:name', handler: putSkill },
+  { method: 'DELETE', pattern: '/api/skills/:name', handler: deleteSkill },
+  { method: 'GET', pattern: '/api/skills', handler: getSkills },
 
   // Ordering matters: the file routes are more specific than the listings.
   { method: 'GET', pattern: '/api/content/:kind/*', handler: readContent },

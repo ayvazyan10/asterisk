@@ -25,6 +25,12 @@ const state = {
   editor: { kind: null, path: null, content: '', original: '' },
   loaded: new Set(),
   logsTab: 'daemon',
+  // The Skills section keeps its own state — it reads the resolved set from
+  // /api/skills rather than the file tree. See ./app-skills.ts.
+  skills: null,
+  skill: null,
+  skillDraft: null,
+  skillFilter: '',
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -175,6 +181,15 @@ function contentEntry(kind) {
   return state.content.find((k) => k.kind === kind) || null;
 }
 
+// Skills count what the loader resolved, not what is on disk: most of them are
+// bundled and have no file, and a file that fails to validate is not a skill.
+// The other kinds are files and nothing else, so a file count is the truth.
+function kindCount(id) {
+  if (id === 'skills') return state.skills ? state.skills.counts.loaded : null;
+  const entry = contentEntry(id);
+  return entry ? entry.files.length : null;
+}
+
 // Counts come from /status where possible so the rail is accurate on first
 // paint. A count of null renders nothing, which is honest about "not loaded".
 const TABS = [
@@ -192,7 +207,7 @@ const TABS = [
   { group: 'Author', items: CONTENT_KINDS.map((k) => ({
     id: k.id,
     label: k.label,
-    count: () => { const e = contentEntry(k.id); return e ? e.files.length : null; },
+    count: () => kindCount(k.id),
   })) },
   { group: 'Access', items: [
     { id: 'tokens', label: 'Tokens', count: () => state.loaded.has('tokens') ? state.tokens.length : null },

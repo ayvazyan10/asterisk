@@ -24,9 +24,15 @@ import type { Skill } from './loader.ts';
 /** The only filename a skill directory is searched for. */
 export const SKILL_FILE = 'SKILL.md';
 
-// One token, so `/skill <name>` stays unambiguous and a name can never carry
-// a path separator into a join().
-const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/**
+ * One token, so `/skill <name>` stays unambiguous and a name can never carry a
+ * path separator into a join(). Exported because the control panel creates and
+ * deletes skill directories by name, and that is the check standing between a
+ * request body and an rm on a resolved path — it must be this pattern and not
+ * a second, looser copy of it. Note the leading class excludes '.', so '..'
+ * cannot match.
+ */
+export const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const MAX_NAME = 64;
 // Descriptions render as a single line in the `/skill` picker; the longest
 // bundled one is ~110 chars, so this is a guard rail, not a target.

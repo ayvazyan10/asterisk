@@ -187,6 +187,48 @@ const LAYOUT = String.raw`
 .file-item:hover { background: var(--surface-high); color: var(--ink); }
 .file-item[aria-current="true"] { background: var(--signal-wash); color: var(--ink); }
 
+/* --- skills ----------------------------------------------------------------- */
+
+.skill-search { padding: 0.6rem 0.7rem; border-bottom: 1px solid var(--border); }
+.skill-list-body { max-height: 46vh; overflow-y: auto; padding: 0.3rem; }
+
+.skill-group {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 0.7rem 0.5rem 0.3rem;
+}
+.skill-group:first-child { padding-top: 0.3rem; }
+
+.skill-item {
+  display: flex; flex-direction: column; gap: 0.1rem;
+  width: 100%; padding: 0.4rem 0.5rem;
+  border: 0; border-radius: var(--r-sm); background: transparent;
+  color: inherit; text-align: left; cursor: pointer;
+  transition: background-color var(--dur) var(--ease);
+}
+.skill-item:hover { background: var(--surface-high); }
+.skill-item[aria-current="true"] { background: var(--signal-wash); }
+.skill-item-name { font-family: var(--font-machine); font-size: var(--t-sm); }
+.skill-item-desc {
+  font-size: var(--t-xs); color: var(--ink-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.issue-path {
+  font-family: var(--font-machine); font-size: var(--t-xs);
+  font-weight: 400; color: var(--ink-faint); overflow-wrap: anywhere;
+}
+/* The message is prose the author has to act on, so it reads as prose. */
+.issue-message {
+  margin-top: 0.2rem; font-size: var(--t-sm);
+  color: var(--ink-dim); line-height: 1.5;
+}
+
+.skill-readonly-desc { font-size: var(--t-sm); color: var(--ink-dim); margin-bottom: 0.75rem; }
+.skill-prompt {
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--bg); white-space: pre-wrap; max-height: 34rem;
+}
+
 /* --- gate ------------------------------------------------------------------ */
 
 .gate { display: grid; place-items: center; min-height: 100vh; padding: 1.5rem; }

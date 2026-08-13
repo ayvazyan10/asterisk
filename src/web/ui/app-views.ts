@@ -336,7 +336,7 @@ async function loadLogRecords() { await Promise.all([loadLogs(), loadAudit()]); 
 // The system figure reads rule and skill counts alongside everything /status
 // returns, so the landing page fetches both and the figure is complete on
 // first paint rather than filling in a beat later.
-async function loadOverview() { await Promise.all([loadStatus(), loadContent()]); }
+async function loadOverview() { await Promise.all([loadStatus(), loadContent(), loadSkills()]); }
 
 const LOADERS = {
   overview: loadOverview, settings: loadSettings, mcp: loadMcp, hooks: loadHooks,
@@ -357,6 +357,11 @@ for (const k of CONTENT_KINDS) {
   LOADERS[k.id] = loadContent;
   VIEWS[k.id] = () => viewContent(k.id);
 }
+
+// Skills keep the sidebar entry the loop gave them and replace the view: they
+// are not a file tree to the agent. See ./app-skills.ts for why.
+LOADERS.skills = loadSkills;
+VIEWS.skills = viewSkills;
 
 function render() {
   renderSidebar();
@@ -379,11 +384,13 @@ async function goto(tab) {
 document.addEventListener('click', async (ev) => {
   const t = ev.target.closest('[data-tab],[data-action],[data-daemon],[data-toggle],[data-reset],' +
     '[data-revert],[data-mcp-toggle],[data-mcp-delete],[data-hook-toggle],[data-hook-delete],' +
-    '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-logs-tab]');
+    '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-logs-tab],' +
+    '[data-skill-open]');
   if (!t) return;
   const d = t.dataset;
 
   if (d.tab) return goto(d.tab);
+  if (d.skillOpen) return openSkill(d.skillOpen);
   // Both records are already loaded; switching is a re-render, not a fetch.
   if (d.logsTab) { state.logsTab = d.logsTab; return render(); }
   if (d.open) { const [kind, ...rest] = d.open.split('|'); return openFile(kind, rest.join('|')); }
@@ -533,6 +540,12 @@ document.addEventListener('click', async (ev) => {
       picker.click();
       return;
     }
+    case 'skill-save': return saveSkill();
+    case 'skill-delete': return deleteSkillEntry();
+    case 'skill-create': return createSkill();
+    case 'skill-revert':
+      state.skillDraft = { description: state.skill.description, prompt: state.skill.prompt };
+      return render();
     case 'doctor-rerun': state.doctor = null; render(); await loadDoctor(); return render();
     case 'logs-refresh': await loadLogRecords(); return render();
   }
@@ -554,13 +567,35 @@ document.addEventListener('change', (ev) => {
 });
 
 document.addEventListener('input', (ev) => {
-  if (ev.target.id === 'editor-body') {
+  const id = ev.target.id;
+
+  if (id === 'editor-body') {
     state.editor.content = ev.target.value;
     const save = document.querySelector('[data-action="content-save"]');
     const revert = document.querySelector('[data-action="content-revert"]');
     const changed = state.editor.content !== state.editor.original;
     if (save) save.disabled = !changed;
     if (revert) revert.disabled = !changed;
+    return;
+  }
+
+  // The skill editor toggles its own buttons rather than re-rendering, or the
+  // textarea would lose the caret on every keystroke.
+  if (id === 'skill-desc' || id === 'skill-body') {
+    state.skillDraft[id === 'skill-desc' ? 'description' : 'prompt'] = ev.target.value;
+    const dirty = skillDirty();
+    for (const action of ['skill-save', 'skill-revert']) {
+      const btn = document.querySelector('[data-action="' + action + '"]');
+      if (btn) btn.disabled = !dirty;
+    }
+    return;
+  }
+
+  if (id === 'skill-filter') {
+    state.skillFilter = ev.target.value;
+    // Only the list changes, and re-rendering the view would drop focus.
+    const card = document.querySelector('.skill-list-body');
+    if (card) card.innerHTML = skillGroups(state.skills);
   }
 });
 
