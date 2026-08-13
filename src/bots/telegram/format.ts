@@ -126,9 +126,10 @@ function applyInline(escaped: string): string {
   // Strikethrough.  ~~x~~
   s = s.replace(/~~([^~\n]+?)~~/g, '<s>$1</s>');
   // Links.  [text](url)
+  // The url arrives already HTML-escaped — see finishAttrEscape.
   s = s.replace(
     /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
-    (_, txt, url) => `<a href="${escapeAttr(url)}">${txt}</a>`,
+    (_, txt, url) => `<a href="${finishAttrEscape(url)}">${txt}</a>`,
   );
   // Headings — Telegram has no header tags. Render as bold + a blank line so
   // there is visual separation from the body text.
@@ -175,4 +176,20 @@ function escapeAttr(s: string): string {
   return s.replace(/[&<>"]/g, (c) =>
     c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;',
   );
+}
+
+/**
+ * Finishes attribute-escaping a value `tokenize` already put through
+ * `escapeHtml` — so `&`, `<` and `>` are done, and only `"` is left.
+ *
+ * Running the full `escapeAttr` here instead is the bug this replaced: the
+ * `&amp;` already in the string became `&amp;amp;`, and because an HTML parser
+ * decodes entities inside an attribute, Telegram turned that back into a
+ * literal `&amp;` in the href. Every link with two query parameters — a
+ * YouTube timestamp, a search result, anything with `?a=1&b=2` — arrived
+ * broken. Note that `escapeAttr` is still right for the fence language hint,
+ * which reaches it raw.
+ */
+function finishAttrEscape(escaped: string): string {
+  return escaped.replace(/"/g, '&quot;');
 }

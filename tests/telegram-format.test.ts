@@ -46,6 +46,41 @@ describe('markdownToTelegramHtml', () => {
     expect(out).toBe('<a href="https://example.com">click</a>');
   });
 
+  it('escapes an ampersand in a url exactly once', () => {
+    // The url reaches the link rule already escaped by the tokeniser, so
+    // escaping it again produced `&amp;amp;`. Telegram decodes entities inside
+    // an attribute, so that reached the user as a literal `&amp;` in the href
+    // and broke every link carrying two query parameters.
+    expect(markdownToTelegramHtml('[q](https://e.com/?a=1&b=2)')).toBe(
+      '<a href="https://e.com/?a=1&amp;b=2">q</a>',
+    );
+  });
+
+  it('survives the round trip an HTML parser will do to the href', () => {
+    // The check that matters is not what we emit but what Telegram reads back
+    // out of it, which is the entity-decoded form.
+    const href = /href="([^"]*)"/.exec(
+      markdownToTelegramHtml('[watch](https://youtu.be/x?v=abc&t=42s&list=PL1)'),
+    )?.[1];
+    const decoded = href?.replace(/&amp;/g, '&').replace(/&quot;/g, '"');
+    expect(decoded).toBe('https://youtu.be/x?v=abc&t=42s&list=PL1');
+  });
+
+  it('still escapes a quote that would close the href attribute', () => {
+    // A quote is the one character the tokeniser does not handle, because it
+    // is harmless in text and only matters once the value lands in an
+    // attribute. Dropping it would let a url break out of the href.
+    expect(markdownToTelegramHtml('[q](https://e.com/a"b)')).toBe(
+      '<a href="https://e.com/a&quot;b">q</a>',
+    );
+  });
+
+  it('escapes angle brackets in a url once', () => {
+    expect(markdownToTelegramHtml('[q](https://e.com/<x>)')).toBe(
+      '<a href="https://e.com/&lt;x&gt;">q</a>',
+    );
+  });
+
   it('escapes HTML special chars in plain text', () => {
     expect(markdownToTelegramHtml('a < b & c > d')).toBe('a &lt; b &amp; c &gt; d');
   });
