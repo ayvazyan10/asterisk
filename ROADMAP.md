@@ -17,11 +17,11 @@ statement of priority for `0.4.x` is therefore not a feature: it is coverage,
 and whatever the first outside users actually report. New items should arrive
 from issues, not from this file.
 
-`src/bots/telegram` was the surface this paragraph used to name at ~32%. It is
-done — a fake Bot API drives the adapter, and the module measures 98.95
-statements / 95.40 branches / 97.36 functions / 100 lines. The untested
-surfaces now are `src/web` (0%, no HTTP-level tests) and `src/tools/code`
-(~3%, the interpreter).
+`src/bots/telegram` was the surface this paragraph used to name at ~32%. All of
+`src/bots` is done now — a fake Bot API drives the adapter, and `adapter.ts`,
+`commands.ts` and `manager.ts` sit at 100% statements, functions and branches,
+with `telegram/index.ts` at 98/94/96. The untested surfaces now are `src/web`
+(0%, no HTTP-level tests) and `src/tools/code` (~3%, the interpreter).
 
 ### ~~Skill marketplace~~ — dropped
 Cut on 2026-07-31. The bundled set stays the whole story; skills are still

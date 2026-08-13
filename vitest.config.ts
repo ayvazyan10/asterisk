@@ -16,20 +16,22 @@ export default defineConfig({
       // even installed and `--coverage` errored out, so they had never been
       // checked once.
       //
-      // Measured now: 78.95 lines / 80.72 functions / 69.76 branches /
-      // 77.26 statements. The Telegram transport is no longer the hole this
-      // comment used to name — the fake Bot API landed and `src/bots/telegram`
-      // now measures 98.95 / 95.40 / 97.36 / 100. What remains uncovered there
-      // is defensive: `?? fallback` arms behind arrays that are never empty,
-      // and `stopped` re-checks on timers that were already cleared. Reaching
-      // them would mean reaching past the module's surface, so they stay.
+      // Measured now: 79.36 lines / 81.12 functions / 70.25 branches /
+      // 77.63 statements. The Telegram transport is no longer the hole this
+      // comment used to name — the fake Bot API landed and the whole of
+      // `src/bots` is now covered: adapter.ts, commands.ts and manager.ts at
+      // 100% statements/functions/branches, telegram/format.ts at 100/100/98,
+      // telegram/index.ts at 98/96/94. What stays uncovered there is
+      // defensive: `?? fallback` arms behind arrays that are never empty, and
+      // `stopped` re-checks on timers that were already cleared. Reaching them
+      // would mean reaching past the module's surface, so they stay.
       //
       // What is left is nameable: `src/web` (0%, no HTTP-level tests) and
       // `src/tools/code` (~3%, the interpreter).
       thresholds: {
-        lines: 78,
-        functions: 80,
-        branches: 69,
+        lines: 79,
+        functions: 81,
+        branches: 70,
         statements: 77,
       },
     },

@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,9 +8,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runWithSession } from '../src/agent/context.ts';
 import { type AgentState, createAgentState } from '../src/agent/loop.ts';
 import { BOT_COMMAND_LIST, tryHandleBotCommand } from '../src/bots/commands.ts';
+import { loadConfig, saveConfig } from '../src/config/load.ts';
 import { readSessionSoul } from '../src/soul/loader.ts';
 import { isPlanMode, setPlanMode } from '../src/tools/planmode.ts';
-import { _resetTasksForTesting, taskCreateTool } from '../src/tools/tasks.ts';
+import {
+  _allTasks,
+  _resetTasksForTesting,
+  taskCreateTool,
+  taskUpdateTool,
+} from '../src/tools/tasks.ts';
+import { enterWorktreeTool, exitWorktreeTool } from '../src/tools/worktree.ts';
 
 function ctx(state: AgentState) {
   return { state, providerName: 'ollama:test' };
@@ -216,6 +225,176 @@ describe('bot commands', () => {
     expect(r?.text).toMatch(/unknown style/);
     expect(r?.text).toMatch(/default/);
     expect(r?.text).toMatch(/concise/);
+  });
+
+  it('/start greets with the same help text', async () => {
+    // Telegram sends /start on the very first contact, before the user has
+    // typed anything — it is the one command a new user is guaranteed to hit.
+    const r = await runWithSession(SESSION, async () => tryHandleBotCommand('/start', ctx(state)));
+    expect(r?.text).toMatch(/I'm Asterisk/);
+  });
+
+  it('/status counts tasks by status and pluralises the history line', async () => {
+    await runWithSession(SESSION, async () => {
+      state.history.push(
+        { role: 'user', content: [{ type: 'text', text: 'one' }] },
+        { role: 'user', content: [{ type: 'text', text: 'two' }] },
+      );
+      for (const title of ['a', 'b', 'c', 'd']) await taskCreateTool.execute({ title });
+      const ids = _allTasks().map((t) => t.id);
+      await taskUpdateTool.execute({ id: ids[1], status: 'in_progress' });
+      await taskUpdateTool.execute({ id: ids[2], status: 'completed' });
+      await taskUpdateTool.execute({ id: ids[3], status: 'cancelled' });
+
+      const r = tryHandleBotCommand('/status', ctx(state));
+      expect(r?.text).toMatch(/History\s+2 messages/);
+      expect(r?.text).toMatch(/Tasks\s+4 total · 1 in_progress · 1 done · 1 pending/);
+    });
+  });
+
+  it('/status reports plan mode when it is on', async () => {
+    await runWithSession(SESSION, async () => {
+      setPlanMode(true);
+      const r = tryHandleBotCommand('/status', ctx(state));
+      expect(r?.text).toMatch(/Plan Mode\s+ON \(read-only\)/);
+    });
+  });
+
+  it('/status names the anthropic model when anthropic is the provider', async () => {
+    // The model line reads from a different config branch per provider, so a
+    // provider switch is exactly where it can start reporting the wrong one.
+    const cfg = loadConfig().config;
+    saveConfig({
+      ...cfg,
+      provider: 'anthropic',
+      anthropic: { ...cfg.anthropic, model: 'claude-sonnet-5' },
+    });
+    const r = await runWithSession(SESSION, async () => tryHandleBotCommand('/status', ctx(state)));
+    expect(r?.text).toMatch(/Model\s+claude-sonnet-5/);
+  });
+
+  it('/status names the active worktree', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'asterisk-bot-wt-'));
+    const cwd = process.cwd();
+    const git = (...args: string[]): void => {
+      execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+    };
+    try {
+      git('init', '-b', 'master');
+      writeFileSync(join(repo, 'a.txt'), 'x\n');
+      git('add', '.');
+      git('-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '-m', 'first');
+      process.chdir(repo);
+
+      const status = await runWithSession(SESSION, async () => {
+        await enterWorktreeTool.execute({ branch: 'wt-test', path: join(home, 'wt') });
+        const r = tryHandleBotCommand('/status', ctx(state));
+        // Drop it again inside the same session, or the module-level map
+        // leaks an active worktree into every later test in this file.
+        await exitWorktreeTool.execute({ force: true });
+        return r;
+      });
+
+      expect(status?.text).toMatch(/Worktree\s+\S*wt \(branch wt-test\)/);
+    } finally {
+      process.chdir(cwd);
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('/tasks marks each status with its own glyph and appends descriptions', async () => {
+    await runWithSession(SESSION, async () => {
+      await taskCreateTool.execute({ title: 'pending one' });
+      await taskCreateTool.execute({ title: 'running', description: 'half done' });
+      await taskCreateTool.execute({ title: 'finished' });
+      await taskCreateTool.execute({ title: 'dropped' });
+      const ids = _allTasks().map((t) => t.id);
+      await taskUpdateTool.execute({ id: ids[1], status: 'in_progress' });
+      await taskUpdateTool.execute({ id: ids[2], status: 'completed' });
+      await taskUpdateTool.execute({ id: ids[3], status: 'cancelled' });
+
+      const text = tryHandleBotCommand('/tasks', ctx(state))?.text ?? '';
+      expect(text).toMatch(/○ #\S+ {2}pending one/);
+      expect(text).toMatch(/◐ #\S+ {2}running — half done/);
+      expect(text).toMatch(/✓ #\S+ {2}finished/);
+      expect(text).toMatch(/✗ #\S+ {2}dropped/);
+    });
+  });
+
+  it('/soul set with no text explains itself instead of saving nothing', async () => {
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/soul set', ctx(state)),
+    );
+    expect(r?.text).toMatch(/Usage: \/soul set/);
+    expect(readSessionSoul(SESSION)).toBeNull();
+  });
+
+  it('/soul clear says so when there was nothing to clear', async () => {
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/soul clear', ctx(state)),
+    );
+    expect(r?.text).toMatch(/nothing to clear/);
+  });
+
+  it('/soul edit points at /soul set when there is nothing to edit', async () => {
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/soul edit', ctx(state)),
+    );
+    expect(r?.text).toMatch(/no personal soul yet/);
+    expect(r?.text).toMatch(/\/soul set/);
+  });
+
+  it('/soul show is a synonym for a bare /soul', async () => {
+    const r = await runWithSession(SESSION, async () => {
+      tryHandleBotCommand('/soul set SHOWN PERSONA', ctx(state));
+      return tryHandleBotCommand('/soul show', ctx(state));
+    });
+    expect(r?.text).toMatch(/SHOWN PERSONA/);
+  });
+
+  it('/soul with an unrecognised verb names it rather than guessing', async () => {
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/soul frobnicate', ctx(state)),
+    );
+    expect(r?.text).toMatch(/Unknown subcommand "frobnicate"/);
+    expect(r?.text).toMatch(/\/soul help/);
+  });
+
+  it('labels every soul layer it loaded', async () => {
+    // Three layers with three different labels; the point of showing them is
+    // that a user can tell which one to change.
+    const project = await mkdtemp(join(tmpdir(), 'asterisk-bot-soul-'));
+    const cwd = process.cwd();
+    try {
+      writeFileSync(join(home, 'SOUL.md'), 'OPERATOR LAYER');
+      writeFileSync(join(project, 'SOUL.md'), 'PROJECT LAYER');
+      process.chdir(project);
+
+      const r = await runWithSession(SESSION, async () => {
+        tryHandleBotCommand('/soul set SESSION LAYER', ctx(state));
+        return tryHandleBotCommand('/soul', ctx(state));
+      });
+
+      const text = r?.text ?? '';
+      expect(text).toMatch(/operator soul/);
+      expect(text).toMatch(/your soul/);
+      expect(text).toMatch(/project soul/);
+      expect(text).toContain('OPERATOR LAYER');
+      expect(text).toContain('SESSION LAYER');
+      expect(text).toContain('PROJECT LAYER');
+    } finally {
+      process.chdir(cwd);
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  it('truncates a soul too long to send back in one message', async () => {
+    const r = await runWithSession(SESSION, async () => {
+      tryHandleBotCommand(`/soul set ${'L'.repeat(1600)}`, ctx(state));
+      return tryHandleBotCommand('/soul', ctx(state));
+    });
+    expect(r?.text).toContain('…(truncated)');
+    expect(r?.text?.match(/L/g)).toHaveLength(1500);
   });
 
   it('command list is non-empty and well-formed', () => {
