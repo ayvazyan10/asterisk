@@ -2,15 +2,11 @@
 // overview and settings.
 //
 // Vanilla DOM on purpose — no build step, no framework, and the whole page
-// stays inlineable under a CSP nonce. Concatenated with APP_VIEWS at render
-// time, so both halves share one scope.
+// stays inlineable under a CSP nonce. Concatenated with APP_STAR and APP_VIEWS
+// at render time, so all three share one scope.
 //
 // Every value that reaches innerHTML goes through esc(); listeners are
 // attached via delegation because the CSP forbids inline handlers.
-//
-// The `ui.*` builders below are the markup counterpart to ./components.ts —
-// one function per shadcn component, so a card or a badge is described in one
-// place rather than re-spelled at each of its two dozen call sites.
 
 export const APP_CORE = String.raw`
 const state = {
@@ -28,7 +24,6 @@ const state = {
   doctor: null,
   editor: { kind: null, path: null, content: '', original: '' },
   loaded: new Set(),
-  // Which record the Logs tab is showing: 'daemon' | 'audit'.
   logsTab: 'daemon',
 };
 
@@ -64,8 +59,8 @@ const ui = {
       esc(label) + '</span>';
   },
 
-  // on/off is the panel's most repeated state, and it always renders the same
-  // way: a dotted badge, green when live and grey when not.
+  // on/off is the panel's most repeated state. Live things take the warm
+  // accent, absent things go quiet — see the colour rule in ./components.ts.
   stateBadge(on, onLabel, offLabel) {
     return ui.badge(on ? (onLabel || 'on') : (offLabel || 'off'), on ? 'success' : 'muted', true);
   },
@@ -76,25 +71,12 @@ const ui = {
       (o.attrs || '') + (o.disabled ? ' disabled' : '') + '>' + esc(label) + '</button>';
   },
 
-  // A card whose header carries a title and an optional right-aligned count or
-  // status. \`divided\` draws the rule under the header that list cards want and
-  // form cards do not.
   card(title, body, opts) {
     const o = opts || {};
     const aside = o.aside === undefined || o.aside === null ? '' : o.aside;
     return '<section class="card' + (o.divided === false ? '' : ' card-divided') + '">' +
       '<header class="card-header"><h3 class="card-title">' + esc(title) + '</h3>' + aside + '</header>' +
       body + '</section>';
-  },
-
-  statCard(label, value, opts) {
-    const o = opts || {};
-    return '<div class="stat-card">' +
-      '<div class="stat-label">' + esc(label) + (o.badge || '') + '</div>' +
-      '<div class="stat-value' + (o.small ? ' stat-value-sm' : '') +
-        (o.tone ? ' stat-value-' + o.tone : '') + '">' + esc(value) + '</div>' +
-      (o.hint ? '<div class="stat-hint">' + esc(o.hint) + '</div>' : '') +
-    '</div>';
   },
 
   listRow(title, detail, actions, leading) {
@@ -118,7 +100,7 @@ const ui = {
     ).join('') + '</div>';
   },
 
-  // Skeletons rather than the word "Loading…": the shape of what is coming is
+  // Skeletons rather than the word "Loading": the shape of what is coming is
   // already known, and showing it stops the page reflowing when data lands.
   skeletonRows(count) {
     let out = '';
@@ -129,11 +111,11 @@ const ui = {
     return out;
   },
 
-  // The title is escaped; the description is not, because every caller passes
-  // markup through it (<code> spans naming a path or a command). Keep that
-  // asymmetry in mind before routing anything user-supplied into either.
-  pageHeader(title, description) {
-    return '<header class="page-header"><h2 class="page-title">' + esc(title) + '</h2>' +
+  // The human names the thing, the machine names where it lives. The title is
+  // escaped; the description is not, because callers pass markup through it.
+  pageHeader(title, description, subject) {
+    return '<header class="page-header"><h2 class="page-title">' + esc(title) +
+      (subject ? '<span class="page-subject">' + esc(subject) + '</span>' : '') + '</h2>' +
       '<p class="page-description">' + description + '</p></header>';
   },
 };
@@ -180,10 +162,8 @@ async function guard(fn, successMessage) {
 
 // --- shell ---------------------------------------------------------------
 
-// The four editable content kinds, each its own destination. They used to
-// share a single "Rules & skills" tab, which meant scrolling past three
-// mostly-empty card stacks to reach the fourth. One /content call still backs
-// all four, so opening any one fills in the others' counts.
+// The four editable content kinds, each its own destination. One /content
+// call backs all four, so opening any one fills in the others' counts.
 const CONTENT_KINDS = [
   { id: 'rules', label: 'Rules' },
   { id: 'skills', label: 'Skills' },
@@ -195,17 +175,12 @@ function contentEntry(kind) {
   return state.content.find((k) => k.kind === kind) || null;
 }
 
-// Counts come from /status where possible so the sidebar is accurate on first
-// paint, before the corresponding tab has ever been opened. A count of null
-// renders nothing, which is honest about "not loaded yet".
+// Counts come from /status where possible so the rail is accurate on first
+// paint. A count of null renders nothing, which is honest about "not loaded".
 const TABS = [
   { group: 'Monitor', items: [
     { id: 'overview', label: 'Overview' },
     { id: 'doctor', label: 'Diagnostics' },
-    // One destination for everything that is a log. The daemon tail and the
-    // audit trail are both append-only records of what happened; splitting
-    // them across two sidebar entries made the section look twice as busy as
-    // it is, and neither name told you the other existed.
     { id: 'logs', label: 'Logs' },
   ]},
   { group: 'Configure', items: [
@@ -230,25 +205,24 @@ function renderSidebar() {
     section.items.map((tab) => {
       const count = tab.count ? tab.count() : null;
       return '<button class="nav-item" data-tab="' + esc(tab.id) + '" aria-current="' +
-        (state.tab === tab.id) + '"><span>' + esc(tab.label) + '</span>' +
+        (state.tab === tab.id) + '"><span class="nav-label">' + esc(tab.label) + '</span>' +
         (count === null || count === undefined ? '' : '<span class="nav-count">' + count + '</span>') +
         '</button>';
     }).join('')
   )).join('');
 
   const s = state.status;
-  $('.brand-meta').textContent = s ? 'v' + s.version + ' · ' + s.runtime : 'connecting…';
+  $('.brand-meta').textContent = s ? 'v' + s.version : '';
 }
 
 function renderHeader() {
   const s = state.status;
   if (!s) return;
   $('.header').innerHTML =
-    '<div class="header-stat"><span class="header-stat-label">Provider</span>' +
-      '<span class="header-stat-value">' + esc(s.provider) + '</span></div>' +
-    '<div class="header-stat"><span class="header-stat-label">Model</span>' +
+    '<div class="header-stat"><span class="header-stat-label">model</span>' +
       '<span class="header-stat-value">' + esc(s.model) + '</span></div>' +
-    '<div class="header-stat">' + ui.stateBadge(s.daemon.running, 'daemon up', 'daemon down') + '</div>' +
+    '<div class="header-stat"><span class="header-stat-label">via</span>' +
+      '<span class="header-stat-value">' + esc(s.provider) + '</span></div>' +
     '<div class="header-spacer"></div>' +
     '<div class="header-actions">' +
       ui.btn('Theme', { variant: 'ghost', size: 'sm', attrs: ' data-action="theme"' }) +
@@ -261,58 +235,42 @@ function renderHeader() {
 function viewOverview() {
   const s = state.status;
   if (!s) {
-    return ui.pageHeader('Overview', 'Live state of this Asterisk install.') +
-      '<div class="stat-grid">' +
-        '<div class="stat-card"><div class="skeleton skeleton-line w60"></div>' +
-        '<div class="skeleton skeleton-line w40"></div></div>' +
-        '<div class="stat-card"><div class="skeleton skeleton-line w60"></div>' +
-        '<div class="skeleton skeleton-line w40"></div></div>' +
-        '<div class="stat-card"><div class="skeleton skeleton-line w60"></div>' +
-        '<div class="skeleton skeleton-line w40"></div></div>' +
-      '</div>';
+    return ui.pageHeader('Overview', 'Reading the state of this install.') +
+      '<section class="card">' + ui.skeletonRows(3) + '</section>';
   }
 
-  const stats =
-    ui.statCard('Provider', s.provider, { small: true }) +
-    ui.statCard('MCP servers', s.counts.enabledMcpServers + '/' + s.counts.mcpServers,
-      { hint: 'enabled / configured' }) +
-    ui.statCard('Hooks', s.counts.enabledHooks + '/' + s.counts.hooks,
-      { hint: 'enabled / configured' }) +
-    ui.statCard('Database', bytes(s.database.bytes), { small: true, hint: 'on disk' }) +
-    ui.statCard('Daemon', s.daemon.running ? 'up' : 'down',
-      { small: true, tone: s.daemon.running ? 'success' : 'muted' });
-
-  const daemon = ui.card('Daemon', ui.listRow(
-      'Process', s.daemon.message,
+  const daemon = ui.card('Daemon',
+    ui.listRow('Background process', s.daemon.message,
       ui.btn('Start', { attrs: ' data-daemon="start"', disabled: s.daemon.running }) +
       ui.btn('Restart', { attrs: ' data-daemon="restart"', disabled: !s.daemon.running }) +
       ui.btn('Stop', { variant: 'outline-destructive', attrs: ' data-daemon="stop"', disabled: !s.daemon.running })
-    ) + ui.listRow('Bot bridges', null,
-      ui.stateBadge(s.bots.telegram, 'telegram on', 'telegram off')
-    ),
+    ) +
+    ui.listRow('Telegram bridge',
+      s.bots.telegram ? 'Answers messages while the daemon runs.' : 'Turn it on in Settings.',
+      ui.stateBadge(s.bots.telegram)),
     { aside: ui.stateBadge(s.daemon.running, 'running', 'stopped') });
 
-  const config = ui.card('Configuration file', ui.listRow(
-    'Export / import',
-    'JSON snapshot of every setting. Secrets are never included.',
-    ui.btn('Download JSON', { attrs: ' data-action="export"' }) +
-    ui.btn('Upload JSON', { attrs: ' data-action="import"' })
-  ));
+  const store = ui.card('On disk',
+    ui.listRow('Database', s.database.path, ui.badge(bytes(s.database.bytes), 'secondary')) +
+    ui.listRow('Settings backup', 'A JSON copy of every setting. Secrets are never included.',
+      ui.btn('Download', { attrs: ' data-action="export"' }) +
+      ui.btn('Restore', { attrs: ' data-action="import"' })));
 
   return ui.pageHeader('Overview',
-      'Live state of this Asterisk install. Everything below is stored in <code class="code-inline">' +
-      esc(s.database.path) + '</code>.') +
-    '<div class="stat-grid">' + stats + '</div>' + daemon + config;
+      'Everything Asterisk is wired to, running on this machine. Pick a spoke to go to it.') +
+    '<div class="overview-grid">' + systemFigure() +
+      '<div>' + daemon + store + '</div>' +
+    '</div>';
 }
 
 // --- settings ------------------------------------------------------------
 
 function viewSettings() {
   const header = ui.pageHeader('Settings',
-    'Generated from the configuration schema — every field Asterisk understands appears here, with ' +
-    'its own validation bounds. Edits are staged until you apply them.');
+    'Generated from the configuration schema, so every field Asterisk understands is here with its ' +
+    'own bounds. Edits are staged until you apply them.');
 
-  if (!state.settings) return header + ui.card('Loading', ui.skeletonRows(4));
+  if (!state.settings) return header + '<section class="card">' + ui.skeletonRows(4) + '</section>';
 
   const groups = state.settings.groups
     .map((group) => ui.card(group.group, group.fields.map(fieldRow).join('')))
@@ -353,17 +311,17 @@ function control(field, value, id) {
       ).join('') + '</select>';
   }
   if (field.kind === 'number') {
-    return '<input class="input input-mono" type="number" id="' + esc(id) + '" data-input="' + esc(field.path) + '"' +
+    return '<input class="input" type="number" id="' + esc(id) + '" data-input="' + esc(field.path) + '"' +
       (field.min !== undefined ? ' min="' + field.min + '"' : '') +
       (field.max !== undefined ? ' max="' + field.max + '"' : '') +
       (field.integer ? ' step="1"' : '') +
       ' value="' + esc(value) + '">';
   }
   if (field.kind === 'number-array' || field.kind === 'string-array') {
-    return '<input class="input input-mono" type="text" id="' + esc(id) + '" data-input="' + esc(field.path) + '"' +
+    return '<input class="input" type="text" id="' + esc(id) + '" data-input="' + esc(field.path) + '"' +
       ' placeholder="comma separated" value="' + esc((value || []).join(', ')) + '">';
   }
-  return '<input class="input input-mono" type="text" id="' + esc(id) + '" data-input="' +
+  return '<input class="input" type="text" id="' + esc(id) + '" data-input="' +
     esc(field.path) + '" value="' + esc(value) + '">';
 }
 
@@ -411,8 +369,8 @@ function renderSaveBar() {
   if (!bar) return;
   if (state.dirty.size === 0) { bar.innerHTML = ''; return; }
   bar.innerHTML = '<div class="save-bar">' +
-    '<span class="save-bar-count">' + state.dirty.size + ' pending change' +
-      (state.dirty.size === 1 ? '' : 's') + '</span>' +
+    '<span class="save-bar-count">' + state.dirty.size + ' change' +
+      (state.dirty.size === 1 ? '' : 's') + ' staged</span>' +
     ui.btn('Discard', { variant: 'ghost', attrs: ' data-action="discard"' }) +
     ui.btn('Apply', { variant: 'default', attrs: ' data-action="apply"' }) +
   '</div>';

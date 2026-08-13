@@ -7,6 +7,7 @@
 // than installed.
 
 import { APP_CORE } from './app-core.ts';
+import { APP_STAR } from './app-star.ts';
 import { APP_VIEWS } from './app-views.ts';
 import { STYLES } from './styles.ts';
 
@@ -85,13 +86,13 @@ export function renderIndexHtml(opts: RenderOptions): string {
   return `${head(opts.nonce, 'Asterisk control panel')}
 <body>
 <div class="shell">
-  <aside class="sidebar">
+  <aside class="rail">
     <div class="brand">
       <div class="brand-name">Asterisk<span class="brand-mark">*</span></div>
-      <div class="brand-meta">connecting…</div>
+      <div class="brand-meta"></div>
     </div>
     <nav class="nav" aria-label="Sections"></nav>
-    <div class="sidebar-footer">
+    <div class="rail-foot">
       <button class="btn btn-outline btn-sm" data-action="refresh">Reload data</button>
     </div>
   </aside>
@@ -101,7 +102,7 @@ export function renderIndexHtml(opts: RenderOptions): string {
   </div>
 </div>
 <div class="toasts" role="status" aria-live="polite"></div>
-<script nonce="${nonce}">${APP_CORE}\n${APP_VIEWS}</script>
+<script nonce="${nonce}">${APP_CORE}\n${APP_STAR}\n${APP_VIEWS}</script>
 </body>
 </html>`;
 }

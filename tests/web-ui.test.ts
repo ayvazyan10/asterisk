@@ -18,11 +18,13 @@ import { describe, expect, it } from 'vitest';
 
 import { CONTENT_KINDS } from '../src/web/api/content.ts';
 import { APP_CORE } from '../src/web/ui/app-core.ts';
+import { APP_STAR } from '../src/web/ui/app-star.ts';
 import { APP_VIEWS } from '../src/web/ui/app-views.ts';
 import { renderIndexHtml } from '../src/web/ui/index.ts';
 import { STYLES } from '../src/web/ui/styles.ts';
 
-const CLIENT = `${APP_CORE}\n${APP_VIEWS}`;
+// The same concatenation ./index.ts inlines, in the same order.
+const CLIENT = `${APP_CORE}\n${APP_STAR}\n${APP_VIEWS}`;
 
 /** A top-level `const NAME = [ … ];` array literal, as source text. */
 function arrayLiteral(name: string): string {
@@ -106,10 +108,11 @@ describe('the client script', () => {
 
 describe('the stylesheet', () => {
   it('gives dark every palette token light defines', () => {
-    // Type scale, radii, timings and layout metrics are declared once and are
-    // the same in both themes by design. Everything else is palette, and a
-    // palette token present in one theme and absent from the other is a bug.
-    const structural = /^--(font|text|radius|shadow|sidebar|header|duration|ease)/;
+    // Type scale, radii, timings, the rail's own colours and layout metrics
+    // are declared once and are the same in both themes by design. Everything
+    // else is palette, and a palette token present in one theme and absent
+    // from the other silently resolves to the wrong colour.
+    const structural = /^--(rail|bar$|font-|r-|t-|track-|dur$|ease$|shadow-\d)/;
     const light = customProperties(ruleBody(STYLES, ':root {'));
     const dark = customProperties(ruleBody(STYLES, ':root[data-theme="dark"] {'));
 

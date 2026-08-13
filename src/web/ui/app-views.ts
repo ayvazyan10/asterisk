@@ -160,10 +160,9 @@ function viewContent(kind) {
     return ui.pageHeader(label, 'Loading…') + ui.card('Files', ui.skeletonRows(3));
   }
 
-  // Both halves come from the API, so both are escaped before they land in
-  // pageHeader — which takes its description as markup, not as text.
-  const header = ui.pageHeader(label,
-    esc(entry.description) + ' Stored under <code class="code-inline">' + esc(entry.root) + '</code>.');
+  // The description is the API's own words for the kind; the root is where
+  // the files live, which is the machine's half of the title.
+  const header = ui.pageHeader(label, esc(entry.description), entry.root);
 
   const list = ui.card('Files',
     '<div class="file-list">' +
@@ -282,13 +281,18 @@ const LOG_TABS = [
 ];
 
 const LOG_DESCRIPTIONS = {
-  daemon: 'Tail of <code class="code-inline">~/.asterisk/logs/daemon.log</code>.',
+  daemon: 'What the background process has been doing.',
   audit: 'Every change made through this panel.',
+};
+
+const LOG_SUBJECTS = {
+  daemon: '~/.asterisk/logs/daemon.log',
+  audit: '',
 };
 
 function viewLogs() {
   const active = state.logsTab;
-  return ui.pageHeader('Logs', LOG_DESCRIPTIONS[active] || '') +
+  return ui.pageHeader('Logs', LOG_DESCRIPTIONS[active] || '', LOG_SUBJECTS[active]) +
     '<div class="section-actions mb">' +
       ui.tabs(LOG_TABS, active, 'logs-tab') +
       ui.btn('Refresh', { attrs: ' data-action="logs-refresh"' }) +
@@ -329,8 +333,13 @@ async function loadDoctor()   { state.doctor = await guard(() => api('/doctor'))
 // right trade against a spinner every time you toggle.
 async function loadLogRecords() { await Promise.all([loadLogs(), loadAudit()]); }
 
+// The system figure reads rule and skill counts alongside everything /status
+// returns, so the landing page fetches both and the figure is complete on
+// first paint rather than filling in a beat later.
+async function loadOverview() { await Promise.all([loadStatus(), loadContent()]); }
+
 const LOADERS = {
-  overview: loadStatus, settings: loadSettings, mcp: loadMcp, hooks: loadHooks,
+  overview: loadOverview, settings: loadSettings, mcp: loadMcp, hooks: loadHooks,
   secrets: loadSecrets, tokens: loadTokens,
   logs: loadLogRecords, doctor: loadDoctor,
 };
