@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { z } from 'zod';
 
+import { asOutgoingMessage, inferAttachmentKind } from '../src/bots/adapter.ts';
 import { createBotManager } from '../src/bots/manager.ts';
 import type { LoadedConfig } from '../src/config/load.ts';
 import { ConfigSchema } from '../src/config/schema.ts';
@@ -41,5 +42,53 @@ describe('BotManager', () => {
     const started = await manager.start(async () => 'ok');
     expect(started).toEqual([]);
     await manager.stop();
+  });
+});
+
+describe('asOutgoingMessage', () => {
+  it('wraps a bare string reply', () => {
+    expect(asOutgoingMessage('hi')).toEqual({ text: 'hi' });
+  });
+
+  it('passes a structured reply through untouched', () => {
+    const msg = { text: 'here', attachments: [{ kind: 'image' as const, path: '/tmp/a.png' }] };
+    expect(asOutgoingMessage(msg)).toBe(msg);
+  });
+});
+
+describe('inferAttachmentKind', () => {
+  it.each([
+    ['/tmp/shot.png', 'image'],
+    ['/tmp/photo.jpeg', 'image'],
+    ['/tmp/clip.mp4', 'video'],
+    ['/tmp/clip.mkv', 'video'],
+    ['/tmp/voice.ogg', 'audio'],
+    ['/tmp/song.flac', 'audio'],
+  ] as const)('maps %s to %s', (path, kind) => {
+    expect(inferAttachmentKind(path)).toBe(kind);
+  });
+
+  it('ignores the case of the extension', () => {
+    // Screenshots off a phone arrive as .PNG often enough to matter.
+    expect(inferAttachmentKind('/tmp/SHOT.PNG')).toBe('image');
+  });
+
+  it('falls back to document for an extension it does not know', () => {
+    expect(inferAttachmentKind('/tmp/report.pdf')).toBe('document');
+  });
+
+  it('falls back to document when the name has no extension', () => {
+    expect(inferAttachmentKind('/tmp/LICENSE')).toBe('document');
+  });
+
+  it('reads the extension from the last dot, not the first', () => {
+    expect(inferAttachmentKind('/tmp/archive.tar.mp3')).toBe('audio');
+  });
+
+  it('does not misread a dotted directory as an extension', () => {
+    // The last dot here belongs to '.asterisk', not to the file. The lookup
+    // then misses and lands on 'document' — the right answer, though it
+    // arrives by the map missing rather than by the path being parsed.
+    expect(inferAttachmentKind('/home/u/.asterisk/shot')).toBe('document');
   });
 });

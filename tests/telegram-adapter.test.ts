@@ -26,6 +26,8 @@ const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
     setMyCommandsCalls: unknown[][] = [];
     /** Set to make setMyCommands reject, as Telegram sometimes does. */
     setMyCommandsError: Error | null = null;
+    /** Set to make stop() reject — grammy does when the runner already died. */
+    stopError: Error | null = null;
 
     readonly api = {
       setMyCommands: async (...args: unknown[]): Promise<void> => {
@@ -48,6 +50,7 @@ const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
 
     async stop(): Promise<void> {
       this.stopCalls += 1;
+      if (this.stopError) throw this.stopError;
     }
   }
 
@@ -61,6 +64,8 @@ vi.mock('grammy', async (importOriginal) => {
 
 const { GrammyError } = await import('grammy');
 const { createTelegramAdapter } = await import('../src/bots/telegram/index.ts');
+const { createBotManager } = await import('../src/bots/manager.ts');
+const { ConfigSchema } = await import('../src/config/schema.ts');
 import type { Handler, StreamEvent } from '../src/bots/adapter.ts';
 import type { TelegramAdapterOptions } from '../src/bots/telegram/index.ts';
 
@@ -245,6 +250,21 @@ describe('the allowlist', () => {
     const onMessage = await start({}, handler);
     const ctx = new FakeCtx();
     ctx.message = { text: '' };
+
+    await onMessage(ctx);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(ctx.calls).toHaveLength(0);
+  });
+
+  it('ignores an allowed sender whose update carries no message', async () => {
+    // `message` is optional on Context even for a message:text filter, and an
+    // absent one must read as "nothing to answer" rather than as an empty
+    // prompt handed to the model.
+    const handler = vi.fn(async () => 'ok');
+    const onMessage = await start({}, handler);
+    const ctx = new FakeCtx();
+    ctx.message = undefined;
 
     await onMessage(ctx);
 
@@ -492,6 +512,43 @@ describe('status mode', () => {
 
     expect(ctx.texts('editMessageText').at(-1)).toBe('(no reply)');
   });
+
+  it('writes the status unmarked when markup is off', async () => {
+    const onMessage = await start(
+      { streamMode: 'status', parseMode: 'plain' },
+      async (_msg, opts) => {
+        opts?.sink?.({ type: 'status', text: 'Bash · npm test' });
+        return 'done';
+      },
+    );
+    const ctx = new FakeCtx();
+    await onMessage(ctx);
+
+    const status = ctx.texts('editMessageText').find((t) => t.includes('Bash · npm test'));
+    expect(status).toBeDefined();
+    expect(status).not.toContain('<i>');
+    const editOpts = ctx.calls.filter((c) => c.method === 'editMessageText').map((c) => c.opts);
+    expect(editOpts.every((o) => o === undefined)).toBe(true);
+  });
+
+  it('truncates a status too long to sit in the placeholder', async () => {
+    // A tool can report something enormous — a grep pattern, a long path.
+    // The placeholder is a progress line, not the payload.
+    const onMessage = await start(
+      { streamMode: 'status', parseMode: 'plain' },
+      async (_msg, opts) => {
+        opts?.sink?.({ type: 'status', text: 'z'.repeat(300) });
+        return 'done';
+      },
+    );
+    const ctx = new FakeCtx();
+    await onMessage(ctx);
+
+    const status = ctx.texts('editMessageText').find((t) => t.includes('zzz'));
+    expect(status).toBeDefined();
+    expect(status).toContain('…');
+    expect(status?.match(/z/g)).toHaveLength(200);
+  });
 });
 
 describe('stream mode', () => {
@@ -598,6 +655,186 @@ describe('stream mode', () => {
     expect(ctx.texts('editMessageText').at(-1)?.length).toBe(4096);
     expect(ctx.texts('reply').at(-1)?.length).toBe(50);
   });
+
+  it('renders the partial text as markup, not as literal markers', async () => {
+    // The whole point of streaming into the placeholder is that it reads like
+    // the finished reply. Leaving `**` visible until the final edit would make
+    // every streamed turn look broken for its whole duration.
+    const onMessage = await start({ streamMode: 'stream' }, async (_m, opts) => {
+      opts?.sink?.({ type: 'text', text: 'a **bold** claim' });
+      return 'a **bold** claim';
+    });
+    const ctx = new FakeCtx();
+    await onMessage(ctx);
+
+    const partial = ctx.texts('editMessageText')[0];
+    expect(partial).toContain('<b>bold</b>');
+    expect(partial).not.toContain('**');
+    expect(ctx.calls.find((c) => c.method === 'editMessageText')?.opts).toEqual({
+      parse_mode: 'HTML',
+    });
+  });
+
+  it('appends an italic status tail under the text it already has', async () => {
+    // The html twin of the plain-mode case above: the tail is emphasis, so a
+    // reader can tell progress chatter from the answer itself.
+    vi.useFakeTimers();
+    const onMessage = await start(
+      { streamMode: 'stream', streamThrottleMs: 250 },
+      async (_m, opts) => {
+        opts?.sink?.({ type: 'text', text: 'working on it' });
+        opts?.sink?.({ type: 'status', text: 'Grep · pattern' });
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        return 'done';
+      },
+    );
+    const ctx = new FakeCtx();
+    const turn = onMessage(ctx);
+    await vi.advanceTimersByTimeAsync(500);
+    await turn;
+
+    const withTail = ctx.texts('editMessageText').find((t) => t.includes('Grep · pattern'));
+    expect(withTail).toContain('working on it');
+    expect(withTail).toContain('<i>Grep · pattern</i>');
+  });
+
+  it('shows a bare status before any text has streamed', async () => {
+    const onMessage = await start(
+      { streamMode: 'stream', parseMode: 'plain' },
+      async (_m, opts) => {
+        opts?.sink?.({ type: 'status', text: 'Grep · pattern' });
+        return 'done';
+      },
+    );
+    const ctx = new FakeCtx();
+    await onMessage(ctx);
+
+    const status = ctx.texts('editMessageText').find((t) => t.includes('Grep · pattern'));
+    expect(status).toBeDefined();
+    expect(status).not.toContain('<i>');
+  });
+
+  it('italicises a bare status before any text has streamed, in html mode', async () => {
+    const onMessage = await start({ streamMode: 'stream' }, async (_m, opts) => {
+      opts?.sink?.({ type: 'status', text: 'Grep · pattern' });
+      return 'done';
+    });
+    const ctx = new FakeCtx();
+    await onMessage(ctx);
+
+    const status = ctx.texts('editMessageText').find((t) => t.includes('Grep · pattern'));
+    expect(status).toContain('<i>Grep · pattern</i>');
+  });
+
+  it('truncates the placeholder rather than letting an edit exceed the limit', async () => {
+    // Telegram rejects an edit over 4096 chars outright, which would freeze
+    // the placeholder on its last good frame for the rest of a long answer.
+    const onMessage = await start(
+      { streamMode: 'stream', parseMode: 'plain' },
+      async (_m, opts) => {
+        opts?.sink?.({ type: 'text', text: 'q'.repeat(5000) });
+        return 'done';
+      },
+    );
+    const ctx = new FakeCtx();
+    await onMessage(ctx);
+
+    const first = ctx.texts('editMessageText')[0] ?? '';
+    expect(first.length).toBeLessThanOrEqual(4096);
+    expect(first.endsWith('…(truncated)')).toBe(true);
+  });
+});
+
+describe('the placeholder spinner', () => {
+  it('keeps animating and counting while the turn produces nothing', async () => {
+    // A turn can spend a minute in one tool call with no status and no text.
+    // Without the self-tick the placeholder would sit frozen and read as a
+    // hung bot.
+    vi.useFakeTimers();
+    const onMessage = await start({ streamMode: 'status', parseMode: 'plain' }, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      return 'done';
+    });
+    const ctx = new FakeCtx();
+    const turn = onMessage(ctx);
+    await vi.advanceTimersByTimeAsync(3000);
+    await turn;
+
+    const edits = ctx.texts('editMessageText');
+    expect(edits.length).toBeGreaterThan(1);
+    expect(edits.some((t) => / · \d+s$/.test(t))).toBe(true);
+    // The leading glyph has to actually change, or it is not an animation.
+    const spinning = edits.filter((t) => t.includes('thinking'));
+    expect(new Set(spinning.map((t) => t[0])).size).toBeGreaterThan(1);
+    expect(edits.at(-1)).toBe('done');
+  });
+
+  it('does not re-send an edit whose rendered content is unchanged', async () => {
+    // Two identical statuses in a row are ordinary — the same tool reporting
+    // twice. Sending the second costs a request and earns a Telegram
+    // "message is not modified" rejection.
+    vi.useFakeTimers();
+    const onMessage = await start(
+      { streamMode: 'status', parseMode: 'plain', streamThrottleMs: 250 },
+      async (_m, opts) => {
+        opts?.sink?.({ type: 'status', text: 'Bash · npm test' });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        opts?.sink?.({ type: 'status', text: 'Bash · npm test' });
+        return 'done';
+      },
+    );
+    const ctx = new FakeCtx();
+    const turn = onMessage(ctx);
+    await vi.advanceTimersByTimeAsync(400);
+    await turn;
+
+    expect(ctx.texts('editMessageText').filter((t) => t.includes('npm test'))).toHaveLength(1);
+  });
+});
+
+describe('bot manager wiring', () => {
+  it('starts the configured telegram adapter and forwards its options', async () => {
+    // The manager is the only place config becomes adapter options. A dropped
+    // field here is invisible until a user notices their setting does nothing.
+    const manager = createBotManager({
+      config: ConfigSchema.parse({
+        bots: {
+          telegram: {
+            enabled: true,
+            allowedUserIds: [7],
+            streamMode: 'final',
+            parseMode: 'plain',
+          },
+        },
+      }),
+      secrets: { ASTERISK_TELEGRAM_BOT_TOKEN: 'tok' },
+    });
+
+    const started = await manager.start(async () => '**bold**');
+    expect(started).toEqual(['telegram']);
+
+    const bot = fakeBotInstances.at(-1);
+    expect(bot?.token).toBe('tok');
+
+    const ctx = new FakeCtx();
+    await bot?.handler?.(ctx);
+    expect(ctx.texts('reply')).toEqual(['**bold**']);
+
+    await manager.stop();
+    expect(bot?.stopCalls).toBe(1);
+  });
+
+  it('swallows a failure to stop one adapter so the rest still stop', async () => {
+    const manager = createBotManager({
+      config: ConfigSchema.parse({ bots: { telegram: { enabled: true, allowedUserIds: [7] } } }),
+      secrets: { ASTERISK_TELEGRAM_BOT_TOKEN: 'tok' },
+    });
+    await manager.start(async () => 'ok');
+    const bot = fakeBotInstances.at(-1);
+    if (bot) bot.stopError = new Error('long-poll already torn down');
+
+    await expect(manager.stop()).resolves.toBeUndefined();
+  });
 });
 
 describe('editing failures', () => {
@@ -634,5 +871,18 @@ describe('editing failures', () => {
     ctx.failAlways('editMessageText', new Error('network down'));
 
     await expect(onMessage(ctx)).resolves.toBeUndefined();
+  });
+
+  it('gives up quietly on a rejection that stripping tags would not fix', async () => {
+    // "message to edit not found" is what Telegram says when the user deleted
+    // the placeholder mid-turn. Retrying as plain text would fail identically,
+    // so the turn should end without a second attempt and without an error.
+    const onMessage = await start({ streamMode: 'stream' }, async () => 'done');
+    const ctx = new FakeCtx();
+    ctx.failAlways('editMessageText', telegramError('message to edit not found'));
+
+    await expect(onMessage(ctx)).resolves.toBeUndefined();
+    expect(ctx.texts('editMessageText')).toHaveLength(1);
+    expect(ctx.texts('reply').some((t) => t.includes('asterisk error'))).toBe(false);
   });
 });

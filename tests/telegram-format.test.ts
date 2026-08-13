@@ -50,6 +50,20 @@ describe('markdownToTelegramHtml', () => {
     expect(markdownToTelegramHtml('a < b & c > d')).toBe('a &lt; b &amp; c &gt; d');
   });
 
+  it('leaves a backtick that opens nothing as a literal character', () => {
+    // The first pair closes; the third tick has no partner and must survive
+    // as text rather than swallowing the rest of the message into a code span.
+    expect(markdownToTelegramHtml('`ok`` and a lone tick')).toBe(
+      '<code>ok</code>` and a lone tick',
+    );
+  });
+
+  it('does not let an inline code span cross a newline', () => {
+    // Two ticks on different lines are almost always two separate literals,
+    // not one span — treating them as a span would eat the line break.
+    expect(markdownToTelegramHtml('a `b\nc` d')).toBe('a `b\nc` d');
+  });
+
   it('does not parse markdown inside inline code', () => {
     expect(markdownToTelegramHtml('use `**not** bold` please')).toBe(
       'use <code>**not** bold</code> please',
@@ -94,6 +108,38 @@ describe('markdownToTelegramHtml', () => {
   });
 });
 
+describe('fenced code blocks', () => {
+  it('closes a fence the model never closed', () => {
+    // Streaming means we routinely render a buffer that stops mid-block. The
+    // opening fence has to produce a complete <pre>, or Telegram rejects the
+    // edit and the user sees nothing at all.
+    expect(markdownToTelegramHtml('```ts\nconst x = 1;')).toBe(
+      '<pre><code class="language-ts">const x = 1;</code></pre>',
+    );
+  });
+
+  it('treats a fence carrying only a language as an empty block', () => {
+    expect(markdownToTelegramHtml('```js```')).toBe('<pre><code class="language-js"></code></pre>');
+  });
+
+  it('keeps the prose that precedes a fence', () => {
+    // The plain-text scanner has to stop at the fence rather than swallowing
+    // it; if it doesn't, the code block renders as escaped backticks.
+    expect(markdownToTelegramHtml('see this:\n```\nx\n```')).toBe(
+      'see this:\n<pre><code>x\n</code></pre>',
+    );
+  });
+
+  it('escapes a language hint so it cannot break out of the class attribute', () => {
+    // The language hint is the one part of a fence that is *not* pre-escaped
+    // by the tokeniser — it goes straight into an HTML attribute. A bare
+    // quote there would end the attribute and let the rest be read as markup.
+    const out = markdownToTelegramHtml('```<script>&"\ncode\n```');
+    expect(out).toBe('<pre><code class="language-&lt;script&gt;&amp;&quot;">code\n</code></pre>');
+    expect(out).not.toContain('<script>');
+  });
+});
+
 describe('balanceOpenTags', () => {
   it('closes a single open tag', () => {
     expect(balanceOpenTags('hello <b>world')).toBe('hello <b>world</b>');
@@ -114,6 +160,17 @@ describe('balanceOpenTags', () => {
   it('handles tags with attributes', () => {
     const out = balanceOpenTags('<a href="https://x">click');
     expect(out).toBe('<a href="https://x">click</a>');
+  });
+
+  it('leaves a close tag that never had an open alone', () => {
+    // Inventing an opening tag to match it would be worse than passing it
+    // through: this function exists to stop Telegram rejecting an edit, not
+    // to rewrite the model's output.
+    expect(balanceOpenTags('</b>x')).toBe('</b>x');
+  });
+
+  it('closes only what is still open when a tag was already closed', () => {
+    expect(balanceOpenTags('<b>bold</b> then <i>italic')).toBe('<b>bold</b> then <i>italic</i>');
   });
 });
 

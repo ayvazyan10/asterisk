@@ -16,17 +16,21 @@ export default defineConfig({
       // even installed and `--coverage` errored out, so they had never been
       // checked once.
       //
-      // Measured now: 73.18 / 76.11 / 66.15 / 74.34, up from 49 / 47 / 41 / 50
-      // at the start of the day. `src/repl` went 7.45% → 77%, `src/commands`
-      // 18% → 97%, and the old 60/60/50/60 target is now clear on all four.
+      // Measured now: 78.95 lines / 80.72 functions / 69.76 branches /
+      // 77.26 statements. The Telegram transport is no longer the hole this
+      // comment used to name — the fake Bot API landed and `src/bots/telegram`
+      // now measures 98.95 / 95.40 / 97.36 / 100. What remains uncovered there
+      // is defensive: `?? fallback` arms behind arrays that are never empty,
+      // and `stopped` re-checks on timers that were already cleared. Reaching
+      // them would mean reaching past the module's surface, so they stay.
       //
-      // What is left is nameable rather than mysterious: the Telegram
-      // transport (~32%), which needs a fake Bot API to test properly.
+      // What is left is nameable: `src/web` (0%, no HTTP-level tests) and
+      // `src/tools/code` (~3%, the interpreter).
       thresholds: {
-        lines: 77,
-        functions: 79,
-        branches: 68,
-        statements: 76,
+        lines: 78,
+        functions: 80,
+        branches: 69,
+        statements: 77,
       },
     },
   },
