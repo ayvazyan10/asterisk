@@ -255,6 +255,45 @@ describe('collections API', () => {
     expect((await call('/api/mcp/ghost/connect', { method: 'POST' })).status).toBe(404);
   });
 
+  it('lists the bundled catalog before anything is configured', async () => {
+    const { body } = await call('/api/connectors');
+    const ids = body.connectors.map((c: { id: string }) => c.id);
+    expect(ids).toContain('linear');
+    expect(body.connectors.every((c: { source: string }) => c.source === 'catalog')).toBe(true);
+    // Browsing must not write anything.
+    expect((await call('/api/mcp')).body.servers).toHaveLength(0);
+  });
+
+  it('shows a hand-added connector alongside the catalog', async () => {
+    await call(
+      '/api/mcp',
+      send('PUT', {
+        server: {
+          name: 'in-house',
+          transport: 'http',
+          url: 'https://mcp.example/mcp',
+          auth: 'oauth',
+        },
+      }),
+    );
+    const { body } = await call('/api/connectors');
+    const custom = body.connectors.find((c: { id: string }) => c.id === 'in-house');
+    expect(custom).toMatchObject({ source: 'custom', installed: true, connected: false });
+  });
+
+  it('refuses to take over a name already used by a stdio server', async () => {
+    await call(
+      '/api/mcp',
+      send('PUT', { server: { name: 'linear', transport: 'stdio', command: 'linear-cli' } }),
+    );
+    const { status } = await call('/api/connectors/linear/connect', { method: 'POST' });
+    expect(status).toBe(409);
+  });
+
+  it('404s on a connector id that is neither configured nor in the catalog', async () => {
+    expect((await call('/api/connectors/nope/connect', { method: 'POST' })).status).toBe(404);
+  });
+
   it('forgets stored credentials on disconnect', async () => {
     await call(
       '/api/mcp',

@@ -7,6 +7,7 @@
 // than installed.
 
 import { APP_AUTHORED } from './app-authored.ts';
+import { APP_CONNECTORS } from './app-connectors.ts';
 import { APP_CORE } from './app-core.ts';
 import { APP_LOGS } from './app-logs.ts';
 import { APP_SETTINGS } from './app-settings.ts';
@@ -106,7 +107,7 @@ export function renderIndexHtml(opts: RenderOptions): string {
   </div>
 </div>
 <div class="toasts" role="status" aria-live="polite"></div>
-<script nonce="${nonce}">${APP_CORE}\n${APP_STAR}\n${APP_SETTINGS}\n${APP_LOGS}\n${APP_SKILLS}\n${APP_AUTHORED}\n${APP_VIEWS}</script>
+<script nonce="${nonce}">${APP_CORE}\n${APP_STAR}\n${APP_SETTINGS}\n${APP_LOGS}\n${APP_SKILLS}\n${APP_AUTHORED}\n${APP_CONNECTORS}\n${APP_VIEWS}</script>
 </body>
 </html>`;
 }

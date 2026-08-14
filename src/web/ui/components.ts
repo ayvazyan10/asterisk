@@ -390,4 +390,38 @@ export const COMPONENTS = String.raw`
   font-family: var(--font-machine); font-size: 0.9em;
   color: var(--tide); word-break: break-all;
 }
+
+/* --- connectors ----------------------------------------------------------- */
+
+/* A monogram, not a logo. Brand marks would mean shipping and licensing a
+   dozen images, and the CSP forbids loading any of them from their origin —
+   so the first letter on a neutral surface it is. */
+.connector-mark {
+  flex: 0 0 auto; width: 2rem; height: 2rem; border-radius: var(--r-sm);
+  display: grid; place-items: center;
+  background: var(--surface-high); border: 1px solid var(--border);
+  font-family: var(--font-machine); font-size: var(--t-sm); font-weight: 600;
+  color: var(--ink-dim); text-transform: uppercase;
+}
+
+/* Popular services, before they are added. Auto-fit rather than a fixed count
+   so the row reflows on a narrow window instead of overflowing the card. */
+.connector-cards {
+  display: grid; gap: 0.75rem; margin-bottom: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+.connector-card {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.85rem 0.9rem;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  transition: border-color var(--dur) var(--ease);
+}
+.connector-card:hover { border-color: var(--border-strong); }
+.connector-card-body { min-width: 0; flex: 1 1 auto; }
+.connector-card-name { font-size: var(--t-sm); font-weight: 600; }
+.connector-card-detail {
+  font-size: var(--t-xs); color: var(--ink-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 `;

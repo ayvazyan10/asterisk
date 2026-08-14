@@ -16,6 +16,9 @@ const state = {
   settings: null,
   dirty: new Map(),
   mcp: [],
+  connectors: [],
+  connectorFilter: 'all',
+  connectorQuery: '',
   hooks: [],
   secrets: [],
   content: [],
@@ -236,6 +239,8 @@ const TABS = [
   { group: 'Configure', items: [
     { id: 'settings', label: 'Settings' },
     { id: 'secrets', label: 'Secrets' },
+    { id: 'connectors', label: 'Connectors',
+      count: () => state.loaded.has('connectors') ? state.connectors.filter((c) => c.connected).length : null },
     { id: 'mcp', label: 'MCP servers', count: () => state.status && state.status.counts.mcpServers },
     { id: 'hooks', label: 'Hooks', count: () => state.status && state.status.counts.hooks },
   ]},

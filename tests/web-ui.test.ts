@@ -19,6 +19,7 @@ import { describe, expect, it } from 'vitest';
 
 import { CONTENT_KINDS } from '../src/web/api/content.ts';
 import { APP_AUTHORED } from '../src/web/ui/app-authored.ts';
+import { APP_CONNECTORS } from '../src/web/ui/app-connectors.ts';
 import { APP_CORE } from '../src/web/ui/app-core.ts';
 import { APP_LOGS } from '../src/web/ui/app-logs.ts';
 import { APP_SETTINGS } from '../src/web/ui/app-settings.ts';
@@ -38,6 +39,7 @@ const CLIENT = [
   APP_LOGS,
   APP_SKILLS,
   APP_AUTHORED,
+  APP_CONNECTORS,
   APP_VIEWS,
 ].join('\n');
 
@@ -81,6 +83,7 @@ describe('the client script', () => {
         'APP_LOGS',
         'APP_SKILLS',
         'APP_AUTHORED',
+        'APP_CONNECTORS',
         'APP_VIEWS',
       ]),
     );

@@ -417,12 +417,14 @@ async function loadOverview() {
 
 const LOADERS = {
   overview: loadOverview, settings: loadSettings, mcp: loadMcp, hooks: loadHooks,
+  connectors: loadConnectors,
   secrets: loadSecrets, tokens: loadTokens,
   logs: loadLogRecords, doctor: loadDoctor,
 };
 
 const VIEWS = {
   overview: viewOverview, settings: viewSettings, mcp: viewMcp, hooks: viewHooks,
+  connectors: viewConnectors,
   secrets: viewSecrets, tokens: viewTokens,
   logs: viewLogs, doctor: viewDoctor,
 };
@@ -472,6 +474,7 @@ async function goto(tab) {
 document.addEventListener('click', async (ev) => {
   const t = ev.target.closest('[data-tab],[data-action],[data-daemon],[data-toggle],[data-reset],' +
     '[data-revert],[data-mcp-toggle],[data-mcp-delete],[data-mcp-connect],[data-mcp-disconnect],' +
+    '[data-connector-connect],[data-connector-remove],[data-connector-filter],' +
     '[data-hook-toggle],[data-hook-delete],' +
     '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-logs-tab],' +
     '[data-skill-open],[data-agent-open],[data-group],[data-settings-filter],[data-log-level],' +
@@ -498,6 +501,18 @@ document.addEventListener('click', async (ev) => {
   if (d.logLevel) {
     state.logLevel = d.logLevel;
     return render();
+  }
+  if (d.connectorFilter) {
+    state.connectorFilter = d.connectorFilter;
+    return render();
+  }
+  if (d.connectorConnect) return connectConnector(d.connectorConnect);
+  if (d.connectorRemove) {
+    if (!confirm('Remove connector "' + d.connectorRemove + '"?\n\n' +
+      'Its stored credentials go too. The grant stays live upstream until you revoke it there.')) return;
+    const ok = await guard(() => api('/mcp/' + encodeURIComponent(d.connectorRemove), { method: 'DELETE' }), 'Removed');
+    if (ok) { await loadConnectors(); await loadMcp(); await loadStatus(); render(); }
+    return;
   }
   // Both records are already loaded; switching is a re-render, not a fetch.
   if (d.logsTab) { state.logsTab = d.logsTab; return render(); }
@@ -553,7 +568,9 @@ document.addEventListener('click', async (ev) => {
     if (!confirm('Forget stored credentials for "' + d.mcpDisconnect + '"?\n\n' +
       'The grant stays live upstream until you revoke it in that service.')) return;
     const ok = await guard(() => api('/mcp/' + encodeURIComponent(d.mcpDisconnect) + '/disconnect', { method: 'POST' }), 'Disconnected');
-    if (ok) { await loadMcp(); render(); }
+    // The button appears on both pages, so both lists are refreshed rather
+    // than guessing which one is on screen.
+    if (ok) { await loadMcp(); await loadConnectors(); render(); }
     return;
   }
   if (d.hookToggle) {
@@ -604,6 +621,7 @@ document.addEventListener('click', async (ev) => {
     case 'apply': return applySettings();
     case 'discard': state.dirty.clear(); return render();
     case 'mcp-save': return saveMcp();
+    case 'connector-add': return addCustomConnector();
     case 'hook-save': return saveHook();
     case 'token-new': {
       const label = $('#token-label').value.trim() || 'panel';
@@ -735,6 +753,13 @@ document.addEventListener('input', (ev) => {
     state.agentFilter = ev.target.value;
     const host = document.querySelector('.agent-list-body');
     if (host) host.innerHTML = agentGroups(state.agents);
+    return;
+  }
+
+  if (id === 'connector-search') {
+    state.connectorQuery = ev.target.value;
+    const host = document.querySelector('.connector-list-body');
+    if (host) host.innerHTML = connectorRows();
     return;
   }
 
