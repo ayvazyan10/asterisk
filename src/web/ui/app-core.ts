@@ -298,7 +298,6 @@ function kindCount(id) {
 const TABS = [
   { group: 'Monitor', items: [
     { id: 'overview', label: 'Overview', icon: 'overview' },
-    { id: 'doctor', label: 'Diagnostics', icon: 'doctor' },
     { id: 'logs', label: 'Logs', icon: 'logs' },
   ]},
   { group: 'Configure', items: [

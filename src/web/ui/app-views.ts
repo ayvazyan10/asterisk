@@ -312,13 +312,9 @@ function viewTokens() {
 
 // --- diagnostics, logs, audit --------------------------------------------
 
-function viewDoctor() {
+function doctorPanel() {
   const d = state.doctor;
-  const header = ui.pageHeader('Diagnostics',
-    'Connectivity and environment checks — the same ground <code class="code-inline">/doctor</code> ' +
-    'covers in the REPL.');
-
-  if (!d) return header + '<section class="card">' + ui.skeletonRows(4) + '</section>';
+  if (!d) return '<section class="card">' + ui.skeletonRows(4) + '</section>';
 
   const failing = d.checks.filter((c) => !c.ok);
   const passing = d.checks.filter((c) => c.ok);
@@ -341,39 +337,51 @@ function viewDoctor() {
     ? ui.card('Passing', passing.map(row).join(''), { aside: ui.badge(passing.length, 'secondary') })
     : '';
 
-  return header +
-    '<div class="section-actions mb">' +
-      ui.btn('Run again', { attrs: ' data-action="doctor-rerun"' }) +
+  return '<div class="section-actions mb">' +
+      ui.btn('Run again', { size: 'sm', variant: 'outline', attrs: ' data-action="doctor-rerun"' }) +
       '<span class="form-hint">' + passing.length + ' of ' + d.checks.length + ' passing</span>' +
     '</div>' +
     problems + fine;
 }
 
-// Everything append-only lives here, behind one segmented control: the daemon's
-// own output, and the panel's record of what was changed through it.
+// What the system has to say about itself, behind one segmented control: the
+// daemon's own output, the panel's record of what was changed through it, and
+// its answer to "is anything wrong". Diagnostics used to be a destination of
+// its own on the rail; it is the same question as the other two asked a
+// different way, and it was the only rail entry nobody visited twice.
 const LOG_TABS = [
   { id: 'daemon', label: 'Daemon log' },
   { id: 'audit', label: 'Audit trail' },
+  { id: 'doctor', label: 'Diagnostics' },
 ];
 
 const LOG_DESCRIPTIONS = {
   daemon: 'What the background process has been doing.',
   audit: 'Every change made through this panel.',
+  doctor: 'Connectivity and environment checks — the same ground /doctor covers in the REPL.',
 };
 
 const LOG_SUBJECTS = {
   daemon: '~/.asterisk/logs/daemon.log',
   audit: '',
+  doctor: '',
+};
+
+const LOG_PANELS = {
+  daemon: () => daemonLogPanel(),
+  audit: () => auditPanel(),
+  doctor: () => doctorPanel(),
 };
 
 function viewLogs() {
   const active = state.logsTab;
+  const panel = LOG_PANELS[active] || LOG_PANELS.daemon;
   return ui.pageHeader('Logs', LOG_DESCRIPTIONS[active] || '', LOG_SUBJECTS[active]) +
     '<div class="section-actions mb">' +
       ui.tabs(LOG_TABS, active, 'logs-tab') +
       ui.btn('Reload', { attrs: ' data-action="logs-refresh"' }) +
     '</div>' +
-    (active === 'audit' ? auditPanel() : daemonLogPanel());
+    panel();
 }
 
 function auditPanel() {
@@ -426,14 +434,14 @@ const LOADERS = {
   overview: loadOverview, settings: loadSettings, mcp: loadMcp, hooks: loadHooks,
   connectors: loadConnectors,
   secrets: loadSecrets, tokens: loadTokens,
-  logs: loadLogRecords, doctor: loadDoctor,
+  logs: loadLogRecords,
 };
 
 const VIEWS = {
   overview: viewOverview, settings: viewSettings, mcp: viewMcp, hooks: viewHooks,
   connectors: viewConnectors,
   secrets: viewSecrets, tokens: viewTokens,
-  logs: viewLogs, doctor: viewDoctor,
+  logs: viewLogs,
 };
 
 // Every content kind routes to the same pair, parameterised by kind. Derived
@@ -471,7 +479,20 @@ function render() {
   if (state.tab === 'settings') watchSettingsSections();
 }
 
+/**
+ * Destinations that used to be their own tab and are now a record inside one.
+ * A hash outliving a move is a link that lands on the overview with nothing
+ * saying why, and the browser history of anyone who used the old page is full
+ * of them.
+ */
+const MOVED_TABS = { doctor: { tab: 'logs', record: 'doctor' } };
+
 async function goto(tab) {
+  const moved = MOVED_TABS[tab];
+  if (moved) {
+    state.logsTab = moved.record;
+    return goto(moved.tab);
+  }
   state.tab = tab;
   location.hash = tab;
   const load = LOADERS[tab];
@@ -525,7 +546,14 @@ document.addEventListener('click', async (ev) => {
     return;
   }
   // Both records are already loaded; switching is a re-render, not a fetch.
-  if (d.logsTab) { state.logsTab = d.logsTab; return render(); }
+  if (d.logsTab) {
+    state.logsTab = d.logsTab;
+    render();
+    // The checks make real network calls, so they run when the record is
+    // asked for rather than every time the Logs page is opened.
+    if (d.logsTab === 'doctor' && !state.doctor) { await loadDoctor(); render(); }
+    return;
+  }
   if (d.open) { const [kind, ...rest] = d.open.split('|'); return openFile(kind, rest.join('|')); }
 
   if (d.toggle) {
@@ -713,7 +741,11 @@ document.addEventListener('click', async (ev) => {
       return render();
     case 'log-follow': setLogFollow(!state.logFollow); return render();
     case 'doctor-rerun': state.doctor = null; render(); await loadDoctor(); return render();
-    case 'logs-refresh': await loadLogRecords(); return render();
+    case 'logs-refresh': {
+      if (state.logsTab === 'doctor') { state.doctor = null; render(); await loadDoctor(); }
+      else await loadLogRecords();
+      return render();
+    }
   }
 });
 

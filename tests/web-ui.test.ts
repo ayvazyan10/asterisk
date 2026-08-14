@@ -160,10 +160,37 @@ describe('the client script', () => {
 
   it('renders a panel for each record the Logs tab offers', () => {
     // The log sub-tabs are not router tabs — they switch a panel inside one
-    // view, so they need panels rather than entries in VIEWS.
-    expect(idsIn('LOG_TABS')).toEqual(['daemon', 'audit']);
-    expect(CLIENT).toContain('function daemonLogPanel(');
-    expect(CLIENT).toContain('function auditPanel(');
+    // view, so they need entries in LOG_PANELS rather than in VIEWS.
+    const ids = idsIn('LOG_TABS');
+    expect(ids).toEqual(['daemon', 'audit', 'doctor']);
+
+    const table = CLIENT.slice(CLIENT.indexOf('const LOG_PANELS = {'));
+    const panels = new Map(
+      [...table.slice(0, table.indexOf('\n};')).matchAll(/(\w+): \(\) => (\w+)\(\)/g)].map((m) => [
+        m[1] as string,
+        m[2] as string,
+      ]),
+    );
+    expect([...panels.keys()]).toEqual(ids);
+    for (const fn of panels.values()) expect(CLIENT).toContain(`function ${fn}(`);
+  });
+
+  it('redirects a tab that moved instead of dropping it on the overview', () => {
+    // A destination that became a record inside another page leaves hashes
+    // behind in browser history. Each one must name a tab that still exists,
+    // and must not still be a tab itself or goto() would recurse.
+    const table = CLIENT.slice(CLIENT.indexOf('const MOVED_TABS = {'));
+    const moved = [
+      ...table
+        .slice(0, table.indexOf('};'))
+        .matchAll(/(\w+): \{ tab: '(\w+)', record: '(\w+)' \}/g),
+    ];
+    expect(moved.length).toBeGreaterThan(0);
+    for (const [, from, to, record] of moved) {
+      expect(idsIn('TABS')).not.toContain(from);
+      expect(idsIn('TABS')).toContain(to);
+      expect(idsIn('LOG_TABS')).toContain(record);
+    }
   });
 
   it('emits no inline style attributes', () => {
