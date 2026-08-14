@@ -102,6 +102,27 @@ describe('the client script', () => {
     expect([...emitted].filter((a) => !selected.has(a) && !carriers.has(a as string))).toEqual([]);
   });
 
+  it('never asks for a value through prompt()', () => {
+    // A prompt() cannot be copied out of, and the two it replaced were showing
+    // the user a redirect URI and a console URL they had to carry elsewhere by
+    // hand. confirm() stays — a yes/no has nothing to take away from it.
+    const calls = CLIENT.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(calls).not.toMatch(/(?<![.\w])prompt\s*\(/);
+  });
+
+  it('opens every link it renders in a new tab without handing over the opener', () => {
+    // The tag is built by concatenation, so the attributes are spread across
+    // string literals — look at the window after the tag rather than at one
+    // literal. Every href here points at somebody else's site.
+    const anchors = [...CLIENT.matchAll(/<a\b/g)];
+    expect(anchors.length).toBeGreaterThan(0);
+    for (const m of anchors) {
+      const tag = CLIENT.slice(m.index, m.index + 200);
+      expect(tag).toContain('target="_blank"');
+      expect(tag).toContain('rel="noopener noreferrer"');
+    }
+  });
+
   it('parses as JavaScript', () => {
     // The whole reason this test exists: the script lives inside a template
     // literal, so nothing else in the toolchain ever parses it.

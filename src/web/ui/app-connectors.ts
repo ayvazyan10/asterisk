@@ -106,6 +106,70 @@ function connectorRows() {
   )).join('');
 }
 
+/** A value the user has to carry to another site: selectable, whole, copyable. */
+function copyField(id, label, value) {
+  return '<label class="label" for="' + id + '">' + esc(label) + '</label>' +
+    '<div class="copy-row">' +
+      '<input class="input" id="' + id + '" readonly value="' + esc(value) + '">' +
+      ui.btn('Copy', { size: 'sm', variant: 'outline', attrs: ' data-copy="' + id + '"' }) +
+    '</div>';
+}
+
+/**
+ * Setting a connector up by hand.
+ *
+ * This was two prompt() calls, on the reasoning that a secret deserved no
+ * markup. That was wrong twice over: the panel already takes secrets in
+ * password fields on the Secrets page, so nothing had to be solved — and a
+ * prompt() cannot be copied out of, which is exactly what the user has to do
+ * with the redirect URI and the scopes it was showing them.
+ */
+function connectorSetupPanel() {
+  const setup = state.connectorSetup;
+  if (!setup) return '';
+  const c = state.connectors.find((x) => x.id === setup.id);
+  if (!c) return '';
+
+  const isToken = setup.kind === 'token';
+  const help = isToken
+    ? (c.tokenHelp || 'Paste an access token for this service.')
+    : (c.clientHelp || 'Register an OAuth client with this service and paste its ID.');
+  const where = isToken ? c.tokenUrl : c.clientUrl;
+
+  const fields = isToken
+    ? '<label class="label" for="setup-token">Access token</label>' +
+      '<input class="input" type="password" id="setup-token" autocomplete="off" spellcheck="false">'
+    : copyField('setup-redirect', 'Redirect URI to allow', c.redirectUri) +
+      (c.scopes && c.scopes.length
+        ? copyField('setup-scopes', 'Scopes to grant', c.scopes.join(' '))
+        : '') +
+      '<label class="label" for="setup-client-id">Client ID</label>' +
+      '<input class="input" type="text" id="setup-client-id" autocomplete="off" spellcheck="false" ' +
+        'placeholder="000000-abc.apps.googleusercontent.com">' +
+      '<label class="label" for="setup-client-secret">Client secret</label>' +
+      '<input class="input" type="password" id="setup-client-secret" autocomplete="off" spellcheck="false">';
+
+  const body = '<p class="form-hint mb">' + esc(help) + '</p>' +
+    (where
+      // A real link, so it opens. The same URL inside a prompt() was text the
+      // user had to retype.
+      ? '<p class="form-hint mb">Create one at ' +
+        '<a class="link" href="' + esc(where) + '" target="_blank" rel="noopener noreferrer">' +
+        esc(where) + '</a></p>'
+      : '') +
+    '<div class="form-grid">' + fields +
+      '<div class="form-span section-actions">' +
+        ui.btn(isToken ? 'Save token' : 'Save and connect',
+          { variant: 'default', attrs: ' data-action="connector-setup-save"' }) +
+        ui.btn('Cancel', { variant: 'ghost', attrs: ' data-action="connector-setup-cancel"' }) +
+        (isToken ? '' : '<span class="form-hint">Leave the secret empty if your client has none.</span>') +
+      '</div>' +
+    '</div>';
+
+  return ui.card((isToken ? 'Token for ' : 'OAuth client for ') + c.name,
+    '<div class="card-content">' + body + '</div>');
+}
+
 function viewConnectors() {
   if (!state.loaded.has('connectors')) {
     return ui.pageHeader('Connectors', 'Loading…') + ui.card('Connectors', ui.skeletonRows(4));
@@ -133,6 +197,7 @@ function viewConnectors() {
       'that service’s consent screen; the token is stored locally and refreshes itself. ' +
       'Google registers no clients on its own, so its entries ask for an OAuth client you create ' +
       'in the Google Cloud console first — one client covers all three.') +
+    connectorSetupPanel() +
     connectorCards() +
     addPanel('connector-add-panel', 'Add a connector by URL', custom) +
     ui.card('Services',
@@ -158,62 +223,70 @@ async function connectConnector(id) {
   render();
 }
 
-/**
- * Asks for a token and stores it.
- *
- * prompt() rather than a designed field because this is the one place the
- * panel takes a secret from the user, and a real form would have to solve
- * masking, paste handling and accidental persistence in the DOM to be an
- * improvement. The value goes straight to the API and is never rendered.
- */
-async function addConnectorToken(id) {
-  const c = state.connectors.find((x) => x.id === id);
-  const help = c && c.tokenHelp ? c.tokenHelp : 'Paste the access token for this service.';
-  const where = c && c.tokenUrl ? '\n\nCreate one at: ' + c.tokenUrl : '';
-  const token = prompt(help + where);
-  if (token === null) return;
-  if (!token.trim()) { toast('No token entered', 'bad'); return; }
+/** Opens the setup panel. The work happens on save, not here. */
+function openConnectorSetup(id, kind) {
+  state.connectorSetup = { id, kind };
+  render();
+  const first = $(kind === 'token' ? '#setup-token' : '#setup-client-id');
+  if (first) first.focus();
+}
 
-  const ok = await guard(() => api('/connectors/' + encodeURIComponent(id) + '/token', {
-    method: 'PUT', body: JSON.stringify({ token: token.trim() }),
-  }), 'Token saved');
-  if (!ok) return;
-  await loadConnectors();
-  await loadMcp();
+function closeConnectorSetup() {
+  state.connectorSetup = null;
   render();
 }
 
-/**
- * Takes an OAuth client the user registered themselves, then connects.
- *
- * Two prompts because the two halves are not alike: the client id is public
- * and the secret is not, and the second is optional — an authorization server
- * that accepts a public client with PKCE needs no secret, and sending an empty
- * one would be worse than sending none. Same reasoning as the token prompt:
- * the value goes straight to the API and is never put in the DOM.
- */
-async function addConnectorClient(id) {
-  const c = state.connectors.find((x) => x.id === id);
-  if (!c) return;
-  const lines = [
-    c.clientHelp || 'Register an OAuth client with this service and paste its client ID.',
-    '',
-    'Redirect URI to allow: ' + c.redirectUri,
-  ];
-  if (c.scopes && c.scopes.length) lines.push('', 'Scopes to grant:', c.scopes.join('\n'));
-  if (c.clientUrl) lines.push('', 'Create one at: ' + c.clientUrl);
-  lines.push('', 'Client ID:');
+/** Copies a readonly field's value, so nothing here has to be retyped. */
+async function copyFieldValue(id) {
+  const el = $('#' + id);
+  if (!el) return;
+  el.select();
+  try {
+    await navigator.clipboard.writeText(el.value);
+    toast('Copied', 'good');
+  } catch {
+    // Clipboard permission can be refused; the value is selected either way,
+    // so Ctrl+C still works and saying so beats a silent no-op.
+    toast('Could not copy — the value is selected, press Ctrl+C', 'bad');
+  }
+}
 
-  const clientId = prompt(lines.join('\n'));
-  if (clientId === null) return;
-  if (!clientId.trim()) { toast('No client ID entered', 'bad'); return; }
-  const clientSecret = prompt('Client secret (leave empty if this client has none):') || '';
+/**
+ * Saves whichever credential the panel is open for.
+ *
+ * The client secret is optional on purpose: an authorization server that takes
+ * a public client with PKCE issues none, and an empty string is not the same
+ * as absent — the SDK picks the token endpoint's auth method from whether one
+ * is there at all.
+ */
+async function saveConnectorSetup() {
+  const setup = state.connectorSetup;
+  if (!setup) return;
+  const id = setup.id;
+
+  if (setup.kind === 'token') {
+    const token = $('#setup-token').value.trim();
+    if (!token) { toast('A token is required', 'bad'); return; }
+    const ok = await guard(() => api('/connectors/' + encodeURIComponent(id) + '/token', {
+      method: 'PUT', body: JSON.stringify({ token }),
+    }), 'Token saved');
+    if (!ok) return;
+    state.connectorSetup = null;
+    await loadConnectors();
+    await loadMcp();
+    render();
+    return;
+  }
+
+  const clientId = $('#setup-client-id').value.trim();
+  if (!clientId) { toast('A client ID is required', 'bad'); return; }
+  const clientSecret = $('#setup-client-secret').value.trim();
 
   const ok = await guard(() => api('/connectors/' + encodeURIComponent(id) + '/client', {
-    method: 'PUT',
-    body: JSON.stringify({ clientId: clientId.trim(), clientSecret: clientSecret.trim() }),
+    method: 'PUT', body: JSON.stringify({ clientId, clientSecret }),
   }), 'OAuth client saved');
   if (!ok) return;
+  state.connectorSetup = null;
   await loadConnectors();
   await connectConnector(id);
 }

@@ -424,4 +424,20 @@ export const COMPONENTS = String.raw`
   font-size: var(--t-xs); color: var(--ink-faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* Setting a connector up by hand: values the user has to carry to somebody
+   else's console. They are readonly inputs rather than text because a value
+   you must paste elsewhere has to be selectable, copyable and whole — text
+   that ellipsises or a line inside an alert() is neither. */
+.copy-row { display: flex; gap: 0.4rem; align-items: center; }
+.copy-row .input { flex: 1 1 auto; font-family: var(--font-machine); font-size: var(--t-xs); }
+.copy-row .input[readonly] { background: var(--bg); }
+.link {
+  color: var(--signal); text-decoration: underline;
+  text-underline-offset: 0.15em; border-radius: var(--r-sm);
+}
+.link:hover { text-decoration-thickness: 2px; }
+.link:focus-visible {
+  outline: none; box-shadow: 0 0 0 3px var(--signal-wash);
+}
 `;

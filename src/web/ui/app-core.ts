@@ -19,6 +19,8 @@ const state = {
   connectors: [],
   connectorFilter: 'all',
   connectorQuery: '',
+  // { id, kind: 'client' | 'token' } while a connector is being set up by hand.
+  connectorSetup: null,
   hooks: [],
   secrets: [],
   content: [],
