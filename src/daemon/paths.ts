@@ -14,6 +14,10 @@ export interface AsteriskPaths {
   configFile: string;
   secretsFile: string;
   dbFile: string;
+  /** The control panel is a second managed process, with its own pid file. */
+  webPidFile: string;
+  webLog: string;
+  webStateFile: string;
 }
 
 export function asteriskPaths(): AsteriskPaths {
@@ -26,6 +30,11 @@ export function asteriskPaths(): AsteriskPaths {
     configFile: join(root, 'config.json'),
     secretsFile: join(root, 'secrets.env'),
     dbFile: join(root, 'asterisk.db'),
+    // Deliberately separate from the daemon's: `asterisk stop` must not take
+    // the panel down with it, and `asterisk web stop` must not stop the bots.
+    webPidFile: join(root, 'web.pid'),
+    webLog: join(root, 'logs', 'web.log'),
+    webStateFile: join(root, 'web.json'),
   };
 }
 

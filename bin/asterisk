@@ -156,7 +156,8 @@ Usage:
   asterisk status         Show daemon status
   asterisk logs [N]       Tail last N daemon log lines (default 50)
   asterisk configure      Interactive config wizard
-  asterisk web [flags]    Web control panel for every setting
+  asterisk web [flags]    Start the web control panel in the background
+  asterisk web stop       Stop the control panel and free its port
   asterisk acp            Serve the Agent Client Protocol on stdio (for editors)
   asterisk eval [flags]   Run the scenario evals (--live to use a real model)
   asterisk mcp-server     Serve memory, skills and rules over MCP (stdio)
@@ -170,6 +171,7 @@ Web panel flags:
   --host <addr>           Override the bind address (default 127.0.0.1)
   --no-auth               Disable token auth (loopback binds only)
   --no-open               Do not launch a browser
+  --foreground            Run in this terminal instead of the background
   --print-token           Issue a token, print it, and exit
 
 Environment:

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`asterisk web` starts in the background.** It prints the panel's URL — with
+  the first-run token when one is minted — and hands the terminal back; the
+  server itself runs as a detached child. Previously it held the terminal until
+  Ctrl+C, so leaving the panel up meant `nohup … &`, and freeing the port meant
+  finding the pid by hand. `asterisk web stop` now terminates it and releases
+  the port. `--foreground` keeps the old blocking behaviour, which is the shape
+  systemd and containers want.
+- The panel gets its own process state, separate from the daemon's:
+  `~/.asterisk/web.pid`, `~/.asterisk/logs/web.log` and `~/.asterisk/web.json`
+  (pid, host, port and URL of the running instance — never a token, since only
+  token hashes are stored). Separate on purpose: `asterisk stop` must not take
+  the panel down, and `asterisk web stop` must not stop the bots.
+
 ### Removed
 
 - **Plugins.** The in-process TypeScript extension surface is gone: `src/plugins`,

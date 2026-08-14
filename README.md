@@ -123,7 +123,8 @@ asterisk logs 100
 asterisk restart
 asterisk stop
 asterisk configure      # interactive wizard for provider + bots + MCP
-asterisk web            # web control panel for every setting
+asterisk web            # web control panel for every setting (background)
+asterisk web stop       # stop the panel and free its port
 asterisk help
 ```
 
@@ -144,11 +145,19 @@ whole configuration surface in one place:
   as `/doctor`, `asterisk start|stop`, and `asterisk logs`.
 
 ```bash
-asterisk web                     # prints a link with a one-time token
+asterisk web                     # starts in the background, prints the link
+asterisk web stop                # stops it and frees the port
 asterisk web --port 8080
+asterisk web --foreground        # run in this terminal instead (systemd, Docker)
 asterisk web --print-token       # issue another token
 asterisk web --no-auth           # loopback binds only
 ```
+
+`asterisk web` returns the terminal immediately: the server runs as a detached
+child with its own pid file (`~/.asterisk/web.pid`) and log
+(`~/.asterisk/logs/web.log`), and `asterisk web stop` terminates it and releases
+the port. Its lifecycle is independent of the daemon's — `asterisk stop` leaves
+the panel running, and `asterisk web stop` leaves the bots running.
 
 A token is required by default and is exchanged for an httpOnly session
 cookie on first load. Only SHA-256 hashes are stored, so a lost token is
