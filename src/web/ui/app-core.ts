@@ -31,11 +31,12 @@ const state = {
   editor: { kind: null, path: null, content: '', original: '' },
   loaded: new Set(),
 
-  // Settings is an index before it is a form — see ./app-settings.ts. Groups
-  // start shut; searching opens whatever it matches.
+  // Settings shows everything and hides nothing — see ./app-settings.ts.
+  // settingsSection is the group the index marks as current, kept in step with
+  // the scroll position rather than set by clicking.
   settingsQuery: '',
   settingsFilter: 'all',
-  openGroups: new Set(),
+  settingsSection: '',
 
   // The log reader parses pino's JSON lines rather than printing them.
   logsTab: 'daemon',

@@ -459,6 +459,9 @@ function render() {
   const view = VIEWS[state.tab] || viewOverview;
   $('.view').innerHTML = view();
   renderSaveBar();
+  // The settings index tracks the scroll position, and its observer has to be
+  // rebuilt against the nodes that were just written.
+  if (state.tab === 'settings') watchSettingsSections();
 }
 
 async function goto(tab) {
@@ -478,7 +481,7 @@ document.addEventListener('click', async (ev) => {
     '[data-connector-remove],[data-connector-filter],' +
     '[data-hook-toggle],[data-hook-delete],' +
     '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-logs-tab],' +
-    '[data-skill-open],[data-agent-open],[data-group],[data-settings-filter],[data-log-level],' +
+    '[data-skill-open],[data-agent-open],[data-jump],[data-settings-filter],[data-log-level],' +
     '[data-expand]');
   if (!t) return;
   const d = t.dataset;
@@ -490,11 +493,7 @@ document.addEventListener('click', async (ev) => {
     state.expanded = state.expanded === d.expand ? '' : d.expand;
     return render();
   }
-  if (d.group) {
-    if (state.openGroups.has(d.group)) state.openGroups.delete(d.group);
-    else state.openGroups.add(d.group);
-    return refreshSettingsGroups();
-  }
+  if (d.jump) return jumpToSection(d.jump);
   if (d.settingsFilter) {
     state.settingsFilter = d.settingsFilter;
     return render();
@@ -700,11 +699,6 @@ document.addEventListener('click', async (ev) => {
     case 'skill-revert':
       state.skillDraft = { description: state.skill.description, prompt: state.skill.prompt };
       return render();
-    case 'settings-toggle-all': {
-      if (state.openGroups.size > 0) state.openGroups.clear();
-      else for (const g of state.settings.groups) state.openGroups.add(g.group);
-      return render();
-    }
     case 'log-follow': setLogFollow(!state.logFollow); return render();
     case 'doctor-rerun': state.doctor = null; render(); await loadDoctor(); return render();
     case 'logs-refresh': await loadLogRecords(); return render();

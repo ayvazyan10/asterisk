@@ -105,6 +105,11 @@ const ACRONYMS: Record<string, string> = {
   html: 'HTML',
   json: 'JSON',
   ms: '(ms)',
+  // Vendor spellings. Without these the settings page titles a whole section
+  // "Openai compatible", which is a section heading nobody wrote.
+  openai: 'OpenAI',
+  mcp: 'MCP',
+  oauth: 'OAuth',
 };
 
 /** `streamThrottleMs` -> `Stream throttle (ms)`, `baseUrl` -> `Base URL`. */
@@ -210,13 +215,24 @@ export function describeField(path: string): FieldDescriptor | undefined {
   return settingsRegistry().find((f) => f.path === path);
 }
 
-/** Registry entries bucketed by top-level group, preserving declaration order. */
-export function settingsByGroup(): Array<{ group: string; fields: FieldDescriptor[] }> {
-  const groups: Array<{ group: string; fields: FieldDescriptor[] }> = [];
+/**
+ * Registry entries bucketed by top-level group, preserving declaration order.
+ *
+ * `label` runs the key through the same humaniser the field labels use, so the
+ * panel shows "OpenAI-compatible" and "Output style" rather than shouting the
+ * schema key back at the reader. The raw key stays as `group` because it is
+ * what the anchors and the dotted paths are built from.
+ */
+export function settingsByGroup(): Array<{
+  group: string;
+  label: string;
+  fields: FieldDescriptor[];
+}> {
+  const groups: Array<{ group: string; label: string; fields: FieldDescriptor[] }> = [];
   for (const field of settingsRegistry()) {
     let bucket = groups.find((g) => g.group === field.group);
     if (!bucket) {
-      bucket = { group: field.group, fields: [] };
+      bucket = { group: field.group, label: humanise(field.group), fields: [] };
       groups.push(bucket);
     }
     bucket.fields.push(field);

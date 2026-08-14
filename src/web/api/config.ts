@@ -17,6 +17,7 @@ export const getSettings: Handler = ({ db }) => {
   return json({
     groups: settingsByGroup().map((group) => ({
       group: group.group,
+      label: group.label,
       fields: group.fields.map((field) => ({
         ...field,
         value: getPath(config, field.path),

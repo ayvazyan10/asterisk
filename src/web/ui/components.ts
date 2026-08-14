@@ -203,26 +203,48 @@ export const COMPONENTS = String.raw`
   color: var(--ink-faint); overflow-wrap: anywhere; margin-top: 0.15rem;
 }
 
-/* --- settings field ------------------------------------------------------ */
+/* --- settings field ------------------------------------------------------
+   Name and key on one line, description under it, control in a fixed column on
+   the right. The row this replaced stacked three lines and let the control
+   float across half the window, which is what made forty settings feel like a
+   thousand. */
 
 .field {
-  display: grid; grid-template-columns: minmax(15rem, 1fr) minmax(16rem, 1fr);
-  gap: 1.25rem; align-items: start;
-  padding: 0.85rem 1rem; border-top: 1px solid var(--border);
+  display: grid; grid-template-columns: minmax(0, 1fr) 21rem;
+  gap: 1.5rem; align-items: center;
+  padding: 0.6rem 1rem; border-top: 1px solid var(--border);
+  transition: background-color var(--dur) var(--ease);
 }
 .field:first-child { border-top: 0; }
 .field:hover { background: var(--surface-high); }
+.field-text { min-width: 0; }
+.field-name {
+  font-size: var(--t-sm); font-weight: 500; color: var(--ink);
+  margin-right: 0.5rem;
+}
+/* The key you would type into the CLI, beside the name rather than under it. */
 .field-path {
-  display: block; font-family: var(--font-machine); font-size: var(--t-xs);
-  color: var(--ink-faint); margin-top: 0.15rem; overflow-wrap: anywhere;
+  font-family: var(--font-machine); font-size: var(--t-2xs);
+  color: var(--ink-faint); overflow-wrap: anywhere;
 }
 .field-help {
   font-size: var(--t-xs); color: var(--ink-dim);
-  margin-top: 0.35rem; max-width: 52ch; line-height: 1.55;
+  margin-top: 0.1rem; max-width: 68ch; line-height: 1.5;
 }
-.field-control { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
-.field-control .input, .field-control .select { flex: 1 1 10rem; width: auto; min-width: 0; }
-.field-control .btn { flex: none; }
+/* A grid, not a flex row: the reset button appears on some rows and not
+   others, and letting it shrink the input gave the column a ragged right edge
+   where every value should start at the same x. */
+.field-control {
+  display: grid; grid-template-columns: minmax(0, 1fr) 3.6rem;
+  align-items: center; gap: 0.4rem;
+}
+.field-control .input, .field-control .select { width: 100%; min-width: 0; }
+.field-control .btn { justify-self: start; }
+.switch-cell { display: flex; align-items: center; gap: 0.5rem; }
+.switch-state {
+  font-family: var(--font-machine); font-size: var(--t-2xs);
+  color: var(--ink-faint);
+}
 /* A staged edit is pending, not live — it gets the resting accent. */
 .field-dirty { background: var(--tide-wash); }
 .field-dirty:hover { background: var(--tide-wash); }
@@ -263,44 +285,6 @@ export const COMPONENTS = String.raw`
   background: var(--surface-high); border-bottom: 1px solid var(--border);
 }
 
-/* --- collapsible group ------------------------------------------------------ */
-
-.group {
-  border: 1px solid var(--border); border-radius: var(--r-lg);
-  background: var(--surface); overflow: hidden;
-}
-.group + .group { margin-top: 0.5rem; }
-
-.group-head {
-  display: flex; align-items: center; gap: 0.6rem; width: 100%;
-  padding: 0.65rem 0.9rem; border: 0; background: var(--surface-high);
-  color: inherit; font-family: inherit; font-size: var(--t-sm);
-  text-align: left; cursor: pointer;
-  transition: background-color var(--dur) var(--ease);
-}
-.group-head:hover { background: var(--surface); }
-.group-caret {
-  color: var(--ink-faint); font-size: 0.7rem; flex: none;
-  transition: transform var(--dur) var(--ease);
-}
-.group[data-open="true"] .group-caret { transform: rotate(90deg); }
-.group-name {
-  font-size: var(--t-2xs); font-weight: 600;
-  letter-spacing: var(--track-silk); text-transform: uppercase;
-  color: var(--ink-faint); flex: 1;
-}
-.group-count {
-  font-family: var(--font-machine); font-size: var(--t-xs);
-  color: var(--ink-faint); flex: none;
-}
-.group-body { border-top: 1px solid var(--border); }
-
-/* A field sitting away from its schema default, marked where the eye already
-   is rather than in a column of its own. */
-.field-mark {
-  display: inline-block; width: 5px; height: 5px; margin-left: 0.4rem;
-  border-radius: 50%; background: var(--tide); vertical-align: middle;
-}
 /* A secret an environment variable has taken over. */
 .field-shadowed { background: var(--oxide-wash); }
 

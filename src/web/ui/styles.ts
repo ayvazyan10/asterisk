@@ -200,6 +200,92 @@ const LAYOUT = String.raw`
 .overview-grid > * { min-width: 0; }
 .overview-grid .card + .card { margin-top: 0.875rem; }
 
+/* --- settings --------------------------------------------------------------
+   An index and a body, not an accordion. The index is sticky and narrow; the
+   body carries every field the schema has, under headings that stay put while
+   their own section is on screen. */
+
+.settings-layout {
+  display: grid; grid-template-columns: 13rem minmax(0, 1fr);
+  gap: 1.5rem; align-items: start;
+}
+
+.toc {
+  position: sticky; top: calc(var(--bar) + 3.5rem);
+  display: flex; flex-direction: column; gap: 1px;
+  max-height: calc(100vh - var(--bar) - 5rem); overflow-y: auto;
+}
+.toc-item {
+  position: relative;
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.35rem 0.55rem; border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--ink-faint);
+  font-family: var(--font-human); font-size: var(--t-sm);
+  text-align: left; cursor: pointer; width: 100%;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.toc-item:hover { background: var(--surface-high); color: var(--ink); }
+.toc-item[aria-current="true"] { color: var(--ink); font-weight: 500; }
+.toc-item[aria-current="true"]::before {
+  content: ""; position: absolute; left: -0.5rem; top: 50%;
+  width: 2px; height: 0.9rem; margin-top: -0.45rem;
+  border-radius: 999px; background: var(--signal);
+}
+.toc-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toc-count {
+  font-family: var(--font-machine); font-size: var(--t-2xs);
+  color: var(--ink-faint); flex: none;
+}
+/* Staged edits are the one thing worth pulling the eye back to a section for. */
+.toc-staged {
+  flex: none; padding: 0.02rem 0.35rem; border-radius: 999px;
+  background: var(--tide-wash); color: var(--tide);
+  font-family: var(--font-machine); font-size: var(--t-2xs);
+}
+
+/* Each section is its own card, and deliberately NOT one container with the
+   sections inside it: an overflow:hidden wrapper is a scroll container, and a
+   sticky heading inside one resolves its top inset against that box instead of
+   the viewport — which put every heading 48px *below* its own first row. */
+.settings-body { display: flex; flex-direction: column; gap: 0.75rem; }
+
+.settings-section {
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--surface);
+}
+.settings-section-head {
+  position: sticky; top: var(--bar); z-index: 10;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0.6rem 1rem;
+  background: var(--surface-high); border-bottom: 1px solid var(--border);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+/* The heading is the readable name — the index carries it too, and shouting it
+   would throw away the humanising that turns openaiCompatible into a title. */
+.settings-section-name {
+  font-size: var(--t-sm); font-weight: 600; color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.settings-section .field:last-child { border-radius: 0 0 var(--r-lg) var(--r-lg); }
+.settings-section-count {
+  font-family: var(--font-machine); font-size: var(--t-2xs); color: var(--ink-faint);
+}
+
+@media (max-width: 1100px) {
+  .settings-layout { grid-template-columns: 1fr; }
+  /* Sticking a full-width index to the top of a narrow window costs more than
+     it gives, so it becomes a strip of chips that scrolls with the page. */
+  .toc {
+    position: static; flex-direction: row; flex-wrap: wrap; max-height: none;
+    gap: 0.3rem; margin-bottom: 0.25rem;
+  }
+  .toc-item { width: auto; border: 1px solid var(--border); }
+  .toc-item[aria-current="true"] { border-color: var(--signal); }
+  .toc-item[aria-current="true"]::before { display: none; }
+  .field { grid-template-columns: 1fr; gap: 0.5rem; }
+  .field-control { justify-content: flex-start; }
+}
+
 /* --- forms ---------------------------------------------------------------- */
 
 .form-grid {
@@ -215,13 +301,21 @@ const LAYOUT = String.raw`
 
 /* --- save bar -------------------------------------------------------------- */
 
+/* Fixed, not sticky. Sticky worked while Settings was an accordion and the
+   page was one screen tall; with every field on the page the bar sat at the
+   bottom of 3000px of document, so the count of what you had staged was only
+   visible once you had scrolled past everything you might still want to
+   change. It follows the rail's width because it spans the reading column. */
 .save-bar {
-  position: sticky; bottom: 1rem; z-index: 15;
+  position: fixed; z-index: 30;
+  left: calc(var(--rail) + 1.5rem); right: 1.5rem; bottom: 1rem;
+  max-width: 76rem;
   display: flex; align-items: center; gap: 0.875rem;
-  padding: 0.6rem 0.875rem; margin-top: 0.875rem;
+  padding: 0.6rem 0.875rem;
   border: 1px solid var(--tide); border-radius: var(--r-md);
   background: var(--surface-high); box-shadow: var(--shadow-3);
 }
+.shell[data-rail="tight"] .save-bar { left: calc(var(--rail-tight) + 1.5rem); }
 .save-bar-count { flex: 1; font-size: var(--t-sm); font-weight: 500; }
 
 /* --- editor ---------------------------------------------------------------- */
@@ -334,11 +428,11 @@ const LAYOUT = String.raw`
   .nav-item[aria-current="true"] { box-shadow: inset 0 -2px 0 var(--signal); }
   /* Collapsing a rail that is already a strip of chips does nothing. */
   .rail-foot { display: none; }
-  .field { grid-template-columns: 1fr; gap: 0.5rem; }
   .editor-grid { grid-template-columns: 1fr; }
   .header { gap: 0.5rem; overflow-x: auto; }
   .status-pill .status-value, .crumb-root, .crumb-sep { display: none; }
   .view { padding: 1.25rem 1rem 3rem; }
+  .save-bar, .shell[data-rail="tight"] .save-bar { left: 1rem; right: 1rem; }
 }
 
 @media (max-width: 640px) {
