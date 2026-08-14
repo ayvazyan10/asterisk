@@ -159,6 +159,7 @@ describe('command registry', () => {
         'edit',
         'remove',
         'connect',
+        'client',
         'disconnect',
         'reload',
       ]);

@@ -311,6 +311,62 @@ describe('collections API', () => {
     expect(github).toMatchObject({ connected: true, auth: 'token' });
   });
 
+  it('sends a manual-client connector to the client path instead of the browser flow', async () => {
+    const { status, body } = await call('/api/connectors/google-drive/connect', { method: 'POST' });
+    expect(status).toBe(409);
+    expect(body.error).toMatch(/OAuth client/);
+    // Same rule as the token path: a refused connect writes nothing.
+    expect((await call('/api/mcp')).body.servers).toHaveLength(0);
+  });
+
+  it('stores a user-registered OAuth client outside the exported config', async () => {
+    const { status } = await call(
+      '/api/connectors/google-drive/client',
+      send('PUT', {
+        clientId: 'client-123.apps.googleusercontent.com',
+        clientSecret: 'gocspx-hush',
+      }),
+    );
+    expect(status).toBe(200);
+
+    const server = (await call('/api/mcp')).body.servers[0];
+    expect(server).toMatchObject({ name: 'google-drive', auth: 'oauth' });
+    expect(JSON.stringify(server)).not.toContain('gocspx-hush');
+    expect(JSON.stringify((await call('/api/config/export')).body)).not.toContain('gocspx-hush');
+
+    const drive = (await call('/api/connectors')).body.connectors.find(
+      (c: { id: string }) => c.id === 'google-drive',
+    );
+    // The panel learns that a client exists and nothing more — not the id,
+    // and certainly not the secret.
+    expect(drive).toMatchObject({
+      hasClient: true,
+      connected: false,
+      clientRegistration: 'manual',
+    });
+    expect(JSON.stringify(drive)).not.toContain('gocspx-hush');
+    expect(JSON.stringify(drive)).not.toContain('client-123');
+  });
+
+  it('rejects an empty client id', async () => {
+    expect(
+      (await call('/api/connectors/google-drive/client', send('PUT', { clientId: ' ' }))).status,
+    ).toBe(400);
+  });
+
+  it('asks Google for the scopes its own docs name, not for everything on offer', async () => {
+    const drive = (await call('/api/connectors')).body.connectors.find(
+      (c: { id: string }) => c.id === 'google-drive',
+    );
+    // Google's resource metadata advertises full `drive` too, and the SDK falls
+    // back to all of it when no scope is given. These have to stay explicit.
+    expect(drive.scopes).toEqual([
+      'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/drive.file',
+    ]);
+    expect(drive.redirectUri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/);
+  });
+
   it('rejects an empty token', async () => {
     expect((await call('/api/connectors/github/token', send('PUT', { token: '  ' }))).status).toBe(
       400,

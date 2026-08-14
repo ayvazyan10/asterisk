@@ -89,6 +89,12 @@ export function Form({ spec, onSubmit, onCancel }: Props) {
           {spec.title}
         </Text>
       </Box>
+      {spec.description ? (
+        <Box marginTop={1}>
+          {/* Ink breaks on the newlines itself, so no per-line elements (and no keys). */}
+          <Text dimColor>{spec.description}</Text>
+        </Box>
+      ) : null}
       <Box flexDirection="column" marginTop={1}>
         {spec.fields.map((field, idx) => {
           const isActive = idx === active && !submitting;

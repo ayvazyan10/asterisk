@@ -34,17 +34,34 @@ function connectorStatus(c) {
   return ui.badge('Connected', 'success', true);
 }
 
+/**
+ * The one thing the row's primary button is for.
+ *
+ * Three services, three different first steps, and the button says which:
+ * a token connector cannot open a browser flow at all, and a manual-client one
+ * cannot until the user has registered a client — pressing Connect there would
+ * only ever return the same 409.
+ */
+function connectorEntry(c) {
+  if (c.auth === 'token') {
+    return { attr: ' data-connector-token="', label: c.connected ? 'Replace token' : 'Add token' };
+  }
+  if (c.clientRegistration === 'manual' && !c.hasClient) {
+    return { attr: ' data-connector-client="', label: 'Add OAuth client' };
+  }
+  return { attr: ' data-connector-connect="', label: c.connected ? 'Reconnect' : 'Connect' };
+}
+
 function connectorActions(c) {
   const id = esc(c.id);
-  // A token connector cannot open a browser flow — its server does not hand
-  // out client registrations — so the button asks for the token instead.
-  const attr = c.auth === 'token' ? ' data-connector-token="' : ' data-connector-connect="';
-  const label = c.auth === 'token' ? (c.connected ? 'Replace token' : 'Add token')
-                                   : (c.connected ? 'Reconnect' : 'Connect');
+  const { attr, label } = connectorEntry(c);
   const connect = ui.btn(label,
     { size: 'sm', variant: c.connected ? 'outline' : 'default', attrs: attr + id + '"' });
   if (!c.installed) return connect;
   return connect +
+    (c.clientRegistration === 'manual' && c.hasClient
+      ? ui.btn('Replace client', { size: 'sm', variant: 'ghost', attrs: ' data-connector-client="' + id + '"' })
+      : '') +
     (c.connected
       ? ui.btn('Disconnect', { size: 'sm', variant: 'ghost', attrs: ' data-mcp-disconnect="' + id + '"' })
       : '') +
@@ -53,19 +70,26 @@ function connectorActions(c) {
 
 /** Cards for the popular-and-not-yet-added ones; once added they belong in the table. */
 function connectorCards() {
-  const popular = state.connectors.filter((c) => c.source === 'catalog' && !c.installed).slice(0, 3);
+  const popular = state.connectors.filter((c) => c.popular && !c.installed);
   if (popular.length === 0) return '';
-  return '<div class="connector-cards">' + popular.map((c) =>
-    '<div class="connector-card">' +
+  return '<div class="connector-cards">' + popular.map((c) => {
+    const entry = connectorEntry(c);
+    return '<div class="connector-card">' +
       '<div class="connector-mark">' + esc(c.name.slice(0, 1)) + '</div>' +
       '<div class="connector-card-body">' +
         '<div class="connector-card-name">' + esc(c.name) + '</div>' +
         '<div class="connector-card-detail">' + esc(c.description) + '</div>' +
       '</div>' +
-      ui.btn(c.auth === 'token' ? 'Add token' : 'Connect', { size: 'sm',
-        attrs: (c.auth === 'token' ? ' data-connector-token="' : ' data-connector-connect="') + esc(c.id) + '"' }) +
-    '</div>'
-  ).join('') + '</div>';
+      ui.btn(entry.label, { size: 'sm', attrs: entry.attr + esc(c.id) + '"' }) +
+    '</div>';
+  }).join('') + '</div>';
+}
+
+/** The redirect URI has to be registered by hand, so it is on the row to copy. */
+function connectorDetail(c) {
+  return c.auth === 'oauth' && c.clientRegistration === 'manual' && !c.hasClient
+    ? c.url + '  ·  redirect URI to allow: ' + c.redirectUri
+    : c.url;
 }
 
 /** Rows only — replaced in place by the search box, which must not lose focus. */
@@ -76,7 +100,7 @@ function connectorRows() {
     esc(c.name) +
       (c.source === 'custom' ? ' ' + ui.badge('custom', 'outline') : '') +
       ' ' + connectorStatus(c),
-    c.url,
+    connectorDetail(c),
     connectorActions(c),
     '<div class="connector-mark">' + esc(c.name.slice(0, 1)) + '</div>'
   )).join('');
@@ -107,7 +131,8 @@ function viewConnectors() {
   return ui.pageHeader('Connectors',
       'Services the agent can use through their own hosted MCP endpoints. Connecting one opens ' +
       'that service’s consent screen; the token is stored locally and refreshes itself. ' +
-      'Google and Slack are absent because they publish no endpoint a third-party client may use.') +
+      'Google registers no clients on its own, so its entries ask for an OAuth client you create ' +
+      'in the Google Cloud console first — one client covers all three.') +
     connectorCards() +
     addPanel('connector-add-panel', 'Add a connector by URL', custom) +
     ui.card('Services',
@@ -156,6 +181,41 @@ async function addConnectorToken(id) {
   await loadConnectors();
   await loadMcp();
   render();
+}
+
+/**
+ * Takes an OAuth client the user registered themselves, then connects.
+ *
+ * Two prompts because the two halves are not alike: the client id is public
+ * and the secret is not, and the second is optional — an authorization server
+ * that accepts a public client with PKCE needs no secret, and sending an empty
+ * one would be worse than sending none. Same reasoning as the token prompt:
+ * the value goes straight to the API and is never put in the DOM.
+ */
+async function addConnectorClient(id) {
+  const c = state.connectors.find((x) => x.id === id);
+  if (!c) return;
+  const lines = [
+    c.clientHelp || 'Register an OAuth client with this service and paste its client ID.',
+    '',
+    'Redirect URI to allow: ' + c.redirectUri,
+  ];
+  if (c.scopes && c.scopes.length) lines.push('', 'Scopes to grant:', c.scopes.join('\n'));
+  if (c.clientUrl) lines.push('', 'Create one at: ' + c.clientUrl);
+  lines.push('', 'Client ID:');
+
+  const clientId = prompt(lines.join('\n'));
+  if (clientId === null) return;
+  if (!clientId.trim()) { toast('No client ID entered', 'bad'); return; }
+  const clientSecret = prompt('Client secret (leave empty if this client has none):') || '';
+
+  const ok = await guard(() => api('/connectors/' + encodeURIComponent(id) + '/client', {
+    method: 'PUT',
+    body: JSON.stringify({ clientId: clientId.trim(), clientSecret: clientSecret.trim() }),
+  }), 'OAuth client saved');
+  if (!ok) return;
+  await loadConnectors();
+  await connectConnector(id);
 }
 
 async function addCustomConnector() {

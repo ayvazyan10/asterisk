@@ -474,7 +474,8 @@ async function goto(tab) {
 document.addEventListener('click', async (ev) => {
   const t = ev.target.closest('[data-tab],[data-action],[data-daemon],[data-toggle],[data-reset],' +
     '[data-revert],[data-mcp-toggle],[data-mcp-delete],[data-mcp-connect],[data-mcp-disconnect],' +
-    '[data-connector-connect],[data-connector-token],[data-connector-remove],[data-connector-filter],' +
+    '[data-connector-connect],[data-connector-token],[data-connector-client],' +
+    '[data-connector-remove],[data-connector-filter],' +
     '[data-hook-toggle],[data-hook-delete],' +
     '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-logs-tab],' +
     '[data-skill-open],[data-agent-open],[data-group],[data-settings-filter],[data-log-level],' +
@@ -508,6 +509,7 @@ document.addEventListener('click', async (ev) => {
   }
   if (d.connectorConnect) return connectConnector(d.connectorConnect);
   if (d.connectorToken) return addConnectorToken(d.connectorToken);
+  if (d.connectorClient) return addConnectorClient(d.connectorClient);
   if (d.connectorRemove) {
     if (!confirm('Remove connector "' + d.connectorRemove + '"?\n\n' +
       'Its stored credentials go too. The grant stays live upstream until you revoke it there.')) return;

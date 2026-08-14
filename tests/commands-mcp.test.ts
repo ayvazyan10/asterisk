@@ -81,6 +81,7 @@ describe('/mcp routing', () => {
       'edit',
       'remove',
       'connect',
+      'client',
       'disconnect',
       'reload',
     ]);
@@ -91,10 +92,50 @@ describe('/mcp routing', () => {
     expect(asList(await picker.onPick('edit')).title).toMatch(/Edit which/);
     expect(asList(await picker.onPick('remove')).title).toMatch(/Remove which/);
     expect(asList(await picker.onPick('connect')).title).toMatch(/Authorize which connector/);
+    expect(asList(await picker.onPick('client')).title).toMatch(/OAuth client for which/);
     expect(asList(await picker.onPick('disconnect')).title).toMatch(/Disconnect which connector/);
     expect(asText(await picker.onPick('reload'))).toMatch(/reloaded/);
     expect(await picker.onPick('nonsense')).toBeNull();
     expect(picker.onCancel?.()).toBeNull();
+  });
+
+  it('takes an OAuth client for a service that registers none', async () => {
+    const ctx = makeContext();
+    // google-drive is a catalog entry whose authorization server has no
+    // registration endpoint, so Connect can do nothing until a client is on file.
+    seed({
+      name: 'google-drive',
+      transport: 'http',
+      url: 'https://drivemcp.googleapis.com/mcp/v1',
+      headers: {},
+      auth: 'oauth',
+      scopes: ['https://www.googleapis.com/auth/drive.file'],
+      enabled: true,
+    });
+
+    expect(await runText(ctx, '/mcp', 'connect google-drive')).toMatch(
+      /needs an OAuth client you register/,
+    );
+
+    const form = asForm(await run(ctx, '/mcp', 'client google-drive'));
+    expect(keys(form)).toEqual(['clientId', 'clientSecret']);
+    // The redirect URI cannot be guessed and has to be registered by hand, so
+    // the form has to say it.
+    expect(form.description).toMatch(/127\.0\.0\.1:\d+\/callback/);
+    expect(form.description).toMatch(/drive\.file/);
+    expect(await submitText(form, { clientId: 'abc.apps.googleusercontent.com' })).toMatch(
+      /OAuth client stored/,
+    );
+
+    expect(await runText(ctx, '/mcp', 'list')).toContain('oauth: not connected');
+  });
+
+  it('refuses an OAuth client for a connector that does not use OAuth', async () => {
+    const ctx = makeContext();
+    seed(http('plain'));
+    expect(await runText(ctx, '/mcp', 'client plain')).toMatch(/not an OAuth connector/);
+    expect(await runText(ctx, '/mcp', 'client nowhere')).toBe('no MCP server named "nowhere"');
+    expect(await runText(ctx, '/mcp', 'client')).toBe('usage: /mcp client <name>');
   });
 
   it('the transport picker opens the matching add form', async () => {

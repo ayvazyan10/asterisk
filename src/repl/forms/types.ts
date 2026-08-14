@@ -42,6 +42,11 @@ export type FormField = TextField | SelectField | ConfirmField;
 export interface FormSpec {
   kind: 'form';
   title: string;
+  /**
+   * Context the form cannot ask for and the user cannot guess — a redirect URI
+   * to register, a list of scopes to tick. One line per newline.
+   */
+  description?: string;
   fields: FormField[];
   submitLabel?: string;
   onSubmit(values: Record<string, string>): Promise<CommandResult> | CommandResult;

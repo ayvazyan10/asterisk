@@ -217,6 +217,38 @@ export function writeMcpUserToken(
   });
 }
 
+/**
+ * Stores an OAuth client the *user* registered, for authorization servers that
+ * hand out no registrations of their own (RFC 7591).
+ *
+ * The same column as a dynamic registration, because the SDK reads exactly one
+ * thing — `clientInformation()` — and an id typed out of a vendor console is,
+ * to the protocol, indistinguishable from one a registration endpoint returned.
+ *
+ * `token_endpoint_auth_method` is deliberately not written. Left out, the SDK
+ * picks from what that authorization server actually advertises, which is how
+ * a client_secret ends up presented the way that server expects it.
+ *
+ * The record starts over rather than being patched: tokens minted under a
+ * previous client id are not usable with this one, and an open flow's verifier
+ * belongs to the client that began it.
+ */
+export function writeMcpOAuthClient(
+  db: SqliteDriver,
+  serverName: string,
+  resource: string,
+  clientId: string,
+  clientSecret?: string,
+): void {
+  deleteMcpCredentials(db, serverName);
+  writeMcpCredentials(db, serverName, resource, {
+    clientInfo: {
+      client_id: clientId,
+      ...(clientSecret ? { client_secret: clientSecret } : {}),
+    },
+  });
+}
+
 /** The bearer token for a server, whether it came from OAuth or from the user. */
 export function readMcpAccessToken(
   db: SqliteDriver,
@@ -233,6 +265,8 @@ export interface McpAuthStatus {
   connected: boolean;
   expiresAt: number | undefined;
   hasRefreshToken: boolean;
+  /** A client id is on file — registered dynamically or supplied by the user. */
+  hasClient: boolean;
 }
 
 export function mcpAuthStatus(
@@ -242,9 +276,11 @@ export function mcpAuthStatus(
 ): McpAuthStatus {
   const record = readMcpCredentials(db, serverName, resource);
   const tokens = record?.tokens as { access_token?: string; refresh_token?: string } | undefined;
+  const client = record?.clientInfo as { client_id?: string } | undefined;
   return {
     connected: typeof tokens?.access_token === 'string',
     expiresAt: record?.expiresAt,
     hasRefreshToken: typeof tokens?.refresh_token === 'string',
+    hasClient: typeof client?.client_id === 'string',
   };
 }

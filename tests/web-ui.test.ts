@@ -89,6 +89,19 @@ describe('the client script', () => {
     );
   });
 
+  it('dispatches every data-attribute it puts on a control', () => {
+    // The panel has one delegated click listener, and a button whose attribute
+    // is not in its selector is simply dead — no error, no console entry, just
+    // nothing happening. Adding an action means adding it in two places, and
+    // this is what notices when only one of them happened.
+    const emitted = new Set([...CLIENT.matchAll(/data-([a-z0-9-]+)="/g)].map((m) => m[1]));
+    const selected = new Set([...CLIENT.matchAll(/\[data-([a-z0-9-]+)\]/g)].map((m) => m[1]));
+    // These two carry a value for a handler that already matched on something
+    // else; they are read off the dataset, never used to find an element.
+    const carriers = new Set(['field', 'secret']);
+    expect([...emitted].filter((a) => !selected.has(a) && !carriers.has(a as string))).toEqual([]);
+  });
+
   it('parses as JavaScript', () => {
     // The whole reason this test exists: the script lives inside a template
     // literal, so nothing else in the toolchain ever parses it.

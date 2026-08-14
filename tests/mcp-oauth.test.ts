@@ -23,6 +23,7 @@ import {
   mcpAuthStatus,
   readMcpCredentials,
   writeMcpCredentials,
+  writeMcpOAuthClient,
 } from '../src/db/mcp-credentials.ts';
 import { CallbackPortBusyError, startCallbackServer } from '../src/mcp/oauth/callback.ts';
 import { beginConnectorFlow, disconnectConnector } from '../src/mcp/oauth/connect.ts';
@@ -101,6 +102,37 @@ describe('mcp credential store', () => {
     expect(record.clientInfo).toEqual({ client_id: 'abc' });
   });
 
+  it('takes a client the user registered, and drops what the last one earned', () => {
+    const db = getDb();
+    writeMcpCredentials(db, 'demo', RESOURCE, {
+      clientInfo: { client_id: 'old' },
+      tokens: { access_token: 'issued-to-old' },
+      codeVerifier: 'half-finished',
+    });
+
+    writeMcpOAuthClient(db, 'demo', RESOURCE, 'new-id', 'new-secret');
+
+    const record = defined(readMcpCredentials(db, 'demo', RESOURCE), 'credential record');
+    expect(record.clientInfo).toEqual({ client_id: 'new-id', client_secret: 'new-secret' });
+    // A token minted for another client id is not usable with this one, and an
+    // abandoned flow's verifier belongs to the client that began it.
+    expect(record.tokens).toBeUndefined();
+    expect(record.codeVerifier).toBeUndefined();
+    expect(mcpAuthStatus(db, 'demo', RESOURCE)).toMatchObject({
+      hasClient: true,
+      connected: false,
+    });
+  });
+
+  it('stores no client_secret when the client has none', () => {
+    const db = getDb();
+    writeMcpOAuthClient(db, 'demo', RESOURCE, 'public-id');
+    const record = defined(readMcpCredentials(db, 'demo', RESOURCE), 'credential record');
+    // An empty secret is not the same as no secret: the SDK picks the token
+    // endpoint's auth method from whether one is present at all.
+    expect(record.clientInfo).toEqual({ client_id: 'public-id' });
+  });
+
   it('reports connection status from the stored token', () => {
     const db = getDb();
     expect(mcpAuthStatus(db, 'demo', RESOURCE).connected).toBe(false);
@@ -112,6 +144,7 @@ describe('mcp credential store', () => {
 
     expect(mcpAuthStatus(db, 'demo', RESOURCE)).toEqual({
       connected: true,
+      hasClient: false,
       expiresAt: 4242,
       hasRefreshToken: true,
     });

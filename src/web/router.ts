@@ -25,7 +25,12 @@ import {
   putSecret,
   resetSetting,
 } from './api/config.ts';
-import { connectCatalogConnector, getConnectors, setConnectorToken } from './api/connectors.ts';
+import {
+  connectCatalogConnector,
+  getConnectors,
+  setConnectorClient,
+  setConnectorToken,
+} from './api/connectors.ts';
 import { deleteContent, listContent, readContent, writeContent } from './api/content.ts';
 import { deleteSkill, getSkill, getSkills, putSkill } from './api/skills.ts';
 import {
@@ -63,6 +68,7 @@ export const ROUTES: readonly Route[] = [
   { method: 'GET', pattern: '/api/connectors', handler: getConnectors },
   { method: 'POST', pattern: '/api/connectors/:id/connect', handler: connectCatalogConnector },
   { method: 'PUT', pattern: '/api/connectors/:id/token', handler: setConnectorToken },
+  { method: 'PUT', pattern: '/api/connectors/:id/client', handler: setConnectorClient },
 
   { method: 'GET', pattern: '/api/mcp', handler: getMcpServers },
   { method: 'PUT', pattern: '/api/mcp', handler: putMcpServer },

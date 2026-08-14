@@ -12,9 +12,9 @@
 
 import { listMcpServers, upsertMcpServer } from '../../db/collections.ts';
 import type { SqliteDriver } from '../../db/index.ts';
-import { mcpAuthStatus, writeMcpUserToken } from '../../db/mcp-credentials.ts';
+import { mcpAuthStatus, writeMcpOAuthClient, writeMcpUserToken } from '../../db/mcp-credentials.ts';
 import { BUNDLED_CONNECTORS, findCatalogConnector } from '../../mcp/catalog.ts';
-import { CallbackPortBusyError } from '../../mcp/oauth/callback.ts';
+import { CallbackPortBusyError, callbackRedirectUrl } from '../../mcp/oauth/callback.ts';
 import { beginConnectorFlow } from '../../mcp/oauth/connect.ts';
 import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
 
@@ -30,8 +30,19 @@ interface ConnectorView {
   connected: boolean;
   expiresAt: number | null;
   docs: string | null;
+  popular: boolean;
   /** How this one is authenticated — decides which button the panel shows. */
   auth: 'oauth' | 'token';
+  /** For 'oauth': whether the user has to bring their own client. */
+  clientRegistration: 'dynamic' | 'manual';
+  /** A client id is on file. Never the id itself, and never the secret. */
+  hasClient: boolean;
+  clientUrl: string | null;
+  clientHelp: string | null;
+  /** What a manually created client has to allow as a redirect URI. */
+  redirectUri: string;
+  /** Shown so a manual consent screen can be given exactly these. */
+  scopes: readonly string[];
   tokenUrl: string | null;
   tokenHelp: string | null;
 }
@@ -48,6 +59,7 @@ interface ConnectorView {
 export const getConnectors: Handler = ({ db }) => {
   const servers = listMcpServers(db);
   const byName = new Map(servers.map((s) => [s.name, s]));
+  const redirectUri = callbackRedirectUrl();
 
   const fromCatalog: ConnectorView[] = BUNDLED_CONNECTORS.map((entry) => {
     const server = byName.get(entry.id);
@@ -65,7 +77,14 @@ export const getConnectors: Handler = ({ db }) => {
       connected: status?.connected ?? false,
       expiresAt: status?.expiresAt ?? null,
       docs: entry.docs,
+      popular: entry.popular,
       auth: entry.auth,
+      clientRegistration: entry.clientRegistration ?? 'dynamic',
+      hasClient: status?.hasClient ?? false,
+      clientUrl: entry.clientUrl ?? null,
+      clientHelp: entry.clientHelp ?? null,
+      redirectUri,
+      scopes: entry.scopes,
       tokenUrl: entry.tokenUrl ?? null,
       tokenHelp: entry.tokenHelp ?? null,
     };
@@ -91,8 +110,20 @@ export const getConnectors: Handler = ({ db }) => {
         connected: status.connected,
         expiresAt: status.expiresAt ?? null,
         docs: null,
+        popular: false,
         auth:
           s.transport === 'http' && s.auth === 'token' ? ('token' as const) : ('oauth' as const),
+        // 'dynamic' is the assumption for a URL the user typed: registration is
+        // tried, and a server that refuses says so in the 409, which is the
+        // point at which the panel offers to take a client instead. Guessing
+        // 'manual' up front would demand a client id from every custom server,
+        // most of which never need one.
+        clientRegistration: 'dynamic' as const,
+        hasClient: status.hasClient,
+        clientUrl: null,
+        clientHelp: null,
+        redirectUri,
+        scopes: s.transport === 'http' ? s.scopes : [],
         tokenUrl: null,
         tokenHelp: null,
       };
@@ -120,7 +151,7 @@ async function startFlow(db: SqliteDriver, name: string, url: string, scopes: re
     // says so instead of becoming a correlation id.
     if (e instanceof Error && /does not support dynamic client registration/i.test(e.message)) {
       throw new HttpError(
-        `${name} does not let clients register themselves, so the browser flow cannot be used. Use a token instead: set Authentication to token and paste one.`,
+        `${name} does not register clients itself, so the browser flow needs an OAuth client you create with that service. Add one at /api/connectors/${name}/client, or switch this connector to a token.`,
         409,
       );
     }
@@ -128,14 +159,15 @@ async function startFlow(db: SqliteDriver, name: string, url: string, scopes: re
   }
 }
 
-/** Stores a user-issued token for a `token` connector, installing the row if needed. */
-export const setConnectorToken: Handler = async ({ db, params, req }) => {
-  const id = params[0];
-  if (!id) throw new HttpError('connector id is required');
-  const body = await readJsonObject(req);
-  const token = typeof body['token'] === 'string' ? body['token'].trim() : '';
-  if (!token) throw new HttpError('token is required');
-
+/**
+ * The http server row a credential is about to hang off, installed if it is not
+ * there yet, and its URL.
+ *
+ * Shared by the token and the client handlers because both are "here is a
+ * secret for X" where X may be a catalog entry nobody has added yet, and both
+ * must refuse the same two cases identically.
+ */
+function ensureHttpRow(db: SqliteDriver, id: string, auth: 'oauth' | 'token'): string {
   const existing = listMcpServers(db).find((s) => s.name === id);
   const entry = findCatalogConnector(id);
   if (existing && existing.transport !== 'http') {
@@ -149,13 +181,47 @@ export const setConnectorToken: Handler = async ({ db, params, req }) => {
     transport: 'http',
     url,
     headers: existing?.transport === 'http' ? existing.headers : {},
-    auth: 'token',
+    auth,
     scopes: existing?.transport === 'http' ? existing.scopes : [...(entry?.scopes ?? [])],
     enabled: true,
   });
+  return url;
+}
+
+/** Stores a user-issued token for a `token` connector, installing the row if needed. */
+export const setConnectorToken: Handler = async ({ db, params, req }) => {
+  const id = params[0];
+  if (!id) throw new HttpError('connector id is required');
+  const body = await readJsonObject(req);
+  const token = typeof body['token'] === 'string' ? body['token'].trim() : '';
+  if (!token) throw new HttpError('token is required');
+
+  const url = ensureHttpRow(db, id, 'token');
   writeMcpUserToken(db, id, url, token);
   // The token itself is never echoed back and never logged, here or anywhere.
   audit(db, 'connector.token', id, { url });
+  return json({ ok: true });
+};
+
+/**
+ * Stores an OAuth client the user registered with the service themselves.
+ *
+ * The secret goes to `mcp_credentials` and nowhere else — in particular not to
+ * the server row's `headers`, which the config export includes. Neither value
+ * is ever read back out through the API; the panel only learns that a client
+ * exists.
+ */
+export const setConnectorClient: Handler = async ({ db, params, req }) => {
+  const id = params[0];
+  if (!id) throw new HttpError('connector id is required');
+  const body = await readJsonObject(req);
+  const clientId = typeof body['clientId'] === 'string' ? body['clientId'].trim() : '';
+  const clientSecret = typeof body['clientSecret'] === 'string' ? body['clientSecret'].trim() : '';
+  if (!clientId) throw new HttpError('clientId is required');
+
+  const url = ensureHttpRow(db, id, 'oauth');
+  writeMcpOAuthClient(db, id, url, clientId, clientSecret || undefined);
+  audit(db, 'connector.client', id, { url, confidential: clientSecret !== '' });
   return json({ ok: true });
 };
 
@@ -193,6 +259,19 @@ export const connectCatalogConnector: Handler = async ({ db, params }) => {
   if (tokenKind) {
     throw new HttpError(
       `${id} authenticates with a token, not a browser flow — send it to /api/connectors/${id}/token`,
+      409,
+    );
+  }
+
+  // Same reasoning, one step later: a service whose authorization server hands
+  // out no registrations cannot produce a consent URL until the user's own
+  // client id is on file, so asking for it is the whole of what Connect can do.
+  if (
+    (entry?.clientRegistration ?? 'dynamic') === 'manual' &&
+    !mcpAuthStatus(db, id, url).hasClient
+  ) {
+    throw new HttpError(
+      `${id} needs an OAuth client you register with the service — send its id and secret to /api/connectors/${id}/client`,
       409,
     );
   }

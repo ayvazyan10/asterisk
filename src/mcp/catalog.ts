@@ -13,22 +13,34 @@
 // on discovery with the endpoint in the message — but it is still the most
 // likely thing here to rot.
 //
-// What is deliberately absent, and why it is not an oversight: Gmail, Google
-// Drive, Google Calendar and Slack. Those are the entries people ask for first
-// because Claude's own connector list shows them, but Claude reaches them
-// through integrations Anthropic operates, not through a public endpoint a
-// third-party client may point at. Supporting them means registering an OAuth
-// client with each vendor and hosting a server per service — real work with a
-// per-vendor approval process, not a row in this table. Listing them with a
-// guessed URL would produce a button that always fails.
-//
 // Requirements for an entry: a publicly documented Streamable HTTP endpoint —
 // our client speaks no legacy SSE transport — plus a way in. Every entry's
-// `auth` was established by actually running the flow against it, not by
-// reading a table: four register clients dynamically and take the browser
-// path, and GitHub answered "does not support dynamic client registration",
-// which is what put it on the token path instead. Anything else belongs in the
-// Add form, where the user supplies what they know.
+// `auth` and `clientRegistration` was established by running discovery against
+// the live service, not by reading a table, and the three answers a service can
+// give are all represented below:
+//
+//   dynamic OAuth — the authorization server registers our client on the spot.
+//                   Linear, Notion, Atlassian, Sentry.
+//   manual OAuth  — no registration endpoint, so the user creates a client in
+//                   the vendor's console and pastes the id. Google: its
+//                   metadata at accounts.google.com has no
+//                   `registration_endpoint` field at all.
+//   token         — no usable OAuth for an unregistered client. GitHub.
+//
+// Google is a set of per-service endpoints (`https://<service>mcp.googleapis
+// .com/mcp/v1`) sharing one authorization server, so Docs, Sheets, Slides and
+// Chat exist on the same pattern and can be added through the Add form with the
+// same OAuth client. Only the three people actually ask for are listed here.
+//
+// Their `scopes` are not decoration. The SDK resolves scope as
+// "explicit ?? the resource metadata's scopes_supported ?? client metadata",
+// and Google's protected-resource metadata advertises the *full* scope
+// alongside the narrow ones — Drive's lists `drive` next to `drive.readonly`
+// and `drive.file`. Leaving scopes empty would therefore ask the user to grant
+// their entire Drive. What is listed here is what Google's own setup page says
+// the server needs.
+//
+// Slack stays absent: it exposes no endpoint a third-party client may point at.
 
 export interface CatalogConnector {
   /** Also the MCP server name, so it must be unique and shell-safe. */
@@ -37,17 +49,25 @@ export interface CatalogConnector {
   description: string;
   url: string;
   /**
-   * 'oauth' — browser consent, which needs the authorization server to offer
-   *           dynamic client registration, since Asterisk has no pre-registered
-   *           client id anywhere.
-   * 'token' — the user issues a token and pastes it. The fallback for servers
-   *           that do not register clients dynamically.
-   *
-   * This is not a guess per entry: every 'oauth' below was confirmed by
-   * running a real registration against it, and GitHub is 'token' because that
-   * same attempt came back "does not support dynamic client registration".
+   * 'oauth' — browser consent. See `clientRegistration` for where the client
+   *           id comes from; Asterisk has none pre-registered anywhere.
+   * 'token' — the user issues a token and pastes it. The last resort, for
+   *           services offering no OAuth path an unregistered client can take.
    */
   auth: 'oauth' | 'token';
+  /**
+   * How the OAuth client comes into being, for 'oauth' entries.
+   *
+   * 'dynamic' (the default) — RFC 7591 registration, nothing for the user to do.
+   * 'manual' — the authorization server offers no registration endpoint, so the
+   *            user creates a client themselves and supplies the id and secret.
+   *            The secret lives in `mcp_credentials`, never in the config.
+   */
+  clientRegistration?: 'dynamic' | 'manual';
+  /** Where a manual client is created. */
+  clientUrl?: string;
+  /** What to create there, in one line. */
+  clientHelp?: string;
   /** Where the user creates the token, for 'token' entries. */
   tokenUrl?: string;
   /** What kind of token, in one line. */
@@ -96,6 +116,63 @@ export const BUNDLED_CONNECTORS: readonly CatalogConnector[] = [
     scopes: [],
     popular: true,
     docs: 'https://github.com/github/github-mcp-server',
+  },
+  // Google's three, sharing one authorization server and therefore one OAuth
+  // client: a client created once in the Cloud console serves all of them, as
+  // long as every scope below is on its consent screen. They are separate rows
+  // because they are separate MCP endpoints with separate tokens, which is
+  // Google's design and not ours.
+  {
+    id: 'google-drive',
+    name: 'Google Drive',
+    description: 'Search and read files, and create new ones.',
+    url: 'https://drivemcp.googleapis.com/mcp/v1',
+    auth: 'oauth',
+    clientRegistration: 'manual',
+    clientUrl: 'https://console.cloud.google.com/apis/credentials',
+    clientHelp:
+      'A "Web application" OAuth client in your own Google Cloud project, with the scopes below on its consent screen. Google’s Workspace MCP servers are in Developer Preview.',
+    scopes: [
+      'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/drive.file',
+    ],
+    popular: true,
+    docs: 'https://developers.google.com/workspace/drive/api/guides/configure-mcp-server',
+  },
+  {
+    id: 'gmail',
+    name: 'Gmail',
+    description: 'Read mail and compose drafts.',
+    url: 'https://gmailmcp.googleapis.com/mcp/v1',
+    auth: 'oauth',
+    clientRegistration: 'manual',
+    clientUrl: 'https://console.cloud.google.com/apis/credentials',
+    clientHelp:
+      'A "Web application" OAuth client in your own Google Cloud project, with the scopes below on its consent screen. Google’s Workspace MCP servers are in Developer Preview.',
+    scopes: [
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.compose',
+    ],
+    popular: true,
+    docs: 'https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server',
+  },
+  {
+    id: 'google-calendar',
+    name: 'Google Calendar',
+    description: 'Calendars, events and free/busy. Read only.',
+    url: 'https://calendarmcp.googleapis.com/mcp/v1',
+    auth: 'oauth',
+    clientRegistration: 'manual',
+    clientUrl: 'https://console.cloud.google.com/apis/credentials',
+    clientHelp:
+      'A "Web application" OAuth client in your own Google Cloud project, with the scopes below on its consent screen. Google’s Workspace MCP servers are in Developer Preview.',
+    scopes: [
+      'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+      'https://www.googleapis.com/auth/calendar.events.readonly',
+      'https://www.googleapis.com/auth/calendar.events.freebusy',
+    ],
+    popular: false,
+    docs: 'https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server',
   },
   {
     id: 'atlassian',
