@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Permission prompts in the chat.** A bot turn that needs a decision now asks
+  in the chat that raised it, with allow-once / always / deny buttons, instead
+  of being refused on the spot. `permissions.mode` defaults to `ask` and nothing
+  in the daemon could ask, so every command outside the allowlist came back as
+  the headless refusal — which reads as "your policy blocked it" rather than
+  "you were never asked". Only a user on the transport's allowlist may press a
+  button (a group chat contains anyone), an unanswered question is denied when
+  `permissions.timeoutSeconds` elapses, and a transport that cannot deliver the
+  question denies rather than throwing. New setting `permissions.chatApprovals`
+  (default true) turns it off.
+- Approval requests carry the session that raised them, and a UI subscribes for
+  the sessions it can actually reach. The daemon serves many chats from one
+  process, so "is anyone there" is now asked about the running turn rather than
+  about the process; scheduled runs (`scheduled:<source>`) stay unattended and
+  keep falling back to `permissions.headless`.
+
 ### Changed
 
 - **`asterisk web` starts in the background.** It prints the panel's URL — with
@@ -16,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   finding the pid by hand. `asterisk web stop` now terminates it and releases
   the port. `--foreground` keeps the old blocking behaviour, which is the shape
   systemd and containers want.
+- `permissions.timeoutSeconds` may now go up to 600. The old 110 cap was
+  justified by the agent loop's 120s tool deadline, but Bash is an `interactive`
+  tool and has had a 15-minute deadline all along — the cap was enforcing a
+  limit that did not apply, and 110s is short for answering from a phone.
 - The panel gets its own process state, separate from the daemon's:
   `~/.asterisk/web.pid`, `~/.asterisk/logs/web.log` and `~/.asterisk/web.json`
   (pid, host, port and URL of the running instance — never a token, since only

@@ -1,29 +1,43 @@
 // The approval channel — carries a permission request from the Bash tool to
 // whatever UI is attached, and the answer back.
 //
-// Same shape as ask.ts: an emitter the REPL subscribes to, a pending map keyed
-// by request id. The differences are all about failing closed.
+// Same shape as ask.ts: subscribers on one side, a pending map keyed by request
+// id on the other. The differences are all about failing closed.
 //
-//   * No listener means no human. The daemon and the bot bridges run with
-//     nobody at a terminal, so a request there resolves from the configured
-//     headless default instead of hanging until the tool deadline.
-//   * The timeout denies rather than allowing, and has to stay comfortably
-//     under the agent loop's 120s tool deadline (loop.ts DEFAULT_TOOL_TIMEOUT_MS)
-//     — past that the loop kills the tool and the user's answer lands nowhere.
+//   * No subscriber means no human. A request with nobody able to answer it
+//     resolves from the configured headless default instead of hanging until
+//     the tool deadline.
+//   * Subscribers are *per session*. The daemon serves many chats at once, and
+//     a request raised by one chat's turn must be shown to that chat and no
+//     other — so a subscriber declares which session ids it can answer for, and
+//     "is anyone there" is asked about the session that is actually running,
+//     never about the process as a whole.
+//   * The timeout denies rather than allowing, and has to stay under the agent
+//     loop's deadline for the calling tool — past that the loop kills the tool
+//     and the user's answer lands nowhere. Bash is `interactive`, so that
+//     deadline is loop.ts INTERACTIVE_TOOL_TIMEOUT_MS (15 minutes), not the
+//     120s default.
 //   * An aborted turn denies.
 
-import { EventEmitter } from 'node:events';
+import { currentSessionId } from '../agent/context.ts';
 
 export type ApprovalOutcome = 'allow-once' | 'allow-always' | 'deny';
 
 export interface ApprovalRequest {
   id: string;
+  /** Which session raised it — the chat id for bot turns, `repl` locally. */
+  sessionId: string;
   /** The command as the model asked for it. */
   command: string;
   /** Why the policy could not decide on its own, in plain language. */
   reason: string;
   /** Rules that "always allow" would remember, shown so the scope is visible. */
   rules: readonly string[];
+}
+
+export interface ApprovalSubscription {
+  /** Which sessions this UI can put a prompt in front of. Default: all. */
+  accepts?: (sessionId: string) => boolean;
 }
 
 export interface ApprovalOptions {
@@ -39,13 +53,24 @@ export interface ApprovalResult {
   automatic?: boolean;
 }
 
-const emitter = new EventEmitter();
+interface Subscriber {
+  handler: (req: ApprovalRequest) => void;
+  accepts: (sessionId: string) => boolean;
+}
+
+const subscribers = new Set<Subscriber>();
 const pending = new Map<string, (result: ApprovalResult) => void>();
 
 /** Subscribe a UI. Returns an unsubscribe function. */
-export function onApprovalRequest(handler: (req: ApprovalRequest) => void): () => void {
-  emitter.on('approval', handler);
-  return () => emitter.off('approval', handler);
+export function onApprovalRequest(
+  handler: (req: ApprovalRequest) => void,
+  sub: ApprovalSubscription = {},
+): () => void {
+  const entry: Subscriber = { handler, accepts: sub.accepts ?? (() => true) };
+  subscribers.add(entry);
+  return () => {
+    subscribers.delete(entry);
+  };
 }
 
 /** Answer a pending request. No-op if it already resolved. */
@@ -57,9 +82,16 @@ export function resolveApproval(id: string, outcome: ApprovalOutcome): void {
   }
 }
 
-/** True when some UI can show a prompt. Exported for the tool's messaging. */
-export function hasApprover(): boolean {
-  return emitter.listenerCount('approval') > 0;
+/**
+ * True when some UI can show a prompt *for this session*. Exported for the
+ * tool's messaging — the refusal text differs depending on whether a person
+ * said no or nobody was asked.
+ */
+export function hasApprover(sessionId: string = currentSessionId()): boolean {
+  for (const sub of subscribers) {
+    if (sub.accepts(sessionId)) return true;
+  }
+  return false;
 }
 
 /**
@@ -68,10 +100,11 @@ export function hasApprover(): boolean {
  * than a refusal.
  */
 export async function requestApproval(
-  req: Omit<ApprovalRequest, 'id'>,
+  req: Omit<ApprovalRequest, 'id' | 'sessionId'>,
   opts: ApprovalOptions,
 ): Promise<ApprovalResult> {
-  if (!hasApprover()) {
+  const sessionId = currentSessionId();
+  if (!hasApprover(sessionId)) {
     return { outcome: opts.headless === 'allow' ? 'allow-once' : 'deny', automatic: true };
   }
 
@@ -99,7 +132,16 @@ export async function requestApproval(
       })
     : null;
 
-  emitter.emit('approval', { id, ...req } satisfies ApprovalRequest);
+  const full: ApprovalRequest = { id, sessionId, ...req };
+  for (const sub of subscribers) {
+    if (!sub.accepts(sessionId)) continue;
+    try {
+      sub.handler(full);
+    } catch {
+      // A UI that throws while rendering must not surface as a tool crash;
+      // the request simply goes unanswered and the timeout denies it.
+    }
+  }
 
   try {
     return await Promise.race(aborted ? [answered, timedOut, aborted] : [answered, timedOut]);
@@ -112,5 +154,5 @@ export async function requestApproval(
 /** Test-only: drop any request left pending by a failed assertion. */
 export function _resetApprovalsForTesting(): void {
   pending.clear();
-  emitter.removeAllListeners('approval');
+  subscribers.clear();
 }

@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { runWithSession } from '../src/agent/context.ts';
 import { permissionsCommand } from '../src/commands/permissions.ts';
 import { saveConfig } from '../src/config/load.ts';
 import { type AsteriskConfig, ConfigSchema } from '../src/config/schema.ts';
@@ -265,5 +266,61 @@ describe('/permissions', () => {
 
   it('says so plainly when there is nothing to revoke', async () => {
     expect(await run('revoke')).toContain('Nothing to revoke');
+  });
+});
+
+// A prompt is only worth raising if it reaches the person whose turn raised it.
+// The daemon serves many chats from one process, so "is anyone there" has to be
+// asked about the running session, not about the process.
+describe('approval routing by session', () => {
+  it('carries the session id, so a UI can tell whose turn asked', async () => {
+    const seen: string[] = [];
+    onApprovalRequest((req) => {
+      seen.push(req.sessionId);
+      resolveApproval(req.id, 'allow-once');
+    });
+
+    const r = await runWithSession({ id: 'bot:42', scope: 'telegram' }, () =>
+      bashTool.execute({ command: 'printf routed' }),
+    );
+
+    expect(r.isError).toBe(false);
+    expect(seen).toEqual(['bot:42']);
+  });
+
+  it('does not show one chat the question another chat raised', async () => {
+    const seen: string[] = [];
+    onApprovalRequest(
+      (req) => {
+        seen.push(req.sessionId);
+        resolveApproval(req.id, 'allow-once');
+      },
+      { accepts: (id) => id === 'bot:7' },
+    );
+
+    const marker = proofOfExecution(home);
+    const r = await runWithSession({ id: 'bot:42', scope: 'telegram' }, () =>
+      bashTool.execute({ command: `touch ${marker}` }),
+    );
+
+    // Nobody could answer for bot:42, so the headless default decides — and
+    // the refusal says exactly that rather than blaming the user.
+    expect(seen).toEqual([]);
+    expect(r.isError).toBe(true);
+    expect(r.output).toContain('no one was available to approve it');
+  });
+
+  it('falls back to the headless default without waiting out the timeout', async () => {
+    withPermissions({ headless: 'allow', timeoutSeconds: 600 });
+    onApprovalRequest(() => undefined, { accepts: () => false });
+
+    const started = Date.now();
+    const r = await runWithSession({ id: 'scheduled:cron', scope: 'scheduled' }, () =>
+      bashTool.execute({ command: 'printf unattended' }),
+    );
+
+    expect(r.isError).toBe(false);
+    expect(r.output).toContain('unattended');
+    expect(Date.now() - started).toBeLessThan(10_000);
   });
 });

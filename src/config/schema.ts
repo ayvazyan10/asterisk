@@ -208,16 +208,22 @@ const PermissionsSchema = z.object({
     .enum(['deny', 'allow'])
     .default('deny')
     .describe(
-      'What to do when nobody can answer — the daemon and the bot bridges. "deny" keeps the boundary; "allow" removes it for every unattended run.',
+      'What to do when nobody can answer — a scheduled run, or a bot transport that cannot show a prompt. "deny" keeps the boundary; "allow" removes it for every unattended run.',
+    ),
+  chatApprovals: z
+    .boolean()
+    .default(true)
+    .describe(
+      'Ask for permission inside the chat, with buttons, when a bot turn needs it. Turning this off makes every bot turn unattended, so permissions.headless decides instead.',
     ),
   timeoutSeconds: z
     .number()
     .int()
     .min(5)
-    .max(110)
+    .max(600)
     .default(90)
     .describe(
-      'How long an approval prompt waits before refusing. Must stay under the agent loop tool deadline of 120s.',
+      'How long an approval prompt waits before refusing. Bash is an interactive tool, so the agent loop gives it 15 minutes — this is the bound that actually applies. Allow more than the local REPL needs if you answer from a chat.',
     ),
 });
 

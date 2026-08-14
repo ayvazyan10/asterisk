@@ -8,7 +8,9 @@
 
 import { Bot, type Context, GrammyError, InputFile } from 'grammy';
 
+import type { ApprovalOutcome } from '../../tools/approval.ts';
 import {
+  type ApprovalPrompt,
   type Attachment,
   type BotAdapter,
   type Handler,
@@ -17,6 +19,7 @@ import {
   asOutgoingMessage,
 } from '../adapter.ts';
 import { BOT_COMMAND_LIST } from '../commands.ts';
+import { createApprovalController } from './approval.ts';
 import { balanceOpenTags, escapeHtml, markdownToTelegramHtml } from './format.ts';
 
 const MAX_TELEGRAM_CHARS = 4096;
@@ -52,11 +55,14 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): BotAdapter 
   const throttleMs = Math.max(opts.streamThrottleMs ?? 1000, 250);
   const parseMode: TelegramParseMode = opts.parseMode ?? 'html';
   const bot = new Bot(opts.token);
+  const approvals = createApprovalController(allowed);
   let started = false;
 
   return {
     name: 'telegram',
     async start(handler: Handler): Promise<void> {
+      approvals.register(bot);
+
       bot.on('message:text', async (ctx: Context) => {
         const userId = ctx.from?.id;
         if (userId === undefined || !allowed.has(userId)) {
@@ -101,8 +107,14 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): BotAdapter 
       started = true;
     },
     async stop(): Promise<void> {
+      // Anything still waiting on a button press is denied: the process is
+      // going away, and a question nobody can answer must not read as consent.
+      approvals.cancelAll();
       if (!started) return;
       await bot.stop();
+    },
+    promptApproval(chatId: string, prompt: ApprovalPrompt): Promise<ApprovalOutcome> {
+      return approvals.prompt(bot, chatId, prompt);
     },
   };
 }

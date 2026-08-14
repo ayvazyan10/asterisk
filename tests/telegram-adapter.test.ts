@@ -824,6 +824,27 @@ describe('bot manager wiring', () => {
     expect(bot?.stopCalls).toBe(1);
   });
 
+  it('reports that a permission prompt can be shown, since Telegram has buttons', async () => {
+    // The bridge asks this before claiming an approver exists. Answering "yes"
+    // when nothing can render a prompt would hang every request until the
+    // policy's timeout denied it.
+    const manager = createBotManager({
+      config: ConfigSchema.parse({ bots: { telegram: { enabled: true, allowedUserIds: [7] } } }),
+      secrets: { ASTERISK_TELEGRAM_BOT_TOKEN: 'tok' },
+    });
+    expect(manager.canPromptApproval()).toBe(true);
+
+    const disabled = createBotManager({
+      config: ConfigSchema.parse({}),
+      secrets: {},
+    });
+    expect(disabled.canPromptApproval()).toBe(false);
+    // With no transport at all, asking is a refusal rather than a hang.
+    await expect(
+      disabled.promptApproval('1', { command: 'x', reason: 'y', rules: [], timeoutMs: 10 }),
+    ).resolves.toBe('deny');
+  });
+
   it('swallows a failure to stop one adapter so the rest still stop', async () => {
     const manager = createBotManager({
       config: ConfigSchema.parse({ bots: { telegram: { enabled: true, allowedUserIds: [7] } } }),

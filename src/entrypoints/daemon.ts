@@ -5,6 +5,7 @@
 import { createAgentState, runAgentTurn } from '../agent/loop.ts';
 import type { AgentState } from '../agent/loop.ts';
 import { loadConversation, saveConversation } from '../agent/persistence.ts';
+import { attachChatApprovals } from '../bots/approval-bridge.ts';
 import { createBotManager } from '../bots/manager.ts';
 import { loadConfig } from '../config/load.ts';
 import { createDaemonLogger } from '../daemon/logger.ts';
@@ -258,6 +259,18 @@ manager
   .then((started) => log.info({ adapters: started }, 'adapters started'))
   .catch((e) => log.error({ err: e }, 'failed to start adapters'));
 
+// Permission prompts go back to the chat that raised them — see the module
+// header in bots/approval-bridge.ts for why the daemon was refusing commands
+// the user's own policy said to ask about.
+const detachApprovals = attachChatApprovals({
+  manager,
+  enabled: () => loadConfig().config.permissions.chatApprovals,
+  // The transport has to answer before the policy's own timer denies it, so
+  // it gets the configured window minus a couple of seconds of head start.
+  timeoutMs: () => Math.max(5_000, loadConfig().config.permissions.timeoutSeconds * 1000 - 2_000),
+  log: (fields, msg) => log.info(fields, msg),
+});
+
 const HEARTBEAT_MS = (loaded.config.daemon.heartbeatSeconds ?? 60) * 1000;
 const interval = setInterval(() => log.debug('heartbeat'), HEARTBEAT_MS);
 interval.unref();
@@ -300,6 +313,7 @@ async function shutdown(signal: string): Promise<void> {
   clearInterval(interval);
   clearInterval(keepAlive);
   scheduler.stop();
+  detachApprovals();
   await manager.stop().catch(() => {});
   await mcp.shutdown().catch(() => {});
   await closeBrowser().catch(() => {});

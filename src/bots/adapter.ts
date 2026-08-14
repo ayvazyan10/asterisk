@@ -1,6 +1,8 @@
 // Bot adapter contract — every transport implements this interface so the
 // daemon can spin them up uniformly.
 
+import type { ApprovalOutcome } from '../tools/approval.ts';
+
 export interface IncomingMessage {
   chatId: string;
   userId: string;
@@ -52,10 +54,32 @@ export type Handler = (
   opts?: HandlerOptions,
 ) => Promise<string | OutgoingMessage>;
 
+/** A permission question posed to the chat that raised it. */
+export interface ApprovalPrompt {
+  /** The command the model wants to run. */
+  command: string;
+  /** Why the policy could not settle it alone. */
+  reason: string;
+  /** What "always allow" would remember, so the scope of that answer is visible. */
+  rules: readonly string[];
+  /** Answer by then or don't bother: the agent loop has already given up. */
+  timeoutMs: number;
+}
+
 export interface BotAdapter {
   name: string;
   start(handler: Handler): Promise<void>;
   stop(): Promise<void>;
+  /**
+   * Asks the chat whether a command may run, if the transport can render a
+   * choice. Optional on purpose: a transport without it is genuinely
+   * unattended, and the policy falls back to `permissions.headless` rather
+   * than pretending someone was asked.
+   *
+   * Must resolve within `timeoutMs` and must never reject — a transport error
+   * is a denial, not a tool crash.
+   */
+  promptApproval?(chatId: string, prompt: ApprovalPrompt): Promise<ApprovalOutcome>;
 }
 
 export function asOutgoingMessage(r: string | OutgoingMessage): OutgoingMessage {

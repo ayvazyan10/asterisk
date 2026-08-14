@@ -650,8 +650,9 @@ the panel's **Download JSON** button produces and **Upload JSON** accepts:
     "mode": "ask",                            // "ask" | "allowlist" | "unrestricted"
     "allow": [],                              // extra rules, e.g. ["npm test", "docker ps"]
     "deny": [],                               // refused outright, beats every allow
-    "headless": "deny",                       // daemon / bots, where nobody can answer
-    "timeoutSeconds": 90
+    "headless": "deny",                       // when nobody can answer at all
+    "chatApprovals": true,                    // ask in the chat, with buttons
+    "timeoutSeconds": 90                      // how long that prompt waits
   },
   "web": {
     "host": "127.0.0.1",
@@ -721,11 +722,19 @@ not hand approval to `./git`.
 | `allowlist`        | Anything not allowlisted is refused, never prompted     |
 | `unrestricted`     | No boundary — the pre-0.4 behaviour, opt in explicitly  |
 
-**Unattended runs.** The daemon and the bot bridges have nobody to prompt, so
-`permissions.headless` decides for them. It defaults to `deny`: a command that
-would have prompted is refused, with a message telling the user which rule to
-add. Set it to `allow` only if you accept that unattended sessions then have
-no boundary at all.
+**Prompts in a chat.** A bot turn is not unattended — there is a person at the
+other end of it. When a command needs a decision, the bot asks in the same chat
+with three buttons: allow once, allow from now on (which remembers the rule),
+or deny. Only a user on `bots.telegram.allowedUserIds` may press them, so a
+group chat is not a way in, and an unanswered question is refused when
+`permissions.timeoutSeconds` runs out. Set `permissions.chatApprovals` to false
+to turn this off and treat every bot turn as unattended.
+
+**Genuinely unattended runs.** Scheduled jobs, and transports that cannot show a
+prompt, have nobody to ask — `permissions.headless` decides for them. It
+defaults to `deny`: a command that would have prompted is refused, with a
+message telling the user which rule to add. Set it to `allow` only if you accept
+that unattended sessions then have no boundary at all.
 
 Manage it with `/permissions` in the REPL, or the **Permissions** section of
 `asterisk web`:

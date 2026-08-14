@@ -2,12 +2,17 @@
 // adapters and gives the daemon one start/stop surface.
 
 import type { LoadedConfig } from '../config/load.ts';
-import type { BotAdapter, Handler } from './adapter.ts';
+import type { ApprovalOutcome } from '../tools/approval.ts';
+import type { ApprovalPrompt, BotAdapter, Handler } from './adapter.ts';
 import { createTelegramAdapter } from './telegram/index.ts';
 
 export interface BotManager {
   start(handler: Handler): Promise<string[]>;
   stop(): Promise<void>;
+  /** True when at least one transport can put a permission prompt in a chat. */
+  canPromptApproval(): boolean;
+  /** Asks the chat to decide. Denies if no transport can ask. */
+  promptApproval(chatId: string, prompt: ApprovalPrompt): Promise<ApprovalOutcome>;
 }
 
 export function createBotManager(loaded: LoadedConfig): BotManager {
@@ -43,6 +48,23 @@ export function createBotManager(loaded: LoadedConfig): BotManager {
       for (const a of adapters) {
         await a.stop().catch(() => {});
       }
+    },
+    canPromptApproval(): boolean {
+      return adapters.some((a) => typeof a.promptApproval === 'function');
+    },
+    async promptApproval(chatId: string, prompt: ApprovalPrompt): Promise<ApprovalOutcome> {
+      // One transport today. When there are two, the chat id is what tells
+      // them apart, so the first that accepts it answers.
+      for (const a of adapters) {
+        if (!a.promptApproval) continue;
+        try {
+          return await a.promptApproval(chatId, prompt);
+        } catch {
+          // A transport that fails to ask has not obtained consent.
+          return 'deny';
+        }
+      }
+      return 'deny';
     },
   };
 }
