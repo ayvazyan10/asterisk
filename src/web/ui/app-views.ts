@@ -620,7 +620,12 @@ document.addEventListener('click', async (ev) => {
       const now = root.dataset.theme === 'dark' ? 'light' : 'dark';
       root.dataset.theme = now;
       try { localStorage.setItem('asterisk-theme', now); } catch {}
-      return;
+      return renderHeader();
+    }
+    case 'rail': {
+      state.railTight = !state.railTight;
+      try { localStorage.setItem('asterisk-rail', state.railTight ? 'tight' : 'wide'); } catch {}
+      return renderSidebar();
     }
     case 'apply': return applySettings();
     case 'discard': state.dirty.clear(); return render();

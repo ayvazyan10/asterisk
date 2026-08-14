@@ -61,6 +61,10 @@ const state = {
 
   // Which list row is expanded, keyed by section.
   expanded: '',
+
+  // The rail collapses to icons. A preference, so it is restored from
+  // localStorage before the first render rather than reset on every reload.
+  railTight: localStorage.getItem('asterisk-rail') === 'tight',
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -87,6 +91,25 @@ function when(ms) {
   return new Date(ms).toLocaleDateString();
 }
 
+/**
+ * One icon from ./icons.ts, as the <svg> Lucide's own components emit.
+ *
+ * aria-hidden because every icon here sits beside a label that already says
+ * the thing; a screen reader announcing "plug, Connectors" is worse than
+ * "Connectors". The stroke width is the one lever — 1.5 resting, 2 for the
+ * current page — which is how the reference marks the active row.
+ */
+function icon(name, size, stroke) {
+  const node = ICONS[name];
+  if (!node) return '';
+  const body = node.map(([tag, attrs]) => '<' + tag + ' ' +
+    Object.entries(attrs).map(([k, v]) => k + '="' + esc(v) + '"').join(' ') + '/>').join('');
+  return '<svg class="icon" xmlns="http://www.w3.org/2000/svg" width="' + (size || 15) +
+    '" height="' + (size || 15) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="' + (stroke || 1.5) + '" stroke-linecap="round" stroke-linejoin="round" ' +
+    'aria-hidden="true">' + body + '</svg>';
+}
+
 // --- component builders --------------------------------------------------
 
 const ui = {
@@ -101,10 +124,16 @@ const ui = {
     return ui.badge(on ? (onLabel || 'on') : (offLabel || 'off'), on ? 'success' : 'muted', true);
   },
 
+  // The label is wrapped even when there is no icon: the collapsed rail hides
+  // labels by hiding that span, and a bare text node cannot be addressed.
   btn(label, opts) {
     const o = opts || {};
-    return '<button class="btn btn-' + (o.variant || 'outline') + (o.size ? ' btn-' + o.size : '') + '"' +
-      (o.attrs || '') + (o.disabled ? ' disabled' : '') + '>' + esc(label) + '</button>';
+    return '<button class="btn btn-' + (o.variant || 'outline') +
+      (o.size ? ' btn-' + o.size : '') + (o.square ? ' btn-icon' : '') + '"' +
+      (o.attrs || '') + (o.disabled ? ' disabled' : '') + '>' +
+      (o.icon ? icon(o.icon, o.size === 'sm' ? 13 : 14) : '') +
+      (label ? '<span>' + esc(label) + '</span>' : '') +
+      '</button>';
   },
 
   card(title, body, opts) {
@@ -205,10 +234,10 @@ async function guard(fn, successMessage) {
 // The four editable content kinds, each its own destination. One /content
 // call backs all four, so opening any one fills in the others' counts.
 const CONTENT_KINDS = [
-  { id: 'rules', label: 'Rules' },
-  { id: 'skills', label: 'Skills' },
-  { id: 'agents', label: 'Agents' },
-  { id: 'souls', label: 'Souls' },
+  { id: 'rules', label: 'Rules', icon: 'rules' },
+  { id: 'skills', label: 'Skills', icon: 'skills' },
+  { id: 'agents', label: 'Agents', icon: 'agents' },
+  { id: 'souls', label: 'Souls', icon: 'souls' },
 ];
 
 function contentEntry(kind) {
@@ -234,56 +263,98 @@ function kindCount(id) {
 // paint. A count of null renders nothing, which is honest about "not loaded".
 const TABS = [
   { group: 'Monitor', items: [
-    { id: 'overview', label: 'Overview' },
-    { id: 'doctor', label: 'Diagnostics' },
-    { id: 'logs', label: 'Logs' },
+    { id: 'overview', label: 'Overview', icon: 'overview' },
+    { id: 'doctor', label: 'Diagnostics', icon: 'doctor' },
+    { id: 'logs', label: 'Logs', icon: 'logs' },
   ]},
   { group: 'Configure', items: [
-    { id: 'settings', label: 'Settings' },
-    { id: 'secrets', label: 'Secrets' },
-    { id: 'connectors', label: 'Connectors',
+    { id: 'settings', label: 'Settings', icon: 'settings' },
+    { id: 'secrets', label: 'Secrets', icon: 'secrets' },
+    { id: 'connectors', label: 'Connectors', icon: 'connectors',
       count: () => state.loaded.has('connectors') ? state.connectors.filter((c) => c.connected).length : null },
-    { id: 'mcp', label: 'MCP servers', count: () => state.status && state.status.counts.mcpServers },
-    { id: 'hooks', label: 'Hooks', count: () => state.status && state.status.counts.hooks },
+    { id: 'mcp', label: 'MCP servers', icon: 'mcp', count: () => state.status && state.status.counts.mcpServers },
+    { id: 'hooks', label: 'Hooks', icon: 'hooks', count: () => state.status && state.status.counts.hooks },
   ]},
   { group: 'Author', items: CONTENT_KINDS.map((k) => ({
     id: k.id,
     label: k.label,
+    icon: k.icon,
     count: () => kindCount(k.id),
   })) },
   { group: 'Access', items: [
-    { id: 'tokens', label: 'Tokens', count: () => state.loaded.has('tokens') ? state.tokens.length : null },
+    { id: 'tokens', label: 'Tokens', icon: 'tokens',
+      count: () => state.loaded.has('tokens') ? state.tokens.length : null },
   ]},
 ];
 
+/** Flat, for anything that needs a tab by id — the breadcrumb, mostly. */
+function findTab(id) {
+  for (const section of TABS) {
+    const hit = section.items.find((t) => t.id === id);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 function renderSidebar() {
+  $('.shell').dataset.rail = state.railTight ? 'tight' : 'wide';
+
   $('.nav').innerHTML = TABS.map((section) => (
     '<div class="nav-group">' + esc(section.group) + '</div>' +
     section.items.map((tab) => {
       const count = tab.count ? tab.count() : null;
-      return '<button class="nav-item" data-tab="' + esc(tab.id) + '" aria-current="' +
-        (state.tab === tab.id) + '"><span class="nav-label">' + esc(tab.label) + '</span>' +
+      const current = state.tab === tab.id;
+      // The label is the accessible name when it is hidden by the collapsed
+      // rail, so title carries it and the icon stays aria-hidden.
+      return '<button class="nav-item" data-tab="' + esc(tab.id) + '" aria-current="' + current +
+        '" title="' + esc(tab.label) + '">' +
+        icon(tab.icon, 15, current ? 2 : 1.5) +
+        '<span class="nav-label">' + esc(tab.label) + '</span>' +
         (count === null || count === undefined ? '' : '<span class="nav-count">' + count + '</span>') +
         '</button>';
     }).join('')
   )).join('');
 
+  $('.rail-foot').innerHTML = ui.btn('Collapse', {
+    size: 'sm', variant: 'ghost',
+    attrs: ' data-action="rail" title="' + (state.railTight ? 'Expand' : 'Collapse') + '"',
+    icon: state.railTight ? 'chevronRight' : 'chevronLeft',
+  });
+
   const s = state.status;
   $('.brand-meta').textContent = s ? 'v' + s.version : '';
+}
+
+/** ok / warn / bad, from the one thing the header has room to report. */
+function healthOf(s) {
+  if (!s || !s.daemon) return { state: 'warn', label: 'Unknown' };
+  if (s.daemon.running) return { state: 'ok', label: 'Daemon running' };
+  return { state: 'bad', label: 'Daemon stopped' };
 }
 
 function renderHeader() {
   const s = state.status;
   if (!s) return;
+  const tab = findTab(state.tab);
+  const health = healthOf(s);
   $('.header').innerHTML =
-    '<div class="header-stat"><span class="header-stat-label">model</span>' +
-      '<span class="header-stat-value">' + esc(s.model) + '</span></div>' +
-    '<div class="header-stat"><span class="header-stat-label">via</span>' +
-      '<span class="header-stat-value">' + esc(s.provider) + '</span></div>' +
+    '<nav class="crumbs" aria-label="Breadcrumb">' +
+      '<span class="crumb-root">Asterisk</span>' +
+      '<span class="crumb-sep">' + icon('chevronRight', 12) + '</span>' +
+      '<span class="crumb-leaf">' + esc(tab ? tab.label : state.tab) + '</span>' +
+    '</nav>' +
     '<div class="header-spacer"></div>' +
+    '<div class="status-pill" data-state="' + health.state + '" title="' + esc(health.label) + '">' +
+      '<span class="status-dot"></span>' +
+      '<span class="status-value">' + esc(s.model) + '</span>' +
+    '</div>' +
     '<div class="header-actions">' +
-      ui.btn('Theme', { variant: 'ghost', size: 'sm', attrs: ' data-action="theme"' }) +
-      ui.btn('Refresh', { variant: 'outline', size: 'sm', attrs: ' data-action="refresh"' }) +
+      ui.btn('', { variant: 'outline', size: 'sm', square: true,
+        attrs: ' data-action="theme" title="Switch theme" aria-label="Switch theme"',
+        icon: 'sun' }) +
+      ui.btn('', { variant: 'outline', size: 'sm', square: true,
+        attrs: ' data-action="refresh" title="Reload data" aria-label="Reload data"',
+        icon: 'refresh' }) +
     '</div>';
 }
 

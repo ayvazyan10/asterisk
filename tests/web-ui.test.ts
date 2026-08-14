@@ -26,6 +26,7 @@ import { APP_SETTINGS } from '../src/web/ui/app-settings.ts';
 import { APP_SKILLS } from '../src/web/ui/app-skills.ts';
 import { APP_STAR } from '../src/web/ui/app-star.ts';
 import { APP_VIEWS } from '../src/web/ui/app-views.ts';
+import { APP_ICONS } from '../src/web/ui/icons.ts';
 import { renderIndexHtml } from '../src/web/ui/index.ts';
 import { STYLES } from '../src/web/ui/styles.ts';
 
@@ -33,6 +34,7 @@ import { STYLES } from '../src/web/ui/styles.ts';
 // belongs here: the checks below are about the script the browser runs, and a
 // module left out is a module none of them cover.
 const CLIENT = [
+  APP_ICONS,
   APP_CORE,
   APP_STAR,
   APP_SETTINGS,
@@ -77,6 +79,7 @@ describe('the client script', () => {
     const inlined = [...src.matchAll(/\$\{(APP_[A-Z_]+)\}/g)].map((m) => m[1] as string);
     expect(new Set(inlined)).toEqual(
       new Set([
+        'APP_ICONS',
         'APP_CORE',
         'APP_STAR',
         'APP_SETTINGS',
@@ -96,9 +99,9 @@ describe('the client script', () => {
     // this is what notices when only one of them happened.
     const emitted = new Set([...CLIENT.matchAll(/data-([a-z0-9-]+)="/g)].map((m) => m[1]));
     const selected = new Set([...CLIENT.matchAll(/\[data-([a-z0-9-]+)\]/g)].map((m) => m[1]));
-    // These two carry a value for a handler that already matched on something
-    // else; they are read off the dataset, never used to find an element.
-    const carriers = new Set(['field', 'secret']);
+    // These carry a value for a handler that already matched on something
+    // else, or are read by CSS; none is used to find an element.
+    const carriers = new Set(['field', 'secret', 'state', 'rail', 'open', 'theme']);
     expect([...emitted].filter((a) => !selected.has(a) && !carriers.has(a as string))).toEqual([]);
   });
 
@@ -209,9 +212,11 @@ describe('the stylesheet', () => {
   });
 
   it('quantises the width utilities the skeletons use', () => {
-    for (const w of [...CLIENT.matchAll(/\bw(\d+)\b/g)].map((m) => m[1])) {
-      expect(STYLES).toContain(`.w${w} {`);
-    }
+    // Anchored to the class attribute: a bare /\bw\d+\b/ also matched the `w3`
+    // in the SVG namespace URL the icon builder emits.
+    const used = [...CLIENT.matchAll(/class="[^"]*?\bw(\d+)\b/g)].map((m) => m[1]);
+    expect(used.length).toBeGreaterThan(0);
+    for (const w of used) expect(STYLES).toContain(`.w${w} {`);
   });
 });
 

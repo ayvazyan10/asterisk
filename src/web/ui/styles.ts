@@ -8,9 +8,12 @@
 //   this file      the shell those sit in
 //
 // The shell's one structural idea: the rail is the chassis and the view is the
-// paper. The rail keeps the same deep slate in both themes, so the panel
-// always has a machined edge to work against, and the light theme is a sheet
-// clamped into a dark instrument rather than a white page with a grey stripe.
+// paper. The rail keeps the same near-black in both themes, so the panel always
+// has a machined edge to work against, and the light theme is a sheet clamped
+// into a dark instrument rather than a white page with a grey stripe.
+//
+// The rail collapses to icons. Not decoration — the panel is meant to sit open
+// beside a terminal, and 220px of it is navigation the user has already learnt.
 
 import { COMPONENTS } from './components.ts';
 import { STAR } from './star.ts';
@@ -30,92 +33,141 @@ const WIDTH_UTILITIES = Array.from(
 const LAYOUT = String.raw`
 /* --- shell --------------------------------------------------------------- */
 
-.shell { display: grid; grid-template-columns: var(--rail) 1fr; min-height: 100vh; }
+.shell {
+  display: grid; grid-template-columns: var(--rail) 1fr; min-height: 100vh;
+  transition: grid-template-columns var(--dur) var(--ease);
+}
+.shell[data-rail="tight"] { grid-template-columns: var(--rail-tight) 1fr; }
 
 .rail {
   display: flex; flex-direction: column;
   background: var(--rail-bg); color: var(--rail-ink);
   border-right: 1px solid var(--rail-border);
-  position: sticky; top: 0; height: 100vh; overflow-y: auto;
-  /* A faint top-lit sheen, the way an anodised panel catches light. */
-  background-image: linear-gradient(var(--rail-high), transparent 220px);
+  position: sticky; top: 0; height: 100vh; overflow: hidden;
 }
 
 .brand {
-  display: flex; align-items: center; gap: 0.5rem;
-  height: var(--bar); padding: 0 1rem; flex: none;
+  display: flex; align-items: center; gap: 0.6rem;
+  height: var(--bar); padding: 0 0.9rem; flex: none;
   border-bottom: 1px solid var(--rail-border);
 }
 .brand-name {
-  font-size: var(--t-sm); font-weight: 600; letter-spacing: 0.01em;
+  font-size: var(--t-sm); font-weight: 700; letter-spacing: -0.01em;
+  white-space: nowrap;
 }
-.brand-mark { color: var(--signal); }
+.brand-mark { color: var(--signal); flex: none; }
 .brand-meta {
   margin-left: auto; font-family: var(--font-machine);
-  font-size: var(--t-xs); color: var(--rail-dim);
+  font-size: var(--t-2xs); color: var(--rail-dim); white-space: nowrap;
 }
+[data-rail="tight"] .brand { justify-content: center; padding: 0; }
+[data-rail="tight"] .brand-name, [data-rail="tight"] .brand-meta { display: none; }
 
-.nav { flex: 1; padding: 0.5rem 0.5rem 1rem; }
+.nav { flex: 1; padding: 0.65rem 0.55rem 1rem; overflow-y: auto; }
 .nav-group {
-  padding: 1rem 0.6rem 0.4rem;
-  font-family: var(--font-machine); font-size: var(--t-xs);
+  padding: 0.75rem 0.5rem 0.4rem;
+  font-size: var(--t-2xs); font-weight: 500;
   letter-spacing: var(--track-silk); text-transform: uppercase;
-  color: var(--rail-dim);
+  color: var(--rail-dim); white-space: nowrap;
 }
+.nav-group:first-child { padding-top: 0.15rem; }
+/* Collapsed, the group headings become the hairlines that separated them.
+   Padding has to go with the height: overflow clips to the padding box, so
+   0-height with padding left the label showing inside it. */
+[data-rail="tight"] .nav-group {
+  height: 0; padding: 0; overflow: hidden;
+  border-top: 1px solid var(--rail-border); margin: 0.45rem 0.3rem;
+}
+[data-rail="tight"] .nav-group:first-child { border-top: 0; margin-top: 0; }
 
 .nav-item {
-  display: flex; align-items: center; gap: 0.5rem;
-  width: 100%; padding: 0.4rem 0.6rem;
-  border: 0; border-left: 2px solid transparent; border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  position: relative;
+  display: flex; align-items: center; gap: 0.6rem;
+  width: 100%; padding: 0.42rem 0.55rem; margin-bottom: 1px;
+  border: 0; border-radius: var(--r-sm);
   background: transparent; color: var(--rail-dim);
   font-family: var(--font-human); font-size: var(--t-sm);
-  text-align: left; cursor: pointer;
-  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease),
-              border-color var(--dur) var(--ease);
+  text-align: left; cursor: pointer; white-space: nowrap;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .nav-item:hover { background: var(--rail-high); color: var(--rail-ink); }
-.nav-item[aria-current="true"] {
-  background: var(--rail-high); color: var(--rail-ink);
-  border-left-color: var(--signal); font-weight: 500;
+.nav-item[aria-current="true"] { background: var(--rail-high); color: var(--rail-ink); font-weight: 500; }
+/* The marker is the accent's one job on the rail: which page am I on. */
+.nav-item[aria-current="true"]::before {
+  content: ""; position: absolute; left: -0.55rem; top: 50%;
+  width: 2px; height: 1rem; margin-top: -0.5rem;
+  border-radius: 999px; background: var(--signal);
 }
-.nav-label { flex: 1; min-width: 0; }
-.nav-count {
-  font-family: var(--font-machine); font-size: var(--t-xs);
-  color: var(--rail-dim);
-}
-.nav-item[aria-current="true"] .nav-count { color: var(--signal); }
+.nav-item .icon { color: var(--rail-dim); transition: color var(--dur) var(--ease); }
+.nav-item:hover .icon, .nav-item[aria-current="true"] .icon { color: var(--rail-ink); }
 
-.rail-foot { padding: 0.75rem; border-top: 1px solid var(--rail-border); }
-.rail-foot .btn { width: 100%; color: var(--rail-dim); border-color: var(--rail-border); background: transparent; }
-.rail-foot .btn:hover { color: var(--rail-ink); background: var(--rail-high); border-color: var(--rail-border); }
+.nav-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nav-count {
+  flex: none; padding: 0.05rem 0.35rem; border-radius: 999px;
+  background: var(--rail-high); color: var(--rail-dim);
+  font-family: var(--font-machine); font-size: var(--t-2xs);
+}
+.nav-item[aria-current="true"] .nav-count { color: var(--rail-ink); }
+[data-rail="tight"] .nav-item { justify-content: center; padding: 0.5rem 0; }
+[data-rail="tight"] .nav-label, [data-rail="tight"] .nav-count { display: none; }
+[data-rail="tight"] .nav-item[aria-current="true"]::before { left: 0; }
+
+.rail-foot { padding: 0.5rem; border-top: 1px solid var(--rail-border); flex: none; }
+.rail-foot .btn {
+  width: 100%; justify-content: flex-start; gap: 0.55rem;
+  color: var(--rail-dim); border-color: transparent; background: transparent;
+  font-size: var(--t-xs);
+}
+.rail-foot .btn:hover { color: var(--rail-ink); background: var(--rail-high); border-color: transparent; }
+[data-rail="tight"] .rail-foot .btn { justify-content: center; }
+[data-rail="tight"] .rail-foot .btn span { display: none; }
 
 /* --- the bar -------------------------------------------------------------- */
 
 .main { min-width: 0; display: flex; flex-direction: column; }
 
 .header {
-  display: flex; align-items: center; gap: 1.25rem;
-  height: var(--bar); padding: 0 1.25rem; flex: none;
+  display: flex; align-items: center; gap: 0.5rem;
+  height: var(--bar); padding: 0 1rem; flex: none;
   border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--bg);
   position: sticky; top: 0; z-index: 20;
 }
-.header-stat { display: flex; align-items: baseline; gap: 0.45rem; min-width: 0; }
-.header-stat-label {
-  font-family: var(--font-machine); font-size: var(--t-xs);
-  letter-spacing: var(--track-silk); text-transform: uppercase;
-  color: var(--ink-faint); flex: none;
-}
-.header-stat-value {
-  font-family: var(--font-machine); font-size: var(--t-xs); color: var(--ink);
+
+/* Where am I — the reference's breadcrumb, and the panel has exactly two
+   levels to show, so it is a breadcrumb and not a title. */
+.crumbs { display: flex; align-items: center; gap: 0.4rem; font-size: var(--t-sm); min-width: 0; }
+.crumb-root { color: var(--ink-faint); }
+.crumb-sep { color: var(--ink-faint); }
+.crumb-leaf {
+  color: var(--ink); font-weight: 500;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
 .header-spacer { flex: 1; }
 .header-actions { display: flex; align-items: center; gap: 0.4rem; flex: none; }
 
+/* The status pill: a dot whose colour is the whole message, and a line of
+   text that repeats it for anyone who cannot use the colour. */
+.status-pill {
+  display: flex; align-items: center; gap: 0.45rem;
+  height: 2rem; padding: 0 0.7rem;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface); font-size: var(--t-xs); color: var(--ink-dim);
+  white-space: nowrap;
+}
+.status-dot { width: 6px; height: 6px; border-radius: 999px; flex: none; background: var(--ink-faint); }
+.status-pill[data-state="ok"] .status-dot { background: var(--tide); }
+.status-pill[data-state="warn"] .status-dot { background: var(--warn); }
+.status-pill[data-state="bad"] .status-dot { background: var(--oxide); }
+.status-value {
+  font-family: var(--font-machine); color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; max-width: 22ch;
+}
+
 /* --- view ----------------------------------------------------------------- */
 
-.view { padding: 1.5rem 1.25rem 4rem; max-width: 74rem; width: 100%; }
+.view { padding: 1.5rem 1.5rem 4rem; max-width: 76rem; width: 100%; }
 
 .page-header { margin-bottom: 1.25rem; }
 /* The human names the thing; the machine names where it lives. The two voices
@@ -269,19 +321,23 @@ const LAYOUT = String.raw`
 }
 
 @media (max-width: 900px) {
-  .shell { grid-template-columns: 1fr; }
+  .shell, .shell[data-rail="tight"] { grid-template-columns: 1fr; }
   .rail {
-    position: static; height: auto;
+    position: static; height: auto; overflow: visible;
     border-right: 0; border-bottom: 1px solid var(--rail-border);
-    background-image: none;
   }
-  .nav { display: flex; flex-wrap: wrap; padding: 0.5rem; }
-  .nav-group { width: 100%; padding: 0.6rem 0.6rem 0.2rem; }
-  .nav-item { width: auto; border-left: 0; border-bottom: 2px solid transparent; border-radius: var(--r-sm); }
-  .nav-item[aria-current="true"] { border-left-color: transparent; border-bottom-color: var(--signal); }
+  .nav { display: flex; flex-wrap: wrap; padding: 0.5rem; overflow: visible; }
+  .nav-group { width: 100%; padding: 0.6rem 0.5rem 0.2rem; }
+  .nav-item { width: auto; margin-bottom: 0; }
+  /* The left marker has nothing to hang off in a wrapped row. */
+  .nav-item[aria-current="true"]::before { display: none; }
+  .nav-item[aria-current="true"] { box-shadow: inset 0 -2px 0 var(--signal); }
+  /* Collapsing a rail that is already a strip of chips does nothing. */
+  .rail-foot { display: none; }
   .field { grid-template-columns: 1fr; gap: 0.5rem; }
   .editor-grid { grid-template-columns: 1fr; }
-  .header { gap: 1rem; overflow-x: auto; }
+  .header { gap: 0.5rem; overflow-x: auto; }
+  .status-pill .status-value, .crumb-root, .crumb-sep { display: none; }
   .view { padding: 1.25rem 1rem 3rem; }
 }
 

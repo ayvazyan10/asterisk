@@ -55,8 +55,11 @@ function connectorEntry(c) {
 function connectorActions(c) {
   const id = esc(c.id);
   const { attr, label } = connectorEntry(c);
+  // Quiet in the table, loud on the cards. Six primary buttons stacked down
+  // one edge is not six primary actions — it is a list, and the row's own
+  // action is the one thing on it, not the thing on the page.
   const connect = ui.btn(label,
-    { size: 'sm', variant: c.connected ? 'outline' : 'default', attrs: attr + id + '"' });
+    { size: 'sm', variant: 'secondary', attrs: attr + id + '"' });
   if (!c.installed) return connect;
   return connect +
     (c.clientRegistration === 'manual' && c.hasClient
@@ -80,7 +83,7 @@ function connectorCards() {
         '<div class="connector-card-name">' + esc(c.name) + '</div>' +
         '<div class="connector-card-detail">' + esc(c.description) + '</div>' +
       '</div>' +
-      ui.btn(entry.label, { size: 'sm', attrs: entry.attr + esc(c.id) + '"' }) +
+      ui.btn(entry.label, { size: 'sm', variant: 'default', attrs: entry.attr + esc(c.id) + '"' }) +
     '</div>';
   }).join('') + '</div>';
 }

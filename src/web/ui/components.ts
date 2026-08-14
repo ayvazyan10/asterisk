@@ -1,21 +1,25 @@
 // The component vocabulary.
 //
-// Class names are unchanged from the revision before this one — .btn-default,
-// .badge-success, .card and the rest — because the markup that builds them is
-// sound and only the look is being replaced. What changed is everything
-// visual: tighter corners, flatter surfaces, and colour that carries meaning
-// rather than emphasis.
+// Class names have survived two redesigns now — .btn-default, .badge-success,
+// .card and the rest — because the markup that builds them was sound both
+// times and only the look was being replaced. Keeping them is what lets a
+// change this size touch four files instead of fifteen.
 //
 // The colour rule, applied consistently below:
 //
-//   --signal   live right now   daemon up, bot connected, server enabled
-//   --tide     a quantity at rest   file counts, database size, stored things
+//   --signal   interactive   the primary action, the current page, focus
+//   --tide     healthy, running, present
+//   --warn     degraded — working, but not as intended
+//   --oxide    failed or destructive
 //   --ink-faint   off, absent, nothing there
-//   --oxide    destructive or failed
 //
-// So a reader can tell a running thing from a merely-configured thing without
-// reading either label. That is the point of spending two accents instead of
-// one.
+// A reader can tell a running thing from a stopped one without reading either
+// label, which is what the accents are being spent on.
+//
+// Type roles: structural labels — card headers, rail groups, silkscreen — are
+// sans, small, semibold and tracked. Monospace is reserved for what the machine
+// owns: paths, keys, counts, model tags, log lines. A heading is not machine
+// output, and setting it in mono said it was.
 
 export const COMPONENTS = String.raw`
 /* --- silkscreen ---------------------------------------------------------
@@ -24,8 +28,8 @@ export const COMPONENTS = String.raw`
    card headers — never for content. */
 
 .silk {
-  font-family: var(--font-machine);
-  font-size: var(--t-xs);
+  font-size: var(--t-2xs);
+  font-weight: 600;
   letter-spacing: var(--track-silk);
   text-transform: uppercase;
   color: var(--ink-faint);
@@ -51,8 +55,8 @@ export const COMPONENTS = String.raw`
 }
 .btn-default:hover { filter: brightness(1.07); }
 
-.btn-outline { border-color: var(--border-strong); background: var(--surface); }
-.btn-outline:hover { border-color: var(--signal); background: var(--signal-wash); }
+.btn-outline { border-color: var(--border); background: var(--surface); color: var(--ink-dim); }
+.btn-outline:hover { border-color: var(--border-strong); background: var(--surface-high); color: var(--ink); }
 
 .btn-secondary { background: var(--surface-high); border-color: var(--border); }
 .btn-secondary:hover { border-color: var(--border-strong); }
@@ -71,7 +75,10 @@ export const COMPONENTS = String.raw`
 .btn-outline-destructive { border-color: var(--border-strong); background: var(--surface); color: var(--oxide); }
 .btn-outline-destructive:hover { border-color: var(--oxide); background: var(--oxide-wash); }
 
+/* Square when the label is an icon and nothing else. */
 .btn-sm { height: 1.75rem; padding: 0 0.55rem; font-size: var(--t-xs); }
+.btn-icon { width: 2rem; padding: 0; }
+.btn-icon.btn-sm { width: 1.75rem; }
 
 /* --- fields ------------------------------------------------------------- */
 
@@ -130,11 +137,13 @@ export const COMPONENTS = String.raw`
 
 /* --- badge -------------------------------------------------------------- */
 
+/* Pills, tinted, with a rim of their own colour — a status you read at a
+   glance rather than a chip you read a word off. */
 .badge {
   display: inline-flex; align-items: center; gap: 0.35rem;
-  padding: 0.1rem 0.4rem; border-radius: var(--r-sm);
+  padding: 0.05rem 0.45rem; border-radius: 999px;
   border: 1px solid transparent;
-  font-family: var(--font-machine); font-size: var(--t-xs); line-height: 1.4;
+  font-family: var(--font-machine); font-size: var(--t-2xs); line-height: 1.6;
   white-space: nowrap;
 }
 .badge-dot::before {
@@ -142,35 +151,36 @@ export const COMPONENTS = String.raw`
   background: currentColor; flex: none;
 }
 
-/* live right now */
-.badge-success { color: var(--signal); background: var(--signal-wash); }
+/* running, healthy */
+.badge-success { color: var(--tide); background: var(--tide-wash); border-color: var(--tide-wash); }
 /* a quantity at rest */
-.badge-secondary { color: var(--tide); background: var(--tide-wash); }
+.badge-secondary { color: var(--ink-dim); background: var(--surface-high); border-color: var(--border); }
 /* off, absent */
-.badge-muted { color: var(--ink-faint); background: var(--surface-high); }
-.badge-destructive { color: var(--oxide); background: var(--oxide-wash); }
+.badge-muted { color: var(--ink-faint); background: var(--surface-high); border-color: transparent; }
+.badge-destructive { color: var(--oxide); background: var(--oxide-wash); border-color: var(--oxide-wash); }
 .badge-outline { color: var(--ink-dim); border-color: var(--border); }
 
 /* --- card ----------------------------------------------------------------
-   Flat, hairline-bounded, with a silkscreened header. No drop shadow: the
-   surface is a panel, and panels do not float. */
+   Flat, hairline-bounded, header separated by a rule rather than a fill. No
+   drop shadow: the surface is a panel, and panels do not float. */
 
 .card {
   background: var(--surface);
   border: 1px solid var(--border); border-radius: var(--r-lg);
   overflow: hidden;
+  transition: border-color var(--dur) var(--ease);
 }
+.card:hover { border-color: var(--border-strong); }
 .card + .card { margin-top: 0.875rem; }
 
 .card-header {
   display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-  padding: 0.7rem 1rem;
-  background: var(--surface-high);
+  padding: 0.65rem 1rem;
 }
 .card-title {
-  font-family: var(--font-machine); font-size: var(--t-xs);
+  font-size: var(--t-2xs); font-weight: 600;
   letter-spacing: var(--track-silk); text-transform: uppercase;
-  color: var(--ink-dim); font-weight: 500;
+  color: var(--ink-faint);
 }
 .card-divided > .card-header { border-bottom: 1px solid var(--border); }
 .card-content { padding: 1rem; }
@@ -220,20 +230,19 @@ export const COMPONENTS = String.raw`
 /* --- tabs ---------------------------------------------------------------- */
 
 .tabs-list {
-  display: inline-flex; align-items: center;
-  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
-  overflow: hidden;
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--bg);
 }
 .tabs-trigger {
-  height: 2rem; padding: 0 0.8rem; border: 0; border-right: 1px solid var(--border-strong);
-  background: var(--surface); color: var(--ink-dim);
-  font-family: var(--font-human); font-size: var(--t-sm); font-weight: 500;
+  height: 1.75rem; padding: 0 0.7rem; border: 0; border-radius: calc(var(--r-sm) - 2px);
+  background: transparent; color: var(--ink-faint);
+  font-family: var(--font-human); font-size: var(--t-xs); font-weight: 500;
   cursor: pointer;
   transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.tabs-trigger:last-child { border-right: 0; }
 .tabs-trigger:hover { color: var(--ink); }
-.tabs-trigger[aria-selected="true"] { background: var(--signal-wash); color: var(--ink); }
+.tabs-trigger[aria-selected="true"] { background: var(--surface-high); color: var(--ink); }
 
 /* --- toolbar --------------------------------------------------------------
    The filter row above a long page. Sticky under the bar, because on a page
@@ -276,9 +285,9 @@ export const COMPONENTS = String.raw`
 }
 .group[data-open="true"] .group-caret { transform: rotate(90deg); }
 .group-name {
-  font-family: var(--font-machine); font-size: var(--t-xs);
+  font-size: var(--t-2xs); font-weight: 600;
   letter-spacing: var(--track-silk); text-transform: uppercase;
-  color: var(--ink-dim); flex: 1;
+  color: var(--ink-faint); flex: 1;
 }
 .group-count {
   font-family: var(--font-machine); font-size: var(--t-xs);
@@ -302,7 +311,9 @@ export const COMPONENTS = String.raw`
   padding: 0.75rem 1rem; border-top: 1px solid var(--border);
 }
 .check:first-child { border-top: 0; }
-.check-mark { font-family: var(--font-machine); color: var(--success); flex: none; line-height: 1.5; }
+/* --success was never a token in any revision of theme.ts, so this colour
+   resolved to nothing and the mark inherited body text. */
+.check-mark { color: var(--tide); flex: none; line-height: 1.4; display: flex; }
 .check-bad .check-mark { color: var(--oxide); }
 .check-name { font-size: var(--t-sm); font-weight: 500; }
 .check-detail {

@@ -14,6 +14,7 @@ import { APP_SETTINGS } from './app-settings.ts';
 import { APP_SKILLS } from './app-skills.ts';
 import { APP_STAR } from './app-star.ts';
 import { APP_VIEWS } from './app-views.ts';
+import { APP_ICONS } from './icons.ts';
 import { STYLES } from './styles.ts';
 
 export interface RenderOptions {
@@ -29,7 +30,7 @@ const FAVICON = `data:image/svg+xml,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
     '<rect width="32" height="32" rx="8" fill="#0a0a0a"/>' +
     '<text x="16" y="23" font-family="monospace" font-size="24" font-weight="700" ' +
-    'text-anchor="middle" fill="#e8a33d">*</text>' +
+    'text-anchor="middle" fill="#8b5cf6">*</text>' +
     '</svg>',
 )}`;
 
@@ -93,13 +94,12 @@ export function renderIndexHtml(opts: RenderOptions): string {
 <div class="shell">
   <aside class="rail">
     <div class="brand">
-      <div class="brand-name">Asterisk<span class="brand-mark">*</span></div>
+      <span class="brand-mark">*</span>
+      <div class="brand-name">Asterisk</div>
       <div class="brand-meta"></div>
     </div>
     <nav class="nav" aria-label="Sections"></nav>
-    <div class="rail-foot">
-      <button class="btn btn-outline btn-sm" data-action="refresh">Reload data</button>
-    </div>
+    <div class="rail-foot"></div>
   </aside>
   <div class="main">
     <header class="header"></header>
@@ -107,7 +107,7 @@ export function renderIndexHtml(opts: RenderOptions): string {
   </div>
 </div>
 <div class="toasts" role="status" aria-live="polite"></div>
-<script nonce="${nonce}">${APP_CORE}\n${APP_STAR}\n${APP_SETTINGS}\n${APP_LOGS}\n${APP_SKILLS}\n${APP_AUTHORED}\n${APP_CONNECTORS}\n${APP_VIEWS}</script>
+<script nonce="${nonce}">${APP_ICONS}\n${APP_CORE}\n${APP_STAR}\n${APP_SETTINGS}\n${APP_LOGS}\n${APP_SKILLS}\n${APP_AUTHORED}\n${APP_CONNECTORS}\n${APP_VIEWS}</script>
 </body>
 </html>`;
 }
