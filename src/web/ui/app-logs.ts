@@ -57,12 +57,28 @@ function visibleLogRecords() {
   const min = chosen && chosen.min ? chosen.min : 0;
   const q = (state.logQuery || '').trim().toLowerCase();
 
-  return logRecords().filter((r) => {
+  const kept = logRecords().filter((r) => {
     // An unparsable line has no level; a level filter would silently hide the
     // subprocess output people most often come here for.
     if (min > 0 && r.level > 0 && r.level < min) return false;
     if (!q) return true;
     return JSON.stringify(r).toLowerCase().includes(q);
+  });
+
+  // Reversed rather than sorted by time: the file is already in the order the
+  // daemon wrote it, and a line with no parsable timestamp — subprocess output
+  // — has nothing to sort on and would be flung to one end.
+  return state.logOrder === 'newest' ? kept.reverse() : kept;
+}
+
+/** The order button, shared by both records so they cannot disagree. */
+function logOrderButton() {
+  const newest = state.logOrder === 'newest';
+  return ui.btn(newest ? 'Newest first' : 'Oldest first', {
+    size: 'sm', variant: 'outline',
+    icon: newest ? 'sortDesc' : 'sortAsc',
+    attrs: ' data-action="log-order" title="Switch to ' +
+      (newest ? 'oldest' : 'newest') + ' first"',
   });
 }
 
@@ -131,8 +147,10 @@ function setLogFollow(on) {
     const host = $('.log-body');
     if (host) {
       host.innerHTML = renderLogBody();
+      // Follow means "keep the newest line in view", and which end that is
+      // depends on the order.
       const scroller = $('.log-scroll');
-      if (scroller) scroller.scrollTop = scroller.scrollHeight;
+      if (scroller) scroller.scrollTop = state.logOrder === 'newest' ? 0 : scroller.scrollHeight;
     }
   }, 3000);
 }
@@ -147,6 +165,7 @@ function daemonLogPanel() {
     ui.tabs(LOG_LEVELS, state.logLevel, 'log-level') +
     '<span class="toolbar-spacer"></span>' +
     '<span class="form-hint">' + shown + ' of ' + total + '</span>' +
+    logOrderButton() +
     ui.btn(state.logFollow ? 'Following' : 'Follow', {
       size: 'sm',
       variant: state.logFollow ? 'default' : 'outline',

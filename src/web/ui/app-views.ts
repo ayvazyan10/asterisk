@@ -377,16 +377,21 @@ function viewLogs() {
 }
 
 function auditPanel() {
-  const rows = state.audit.length === 0
+  // The API answers newest-first; oldest-first is the same list read the other
+  // way, and slice() keeps the reverse off the stored array.
+  const entries = state.logOrder === 'newest' ? state.audit : state.audit.slice().reverse();
+  const rows = entries.length === 0
     ? ui.empty('Nothing recorded yet. Changes you make here will show up.')
-    : state.audit.map((a) => ui.listRow(
+    : entries.map((a) => ui.listRow(
         esc(a.action) + ' ' + ui.badge(a.target, 'outline'),
         // Both clocks: the absolute one to line an entry up against the daemon
         // log, the relative one because "17m ago" is what you actually asked.
         stamp(a.at) + ' · ' + when(a.at) + ' · ' + a.actor
       )).join('');
 
-  return ui.card('Recent', rows, { aside: ui.badge(state.audit.length, 'secondary') });
+  return ui.card('Recent', rows, {
+    aside: logOrderButton() + ui.badge(state.audit.length, 'secondary'),
+  });
 }
 
 // --- data loading --------------------------------------------------------
@@ -631,6 +636,11 @@ document.addEventListener('click', async (ev) => {
     case 'apply': return applySettings();
     case 'discard': state.dirty.clear(); return render();
     case 'mcp-save': return saveMcp();
+    case 'log-order': {
+      state.logOrder = state.logOrder === 'newest' ? 'oldest' : 'newest';
+      try { localStorage.setItem('asterisk-log-order', state.logOrder); } catch {}
+      return render();
+    }
     case 'connector-add': return addCustomConnector();
     case 'connector-setup-save': return saveConnectorSetup();
     case 'connector-setup-cancel': return closeConnectorSetup();

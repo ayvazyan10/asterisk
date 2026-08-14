@@ -39,7 +39,10 @@ const state = {
   settingsSection: '',
 
   // The log reader parses pino's JSON lines rather than printing them.
+  // logOrder applies to both records: the file arrives oldest-first and the
+  // audit query newest-first, and disagreeing with each other was the bug.
   logsTab: 'daemon',
+  logOrder: localStorage.getItem('asterisk-log-order') === 'oldest' ? 'oldest' : 'newest',
   logLevel: 'all',
   logQuery: '',
   logFollow: false,
