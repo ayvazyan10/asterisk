@@ -1,10 +1,10 @@
 // Token estimation for the compaction budget.
 //
-// What this is not: a tokenizer. Asterisk talks to Ollama, llama.cpp and
+// What this is not: a tokenizer. Asterisk talks to llama.cpp and
 // Anthropic, which use three different vocabularies, and none of them exposes
 // one cheaply enough to run over the whole history on every turn — llama.cpp's
 // /tokenize is a network round trip, Anthropic's count_tokens is a billable
-// API call, Ollama has no endpoint at all. Shipping a BPE table would pin the
+// API call, a local server usually has no endpoint at all. Shipping a BPE table would pin the
 // estimate to one vendor's vocabulary and be wrong for the other two.
 //
 // What it is: a character-class model that errs high. `chars / 4` is an

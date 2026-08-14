@@ -308,6 +308,42 @@ export const MIGRATIONS: readonly Migration[] = [
       DELETE FROM settings WHERE key = 'plugins' OR key LIKE 'plugins.%';
     `,
   },
+  {
+    version: 9,
+    name: 'drop-ollama-provider',
+    sql: `
+      -- Ollama's dedicated provider was removed: llama.cpp and everything else
+      -- local already speak /v1/chat/completions, and Ollama does too, so a
+      -- second code path bought nothing but drift (its 'think' flag was
+      -- silently dropped on one call path for a while).
+      --
+      -- An install that had 'ollama' selected must not be left pointing at a
+      -- provider kind the schema no longer accepts — ConfigSchema would reject
+      -- the row and readConfig() would fall back to defaults for the whole
+      -- provider section. So the selection is rewritten rather than deleted.
+      --
+      -- The base URL is deliberately NOT carried over. Ollama serves its
+      -- OpenAI-compatible API at /v1 on port 11434, so the correct value is a
+      -- different string, and guessing it wrong would point the agent at a
+      -- dead endpoint while looking configured. The default (llama.cpp on
+      -- 8080) is honest about being a default.
+      UPDATE settings SET value = '"openai-compatible"', updated_at = unixepoch() * 1000
+        WHERE key = 'provider' AND value = '"ollama"';
+
+      DELETE FROM settings WHERE key = 'ollama' OR key LIKE 'ollama.%';
+    `,
+    optionalSql: [
+      // providerFallback is a JSON array; drop 'ollama' from it wherever it
+      // appears without disturbing the rest of the list.
+      `UPDATE settings
+         SET value = json_remove(value, '$[' || (
+               SELECT key FROM json_each(settings.value) WHERE value = 'ollama' LIMIT 1
+             ) || ']'),
+             updated_at = unixepoch() * 1000
+       WHERE key = 'providerFallback'
+         AND EXISTS (SELECT 1 FROM json_each(settings.value) WHERE value = 'ollama')`,
+    ],
+  },
 ];
 
 /**

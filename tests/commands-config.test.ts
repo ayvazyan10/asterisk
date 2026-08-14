@@ -49,7 +49,13 @@ describe('/config section routing', () => {
 
   it('offers every section and opens the one that is picked', async () => {
     const picker = await runList(makeContext(), '/config');
-    expect(values(picker)).toEqual(['provider', 'ollama', 'anthropic', 'telegram', 'daemon']);
+    expect(values(picker)).toEqual([
+      'provider',
+      'openai-compatible',
+      'anthropic',
+      'telegram',
+      'daemon',
+    ]);
     for (const item of picker.items) {
       expect(item.label).toBeTruthy();
       expect(item.description).toBeTruthy();
@@ -74,7 +80,7 @@ describe('/config provider', () => {
   withTempHome('config-provider');
 
   it('writes the chosen provider', async () => {
-    expect(config().provider).toBe('ollama');
+    expect(config().provider).toBe('openai-compatible');
     expect(await submitText(await section('provider'), { provider: 'anthropic' })).toContain(
       'set to anthropic',
     );
@@ -101,49 +107,52 @@ describe('/config provider', () => {
   it('cancelling writes nothing', async () => {
     const form = await section('provider');
     expect(await form.onCancel?.()).toBe('(cancelled)');
-    expect(config().provider).toBe('ollama');
+    expect(config().provider).toBe('openai-compatible');
   });
 });
 
-describe('/config ollama', () => {
-  withTempHome('config-ollama');
+describe('/config local model', () => {
+  withTempHome('config-local-model');
 
-  it('trims the URL and model and accepts a positive context window', async () => {
-    await submitText(await section('ollama'), {
-      baseUrl: '  http://10.0.0.5:11434  ',
+  it('trims the URL and model and accepts a context window', async () => {
+    await submitText(await section('openai-compatible'), {
+      baseUrl: '  http://10.0.0.5:8080/v1  ',
       model: '  qwen3.5:9b  ',
       contextWindow: '65536',
     });
-    expect(config().ollama).toMatchObject({
-      baseUrl: 'http://10.0.0.5:11434',
+    expect(config().openaiCompatible).toMatchObject({
+      baseUrl: 'http://10.0.0.5:8080/v1',
       model: 'qwen3.5:9b',
       contextWindow: 65536,
     });
   });
 
-  it('ignores a non-numeric or non-positive context window rather than storing it', async () => {
-    const before = config().ollama.contextWindow;
-    for (const bad of ['', 'many', '0', '-1']) {
-      await submitText(await section('ollama'), { contextWindow: bad });
-      expect(config().ollama.contextWindow).toBe(before);
-    }
+  it('accepts an empty model, because that is how detection is re-enabled', async () => {
+    await submitText(await section('openai-compatible'), { model: 'pinned-model' });
+    expect(config().openaiCompatible.model).toBe('pinned-model');
+
+    await submitText(await section('openai-compatible'), { model: '   ' });
+    expect(config().openaiCompatible.model).toBe('');
   });
 
-  it('keeps the stored values when the form yields nothing', async () => {
-    const before = config().ollama;
-    await submitText(await section('ollama'), {});
-    expect(config().ollama).toMatchObject({
-      baseUrl: before.baseUrl,
-      model: before.model,
-      contextWindow: before.contextWindow,
-    });
+  it('ignores a non-numeric context window rather than storing it', async () => {
+    await submitText(await section('openai-compatible'), { contextWindow: '65536' });
+    for (const bad of ['', 'many', '-1']) {
+      await submitText(await section('openai-compatible'), { contextWindow: bad });
+      expect(config().openaiCompatible.contextWindow).toBe(65536);
+    }
+    // 0 is meaningful here: "take the server's window".
+    await submitText(await section('openai-compatible'), { contextWindow: '0' });
+    expect(config().openaiCompatible.contextWindow).toBe(0);
   });
 
   it('prefills from the stored settings', async () => {
-    const form = await section('ollama');
-    expect(field(form, 'baseUrl')).toMatchObject({ defaultValue: config().ollama.baseUrl });
+    const form = await section('openai-compatible');
+    expect(field(form, 'baseUrl')).toMatchObject({
+      defaultValue: config().openaiCompatible.baseUrl,
+    });
     expect(field(form, 'contextWindow')).toMatchObject({
-      defaultValue: String(config().ollama.contextWindow),
+      defaultValue: String(config().openaiCompatible.contextWindow),
     });
   });
 });
@@ -287,14 +296,14 @@ describe('/config with an empty submission', () => {
 
   it('keeps every stored value rather than blanking the section', async () => {
     const before = JSON.stringify(config());
-    for (const name of ['provider', 'ollama', 'anthropic', 'telegram', 'daemon']) {
+    for (const name of ['provider', 'openai-compatible', 'anthropic', 'telegram', 'daemon']) {
       const form = await section(name);
       expect(await submitText(form, {}), name).toContain('✓');
     }
     const after = config();
     const previous = JSON.parse(before) as ReturnType<typeof config>;
     expect(after.provider).toBe(previous.provider);
-    expect(after.ollama).toEqual(previous.ollama);
+    expect(after.openaiCompatible).toEqual(previous.openaiCompatible);
     expect(after.anthropic).toEqual(previous.anthropic);
     expect(after.daemon).toEqual(previous.daemon);
   });
@@ -305,7 +314,7 @@ describe('/config cancelling', () => {
 
   it('leaves every section untouched', async () => {
     const before = JSON.stringify(config());
-    for (const name of ['provider', 'ollama', 'anthropic', 'telegram', 'daemon']) {
+    for (const name of ['provider', 'openai-compatible', 'anthropic', 'telegram', 'daemon']) {
       const form = await section(name);
       expect(await form.onCancel?.(), name).toBe('(cancelled)');
     }

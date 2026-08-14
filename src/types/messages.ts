@@ -27,7 +27,7 @@ export interface ToolResultBlock {
  * An image the model can actually look at.
  *
  * Carried as base64 rather than a path because every provider wants the bytes
- * inline — Anthropic as a base64 source, Ollama as an `images` array on the
+ * inline — Anthropic as a base64 source, OpenAI-compatible servers as an `image_url` part on the
  * message, OpenAI-compatible endpoints as a `data:` URI. A path would only be
  * meaningful to a model running on this machine, which is not a promise
  * Asterisk can make.
@@ -82,9 +82,10 @@ export interface Provider {
   name: string;
   /**
    * Tokens the model can hold, when the provider knows it. Compaction derives
-   * its budget from this; a hardcoded threshold sat above the default Ollama
-   * window, so a default install overflowed before compaction ever fired.
+   * its budget from this; a hardcoded threshold once sat above the typical
+   * local window, so a default install overflowed before compaction ever
+   * fired. The local provider reports the server's own n_ctx.
    */
-  contextWindow?: number;
+  contextWindow?: number | undefined;
   send(request: ProviderRequest): Promise<ProviderResponse>;
 }

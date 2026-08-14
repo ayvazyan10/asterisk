@@ -57,7 +57,7 @@ export function readMalformedArguments(
 /**
  * Turns whatever the model put in `arguments` into an object.
  *
- * Accepts the already-decoded object form (Ollama's native shape) as well as
+ * Accepts the already-decoded object form (what some servers emit) as well as
  * the JSON text form (every OpenAI-compatible endpoint). Returns the malformed
  * sentinel rather than throwing when nothing works.
  */

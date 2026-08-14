@@ -130,6 +130,38 @@ describe('migrations', () => {
     db.close();
   });
 
+  it('moves an Ollama install onto the local endpoint instead of stranding it', () => {
+    const db = openDriver(':memory:');
+    migrate(db);
+    db.run('DELETE FROM schema_migrations WHERE version = 9');
+
+    setSetting(db, 'provider', 'ollama');
+    setSetting(db, 'ollama.baseUrl', 'http://127.0.0.1:11434');
+    setSetting(db, 'ollama.model', 'qwen3.5:9b');
+    setSetting(db, 'providerFallback', ['ollama', 'anthropic']);
+    setSetting(db, 'bots.telegram.enabled', true);
+
+    expect(migrate(db)).toBe(1);
+
+    // Rewritten, not deleted: a provider value the schema no longer accepts
+    // would make ConfigSchema fall back to defaults for the whole section.
+    expect(getSetting(db, 'provider')).toBe('openai-compatible');
+    // The base URL is deliberately not carried over — Ollama's OpenAI-compatible
+    // API lives on a different port and path, so a copied value would point the
+    // agent at nothing while looking configured.
+    expect(
+      allSettings(db)
+        .map(([key]) => key)
+        .filter((k) => k.startsWith('ollama')),
+    ).toEqual([]);
+    expect(getSetting(db, 'providerFallback')).toEqual(['anthropic']);
+    expect(getSetting(db, 'bots.telegram.enabled')).toBe(true);
+
+    // And the result parses, which is the whole point of rewriting it.
+    expect(readConfig(db).provider).toBe('openai-compatible');
+    db.close();
+  });
+
   it('reads a config despite settings the schema no longer declares', () => {
     // Belt and braces for the upgrade path: even if a stale row outlives the
     // migration, ConfigSchema strips unknown keys rather than failing to parse.
@@ -330,7 +362,7 @@ describe('config store', () => {
   it('reads schema defaults from an empty database', () => {
     const db = fresh();
     const config = readConfig(db);
-    expect(config.provider).toBe('ollama');
+    expect(config.provider).toBe('openai-compatible');
     expect(config.mcpServers).toEqual([]);
     db.close();
   });
@@ -339,7 +371,7 @@ describe('config store', () => {
     const db = fresh();
     const draft = ConfigSchema.parse({
       provider: 'anthropic',
-      ollama: { model: 'custom:7b', think: true },
+      openaiCompatible: { model: 'custom:7b', contextWindow: 4096 },
       bots: { telegram: { enabled: true, allowedUserIds: [1, 2] } },
       mcpServers: [
         { name: 'a', transport: 'stdio', command: 'run-a', args: ['--x'], env: {}, enabled: true },
@@ -359,7 +391,7 @@ describe('config store', () => {
     const db = fresh();
     writeConfig(db, ConfigSchema.parse({ provider: 'anthropic' }));
     setSetting(db, 'legacy.removed', 'stale');
-    writeConfig(db, ConfigSchema.parse({ provider: 'ollama' }));
+    writeConfig(db, ConfigSchema.parse({ provider: 'openai-compatible' }));
     expect(allSettings(db).map(([k]) => k)).not.toContain('legacy.removed');
     db.close();
   });

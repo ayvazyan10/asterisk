@@ -39,8 +39,10 @@ implementation, and the distinction is the one this project holds itself to:
   as a type reference. <https://github.com/anthropics/anthropic-sdk-typescript>
 - **Model Context Protocol specification** and the public
   `@modelcontextprotocol/sdk`. <https://modelcontextprotocol.io/specification>
-- **Ollama API documentation** — the native `/api/chat` surface, `num_ctx`,
-  `think`, NDJSON streaming. <https://github.com/ollama/ollama/blob/main/docs/api.md>
+- **llama.cpp server documentation** — the OpenAI-compatible surface, the
+  `/v1/models` metadata Asterisk detects the active model and context window
+  from, and `--reasoning-format`.
+  <https://github.com/ggml-org/llama.cpp/tree/master/tools/server>
 - **OpenAI Chat Completions API documentation** — for the
   `openai-compatible` provider, which targets llama.cpp's `llama-server`,
   LM Studio, vLLM and similar servers.

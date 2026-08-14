@@ -2,10 +2,11 @@
 //
 // Two things were wrong with the previous version and both were silent.
 //
-// The threshold was a hardcoded 80 000 tokens while the default
-// `ollama.contextWindow` is 65 536 — so on a default install the model's window
-// overflowed roughly 19% *before* compaction was ever attempted. The threshold
-// is now derived from the window the active provider actually reports.
+// The threshold was a hardcoded 80 000 tokens while a typical local window was
+// 65 536 — so on a default install the model's window overflowed roughly 19%
+// *before* compaction was ever attempted. The threshold is now derived from the
+// window the active provider reports, which for a local server is the `n_ctx`
+// it was started with (providers/model-detect.ts) rather than a config guess.
 //
 // The estimate itself was `chars / 4`, which under-counts CJK by roughly 4x
 // and punctuation-dense code by 2–3x — see tokens.ts. Under-counting is the
@@ -85,8 +86,11 @@ export function estimateTokens(messages: readonly Message[]): number {
 }
 
 /** Token budget history may occupy for a given context window. */
-export function compactionThreshold(contextWindow = DEFAULT_CONTEXT_WINDOW): number {
-  return Math.floor(contextWindow * HISTORY_BUDGET);
+export function compactionThreshold(contextWindow?: number): number {
+  // A provider that reports 0 means "I don't know", not "no budget" — taking
+  // it literally would compact every message away on the first turn.
+  const window = contextWindow && contextWindow > 0 ? contextWindow : DEFAULT_CONTEXT_WINDOW;
+  return Math.floor(window * HISTORY_BUDGET);
 }
 
 /** Shortens oversized blocks in place-free fashion, returning a new message. */

@@ -104,36 +104,36 @@ describe('settings API', () => {
 
     const fields = body.groups.flatMap((g: { fields: unknown[] }) => g.fields);
     const paths = fields.map((f: { path: string }) => f.path);
-    expect(paths).toContain('ollama.model');
+    expect(paths).toContain('openaiCompatible.model');
     expect(paths).toContain('web.port');
 
     expect(fields.find((f: { path: string }) => f.path === 'provider')).toMatchObject({
       kind: 'enum',
-      value: 'ollama',
+      value: 'openai-compatible',
     });
   });
 
   it('applies a valid patch', async () => {
     const { status } = await call(
       '/api/settings',
-      send('PATCH', { updates: { provider: 'anthropic', 'ollama.contextWindow': 8192 } }),
+      send('PATCH', { updates: { provider: 'anthropic', 'openaiCompatible.contextWindow': 8192 } }),
     );
     expect(status).toBe(200);
 
     const config = readConfig(db);
     expect(config.provider).toBe('anthropic');
-    expect(config.ollama.contextWindow).toBe(8192);
+    expect(config.openaiCompatible.contextWindow).toBe(8192);
   });
 
   it('rejects the whole patch when one field is invalid', async () => {
     const { status, body } = await call(
       '/api/settings',
-      send('PATCH', { updates: { provider: 'anthropic', 'ollama.contextWindow': -5 } }),
+      send('PATCH', { updates: { provider: 'anthropic', 'openaiCompatible.contextWindow': -5 } }),
     );
     expect(status).toBe(422);
-    expect(body.detail).toHaveProperty('ollama.contextWindow');
+    expect(body.detail).toHaveProperty('openaiCompatible.contextWindow');
     // The valid half must not have been applied.
-    expect(readConfig(db).provider).toBe('ollama');
+    expect(readConfig(db).provider).toBe('openai-compatible');
   });
 
   it('rejects unknown setting paths', async () => {
@@ -156,14 +156,18 @@ describe('settings API', () => {
   });
 
   it('resets a single setting to its default', async () => {
-    await call('/api/settings', send('PATCH', { updates: { 'ollama.model': 'weird:1b' } }));
+    await call(
+      '/api/settings',
+      send('PATCH', { updates: { 'openaiCompatible.model': 'weird:1b' } }),
+    );
     const { status, body } = await call(
       '/api/settings/reset',
-      send('POST', { path: 'ollama.model' }),
+      send('POST', { path: 'openaiCompatible.model' }),
     );
     expect(status).toBe(200);
-    expect(body.value).toBe('carstenuhlig/omnicoder-9b:q8_0');
-    expect(readConfig(db).ollama.model).toBe('carstenuhlig/omnicoder-9b:q8_0');
+    // The default is empty — the model is detected, not configured.
+    expect(body.value).toBe('');
+    expect(readConfig(db).openaiCompatible.model).toBe('');
   });
 
   it('records changes in the audit log', async () => {
@@ -646,10 +650,12 @@ describe('config export and import', () => {
   it('imports a full config and rejects an invalid one', async () => {
     const ok = await call(
       '/api/config/import',
-      send('POST', { config: { provider: 'anthropic', ollama: { model: 'imported:1b' } } }),
+      send('POST', {
+        config: { provider: 'anthropic', openaiCompatible: { model: 'imported:1b' } },
+      }),
     );
     expect(ok.status).toBe(200);
-    expect(readConfig(db).ollama.model).toBe('imported:1b');
+    expect(readConfig(db).openaiCompatible.model).toBe('imported:1b');
 
     expect(
       (await call('/api/config/import', send('POST', { config: { provider: 'nope' } }))).status,
@@ -665,7 +671,7 @@ describe('status and system', () => {
     );
     const { body } = await call('/api/status');
     expect(body).toMatchObject({
-      provider: 'ollama',
+      provider: 'openai-compatible',
       counts: { mcpServers: 1, enabledMcpServers: 1 },
     });
     expect(body.version).toMatch(/^\d+\.\d+\.\d+/);

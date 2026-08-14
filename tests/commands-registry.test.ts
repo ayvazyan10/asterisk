@@ -83,18 +83,22 @@ describe('/help', () => {
 describe('/model switching', () => {
   withTempHome('model');
 
-  it('switches the live provider and remembers the backend it was on', async () => {
-    const ctx = makeContext({ provider: named('ollama:old-model') });
-    expect(await runText(ctx, '/model', ' new-model ')).toBe('✓ switched to ollama:new-model');
-    expect(ctx.provider.name).toBe('ollama:new-model');
+  it('pins the model on the backend it was on', async () => {
+    const ctx = makeContext({ provider: named('openai-compatible:old-model') });
+    expect(await runText(ctx, '/model', ' new-model ')).toBe(
+      '✓ switched to openai-compatible:new-model',
+    );
+    expect(ctx.provider.name).toBe('openai-compatible:new-model');
   });
 
-  it('switches the openai-compatible model without touching the ollama one', async () => {
-    const before = config().ollama.model;
-    const ctx = makeContext({ provider: named('openai-compatible:small') });
-    expect(await runText(ctx, '/model', 'big')).toBe('✓ switched to openai-compatible:big');
-    expect(ctx.provider.name).toBe('openai-compatible:big');
-    expect(config().ollama.model).toBe(before);
+  it('unpins on `/model auto`, which is what re-enables detection', async () => {
+    const ctx = makeContext({ provider: named('openai-compatible:pinned') });
+    expect(await runText(ctx, '/model', 'auto')).toBe(
+      '✓ model unpinned — using whatever the server reports',
+    );
+    // Nothing pinned and nothing detected yet: the name says so rather than
+    // naming a model that is not in play.
+    expect(ctx.provider.name).toBe('openai-compatible:auto');
   });
 
   it('refuses to switch an Anthropic model with no key, and does not touch the provider', async () => {
@@ -121,40 +125,54 @@ describe('/model switching', () => {
     );
   });
 
-  it('the switch is in-memory — it does not rewrite the stored default', async () => {
-    // /config is what persists a model; /model is for the current session.
-    const ctx = makeContext({ provider: named('ollama:old-model') });
+  it('leaves the Anthropic model alone when the local one is pinned', async () => {
+    const before = config().anthropic.model;
+    const ctx = makeContext({ provider: named('openai-compatible:old-model') });
     await run(ctx, '/model', 'new-model');
-    expect(config().ollama.model).not.toBe('new-model');
+    expect(config().anthropic.model).toBe(before);
   });
 });
 
 describe('/model picker', () => {
   withTempHome('model-picker');
 
-  it('lists installed Ollama models, badges the current one, and switches on pick', async () => {
-    respond({ models: [{ name: 'qwen3.5:9b' }, { name: 'gemma:2b' }] });
-    const ctx = makeContext({ provider: named('ollama:gemma:2b') });
+  it('offers auto first, then what the server serves, and pins on pick', async () => {
+    respond({ data: [{ id: 'qwen3.5:9b' }, { id: 'gemma:2b' }] });
+    const ctx = makeContext({ provider: named('openai-compatible:gemma:2b') });
 
     const picker = await runList(ctx, '/model');
     expect(picker.title).toBe('Pick a model');
-    expect(values(picker)).toEqual(['qwen3.5:9b', 'gemma:2b']);
-    expect(picker.items[0]?.badge).toBeUndefined();
-    expect(picker.items[1]?.badge).toBe('* current');
+    // Auto leads because it is the normal state — nothing pinned.
+    expect(values(picker)).toEqual(['', 'qwen3.5:9b', 'gemma:2b']);
+    expect(picker.items[0]?.badge).toBe('* current');
 
-    expect(await pickText(picker, 'qwen3.5:9b')).toBe('✓ switched to ollama:qwen3.5:9b');
-    expect(ctx.provider.name).toBe('ollama:qwen3.5:9b');
+    expect(await pickText(picker, 'qwen3.5:9b')).toBe('✓ switched to openai-compatible:qwen3.5:9b');
+    expect(ctx.provider.name).toBe('openai-compatible:qwen3.5:9b');
     expect(picker.onCancel?.()).toBeNull();
+  });
+
+  it('badges the pinned model rather than the detected one', async () => {
+    const cfg = config();
+    cfg.openaiCompatible.model = 'gemma:2b';
+    saveConfig(cfg);
+    respond({ data: [{ id: 'qwen3.5:9b' }, { id: 'gemma:2b' }] });
+
+    const picker = await runList(
+      makeContext({ provider: named('openai-compatible:gemma:2b') }),
+      '/model',
+    );
+    expect(picker.items[0]?.badge).toBeUndefined();
+    expect(picker.items.find((i) => i.value === 'gemma:2b')?.badge).toBe('* current');
   });
 
   it('reports the unreachable base URL instead of an empty picker', async () => {
     unreachable();
     const cfg = config();
-    cfg.ollama.baseUrl = 'http://127.0.0.1:65000';
+    cfg.openaiCompatible.baseUrl = 'http://127.0.0.1:65000/v1';
     saveConfig(cfg);
 
-    expect(await runText(makeContext(), '/model')).toBe(
-      '(could not reach Ollama at http://127.0.0.1:65000)',
+    expect(await runText(makeContext({ provider: named('openai-compatible:x') }), '/model')).toBe(
+      '(could not reach http://127.0.0.1:65000/v1/models — pass a model name: /model <id>)',
     );
   });
 
@@ -210,7 +228,7 @@ describe('/provider', () => {
     expect(await runText(ctx, '/provider', 'ANTHROPIC')).toBe(
       'ANTHROPIC_API_KEY not set; run `asterisk configure`',
     );
-    expect(ctx.provider.name.startsWith('ollama:')).toBe(true);
+    expect(ctx.provider.name.startsWith('openai-compatible:')).toBe(true);
 
     saveSecrets({ ANTHROPIC_API_KEY: 'sk-test' });
     expect(await runText(ctx, '/provider', 'anthropic')).toMatch(/^✓ switched to anthropic:/);
@@ -224,13 +242,16 @@ describe('/provider', () => {
     const badge = (value: string): string | undefined =>
       picker.items.find((i) => i.value === value)?.badge;
     expect(badge('openai-compatible')).toBe('* current');
-    expect(badge('ollama')).toBeUndefined();
     expect(badge('anthropic')).toBeUndefined();
     // Each row names the model that backend would use.
-    expect(picker.items.find((i) => i.value === 'ollama')?.description).toBe(config().ollama.model);
+    expect(picker.items.find((i) => i.value === 'openai-compatible')?.description).toContain(
+      config().openaiCompatible.baseUrl,
+    );
 
-    expect(await pickText(picker, 'ollama')).toMatch(/^✓ switched to ollama:/);
-    expect(ctx.provider.name.startsWith('ollama:')).toBe(true);
+    expect(await pickText(picker, 'openai-compatible')).toMatch(
+      /^✓ switched to openai-compatible:/,
+    );
+    expect(ctx.provider.name.startsWith('openai-compatible:')).toBe(true);
     expect(picker.onCancel?.()).toBeNull();
   });
 });
@@ -239,13 +260,13 @@ describe('/reset', () => {
   withTempHome('reset');
 
   it('clears history and rebuilds the provider from config', async () => {
-    const ctx = makeContext({ provider: named('ollama:stale') });
+    const ctx = makeContext({ provider: named('stale-backend:stale') });
     ctx.state.history.push({ role: 'user', content: [{ type: 'text', text: 'hi' }] });
 
-    expect(await runText(ctx, '/reset')).toBe('(reset — provider ollama)');
+    expect(await runText(ctx, '/reset')).toBe('(reset — provider openai-compatible)');
     expect(ctx.cleared).toBe(true);
     expect(ctx.state.history).toHaveLength(0);
-    expect(ctx.provider.name).toBe(`ollama:${config().ollama.model}`);
+    expect(ctx.provider.name).toMatch(/^openai-compatible:/);
   });
 
   it('says why it could not honour the configured provider', async () => {
@@ -255,7 +276,7 @@ describe('/reset', () => {
 
     const out = await runText(makeContext(), '/reset');
     expect(out).toContain('ANTHROPIC_API_KEY is not set');
-    expect(out).toContain('using ollama');
+    expect(out).toContain('using openai-compatible');
   });
 });
 
@@ -320,14 +341,16 @@ describe('/status', () => {
   });
 
   it('describes the provider per backend, falling back to the raw name', async () => {
-    const ollama = await status(makeContext({ provider: named('ollama:qwen') }));
-    expect(ollama).toContain(`Provider   ollama · qwen · ${config().ollama.baseUrl}`);
+    const local = await status(makeContext({ provider: named('openai-compatible:qwen') }));
+    expect(local).toContain(
+      `Provider   openai-compatible · qwen · ${config().openaiCompatible.baseUrl}`,
+    );
+    // An unparseable name is reported verbatim rather than guessed at.
+    const odd = await status(makeContext({ provider: named('mystery-backend') }));
+    expect(odd).toContain('Provider   mystery-backend');
 
     const anthropic = await status(makeContext({ provider: named('anthropic:claude-opus-5') }));
     expect(anthropic).toContain('Provider   anthropic · claude-opus-5');
-
-    const other = await status(makeContext({ provider: named('openai-compatible:local') }));
-    expect(other).toContain('Provider   openai-compatible:local');
   });
 
   it('pluralises the history count', async () => {

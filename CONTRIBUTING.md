@@ -12,7 +12,7 @@ bun run test
 bun run build
 ```
 
-Run the REPL against a local Ollama:
+Run the REPL against a local model server:
 
 ```bash
 ./bin/asterisk

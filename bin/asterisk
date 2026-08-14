@@ -53,10 +53,10 @@ SRC_ACP="$ROOT/src/entrypoints/acp.ts"
 SRC_EVAL="$ROOT/src/entrypoints/eval.ts"
 SRC_MCP_SERVER="$ROOT/src/entrypoints/mcp-server.ts"
 
-# Sensible defaults — local Ollama, telemetry off.
-export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
-export OLLAMA_MODEL="${OLLAMA_MODEL:-carstenuhlig/omnicoder-9b:q8_0}"
-export OLLAMA_CONTEXT_WINDOW="${OLLAMA_CONTEXT_WINDOW:-65536}"
+# Sensible default — a local OpenAI-compatible server (llama.cpp), telemetry
+# off. The model itself is not named here: Asterisk asks the server which one
+# it is serving.
+export OPENAI_BASE_URL="${OPENAI_BASE_URL:-http://127.0.0.1:8080/v1}"
 
 cmd="${1:-repl}"
 [[ $# -gt 0 ]] && shift || true
@@ -175,9 +175,8 @@ Web panel flags:
   --print-token           Issue a token, print it, and exit
 
 Environment:
-  OLLAMA_BASE_URL         Ollama HTTP base URL (default http://127.0.0.1:11434)
-  OLLAMA_MODEL            Ollama model name (default qwen3.5:9b-q8-max)
-  ASTERISK_PROVIDER       Force provider: ollama | anthropic
+  OPENAI_BASE_URL         Local model endpoint (default http://127.0.0.1:8080/v1)
+  ASTERISK_PROVIDER       Force provider: openai-compatible | anthropic
   ANTHROPIC_API_KEY       Required for Anthropic provider
   ASTERISK_HOME           Override config root (default ~/.asterisk)
 USAGE

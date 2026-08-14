@@ -10,11 +10,18 @@ const loaded = (
 ): LoadedConfig => ({ config: ConfigSchema.parse(config), secrets });
 
 describe('provider factory', () => {
-  it('defaults to ollama with the configured model', () => {
-    const chosen = chooseProvider(loaded({ ollama: { model: 'qwen3.5:9b' } }));
-    expect(chosen.kind).toBe('ollama');
-    expect(chosen.provider.name).toBe('ollama:qwen3.5:9b');
+  it('defaults to the local endpoint, naming the pinned model when there is one', () => {
+    const chosen = chooseProvider(loaded({ openaiCompatible: { model: 'qwen3.5:9b' } }));
+    expect(chosen.kind).toBe('openai-compatible');
+    expect(chosen.provider.name).toBe('openai-compatible:qwen3.5:9b');
     expect(chosen.fallbackReason).toBeUndefined();
+  });
+
+  it('reports the model as auto until the server has been asked', () => {
+    // Nothing pinned and no detection yet: the name must not claim a model.
+    const chosen = chooseProvider(loaded({}));
+    expect(chosen.provider.name).toBe('openai-compatible:auto');
+    expect(chosen.provider.contextWindow).toBeUndefined();
   });
 
   it('builds an openai-compatible provider', () => {
@@ -41,9 +48,9 @@ describe('provider factory', () => {
     expect(chosen.provider.name).toBe('anthropic:claude-haiku-4-5');
   });
 
-  it('falls back to ollama when anthropic has no key, and says why', () => {
+  it('falls back to the local endpoint when anthropic has no key, and says why', () => {
     const chosen = chooseProvider(loaded({ provider: 'anthropic' }));
-    expect(chosen.kind).toBe('ollama');
+    expect(chosen.kind).toBe('openai-compatible');
     expect(chosen.fallbackReason).toMatch(/ANTHROPIC_API_KEY/);
   });
 

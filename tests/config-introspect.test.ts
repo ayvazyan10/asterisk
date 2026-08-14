@@ -11,7 +11,7 @@ describe('settings registry', () => {
   it('derives every scalar leaf of the schema', () => {
     const paths = settingsRegistry().map((f) => f.path);
     expect(paths).toContain('provider');
-    expect(paths).toContain('ollama.model');
+    expect(paths).toContain('openaiCompatible.model');
     expect(paths).toContain('bots.telegram.allowedUserIds');
     expect(paths).toContain('web.port');
     expect(paths).toContain('outputStyle');
@@ -36,7 +36,7 @@ describe('settings registry', () => {
   });
 
   it('carries numeric bounds and integer-ness', () => {
-    expect(describeField('ollama.modelTimeoutMs')).toMatchObject({
+    expect(describeField('openaiCompatible.modelTimeoutMs')).toMatchObject({
       kind: 'number',
       min: 10000,
       max: 1800000,
@@ -46,8 +46,11 @@ describe('settings registry', () => {
   });
 
   it('flags url-formatted strings', () => {
-    expect(describeField('ollama.baseUrl')).toMatchObject({ kind: 'string', format: 'url' });
-    expect(describeField('ollama.model')?.format).toBeUndefined();
+    expect(describeField('openaiCompatible.baseUrl')).toMatchObject({
+      kind: 'string',
+      format: 'url',
+    });
+    expect(describeField('openaiCompatible.model')?.format).toBeUndefined();
   });
 
   it('detects typed arrays', () => {
@@ -65,19 +68,18 @@ describe('settings registry', () => {
   });
 
   it('keeps acronyms uppercase in labels', () => {
-    expect(describeField('ollama.baseUrl')?.label).toBe('Base URL');
+    expect(describeField('openaiCompatible.baseUrl')?.label).toBe('Base URL');
     expect(describeField('bots.telegram.allowedUserIds')?.label).toBe('Allowed user IDs');
     expect(describeField('bots.telegram.streamThrottleMs')?.label).toBe('Stream throttle (ms)');
   });
 
   it('surfaces schema descriptions as help text', () => {
-    expect(describeField('ollama.think')?.description).toMatch(/reasoning/i);
+    expect(describeField('openaiCompatible.model')?.description).toMatch(/\/v1\/models/);
   });
 
   it('groups fields in declaration order', () => {
     expect(settingsByGroup().map((g) => g.group)).toEqual([
       'provider',
-      'ollama',
       'openaiCompatible',
       'anthropic',
       'bots',
@@ -94,7 +96,7 @@ describe('settings registry', () => {
 
 describe('per-field validation', () => {
   it('accepts values inside the schema bounds', () => {
-    expect(validateField('ollama.contextWindow', 8192)).toEqual({ ok: true });
+    expect(validateField('openaiCompatible.contextWindow', 8192)).toEqual({ ok: true });
     expect(validateField('provider', 'anthropic')).toEqual({ ok: true });
     expect(validateField('bots.telegram.allowedUserIds', [1, 2])).toEqual({ ok: true });
   });
@@ -106,7 +108,7 @@ describe('per-field validation', () => {
   });
 
   it('rejects values of the wrong type', () => {
-    expect(validateField('ollama.think', 'yes').ok).toBe(false);
+    expect(validateField('stt.enabled', 'yes').ok).toBe(false);
     expect(validateField('bots.telegram.allowedUserIds', ['a']).ok).toBe(false);
   });
 
@@ -119,7 +121,9 @@ describe('per-field validation', () => {
   });
 
   it('rejects a malformed url for url-formatted fields', () => {
-    expect(validateField('ollama.baseUrl', 'not a url').ok).toBe(false);
-    expect(validateField('ollama.baseUrl', 'http://localhost:1234')).toEqual({ ok: true });
+    expect(validateField('openaiCompatible.baseUrl', 'not a url').ok).toBe(false);
+    expect(validateField('openaiCompatible.baseUrl', 'http://localhost:1234')).toEqual({
+      ok: true,
+    });
   });
 });

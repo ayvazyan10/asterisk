@@ -17,7 +17,7 @@ import { COMMANDS, type CommandContext, type CommandResult } from '../src/comman
 import { closeDb } from '../src/db/index.ts';
 import type { ConnectedMcpServer } from '../src/mcp/client.ts';
 import type { McpManager } from '../src/mcp/manager.ts';
-import { createOllamaProvider } from '../src/providers/ollama.ts';
+import { createOpenAiCompatibleProvider } from '../src/providers/openai-compatible.ts';
 import type { FormSpec, ListSpec } from '../src/repl/forms/types.ts';
 import type { Tool } from '../src/tools/types.ts';
 import type { Provider } from '../src/types/messages.ts';
@@ -128,7 +128,7 @@ export interface TestContextOptions {
 export function makeContext(options: TestContextOptions = {}): TestContext {
   const ctx: TestContext = {
     state: createAgentState(),
-    provider: options.provider ?? createOllamaProvider(),
+    provider: options.provider ?? createOpenAiCompatibleProvider(),
     setProvider(next) {
       ctx.provider = next;
     },

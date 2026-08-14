@@ -24,44 +24,16 @@ interface WizardState {
 const STEPS: Step[] = [
   {
     key: 'provider',
-    prompt: 'Provider — "ollama", "openai-compatible", or "anthropic"',
+    prompt: 'Provider — "openai-compatible" (local) or "anthropic"',
     initial: (s) => s.config.provider,
     apply: (s, v) => {
       const typed = v.trim().toLowerCase();
-      // Accept a few obvious spellings for the OpenAI-compatible path so the
-      // wizard doesn't silently drop the answer back to ollama.
-      const p =
-        typed === 'anthropic'
-          ? 'anthropic'
-          : typed === 'openai-compatible' || typed === 'openai' || typed === 'llama.cpp'
-            ? 'openai-compatible'
-            : 'ollama';
+      // Anything that is not clearly Anthropic means the local endpoint —
+      // that is the default, and an unrecognised answer should land there
+      // rather than silently selecting a hosted API that needs a key.
+      const p = typed === 'anthropic' ? 'anthropic' : 'openai-compatible';
       return { ...s, config: { ...s.config, provider: p } };
     },
-  },
-  {
-    key: 'ollama.baseUrl',
-    prompt: 'Ollama base URL',
-    initial: (s) => s.config.ollama.baseUrl,
-    apply: (s, v) => ({
-      ...s,
-      config: {
-        ...s.config,
-        ollama: { ...s.config.ollama, baseUrl: v.trim() || s.config.ollama.baseUrl },
-      },
-    }),
-  },
-  {
-    key: 'ollama.model',
-    prompt: 'Ollama model',
-    initial: (s) => s.config.ollama.model,
-    apply: (s, v) => ({
-      ...s,
-      config: {
-        ...s.config,
-        ollama: { ...s.config.ollama, model: v.trim() || s.config.ollama.model },
-      },
-    }),
   },
   {
     key: 'openaiCompatible.baseUrl',

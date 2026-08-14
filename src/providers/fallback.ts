@@ -1,7 +1,7 @@
 // A provider that steps down a chain when the one in front of it is unusable.
 //
-// The motivating case is local-first: a laptop running Ollama that is not
-// currently running Ollama. Every turn fails on a connection refused, and the
+// The motivating case is local-first: a laptop configured for a local model
+// server that is not currently running. Every turn fails on a connection refused, and the
 // configured Anthropic key sits unused because `provider` names exactly one
 // backend. With a chain, the turn lands.
 //

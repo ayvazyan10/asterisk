@@ -35,8 +35,8 @@ describe('config schema and persistence', () => {
 
   it('returns defaults when no config file exists', () => {
     const { config, secrets } = loadConfig();
-    expect(config.provider).toBe('ollama');
-    expect(config.ollama.baseUrl).toBe('http://127.0.0.1:11434');
+    expect(config.provider).toBe('openai-compatible');
+    expect(config.openaiCompatible.baseUrl).toBe('http://127.0.0.1:8080/v1');
     expect(config.bots.telegram.enabled).toBe(false);
     expect(config.bots.telegram.streamMode).toBe('final');
     expect(config.bots.telegram.streamThrottleMs).toBe(1000);
@@ -100,20 +100,20 @@ describe('config schema and persistence', () => {
     const { writeFile } = await import('node:fs/promises');
     await writeFile(
       join(home, 'config.json'),
-      JSON.stringify({ provider: 'anthropic', ollama: { model: 'legacy-model' } }),
+      JSON.stringify({ provider: 'anthropic', openaiCompatible: { model: 'legacy-model' } }),
     );
     await writeFile(join(home, 'secrets.env'), 'ANTHROPIC_API_KEY="sk-legacy"\n');
 
     const { config, secrets } = loadConfig();
     expect(config.provider).toBe('anthropic');
-    expect(config.ollama.model).toBe('legacy-model');
+    expect(config.openaiCompatible.model).toBe('legacy-model');
     expect(secrets.ANTHROPIC_API_KEY).toBe('sk-legacy');
 
     // The original is preserved under a .migrated suffix, and re-loading does
     // not re-import (which would clobber later edits).
     expect(await readFile(join(home, 'config.json.migrated'), 'utf8')).toContain('legacy-model');
-    saveConfig(ConfigSchema.parse({ provider: 'ollama' }));
-    expect(loadConfig().config.provider).toBe('ollama');
+    saveConfig(ConfigSchema.parse({ provider: 'openai-compatible' }));
+    expect(loadConfig().config.provider).toBe('openai-compatible');
   });
 
   it('exports the stored config back to JSON without secrets', async () => {

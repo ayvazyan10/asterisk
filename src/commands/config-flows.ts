@@ -6,6 +6,7 @@
 
 import { loadConfig, saveConfig, saveSecrets } from '../config/load.ts';
 import type { AsteriskConfig } from '../config/schema.ts';
+import { clearDetectedModels } from '../providers/model-detect.ts';
 import type { FormSpec, ListSpec } from '../repl/forms/types.ts';
 import { listAnthropicModels } from './models.ts';
 import type { CommandContext, CommandResult, SlashCommand } from './registry.ts';
@@ -54,7 +55,7 @@ const CONFIG_SECTIONS: ConfigSection[] = [
   {
     key: 'provider',
     label: 'Default provider',
-    summary: 'ollama or anthropic at startup',
+    summary: 'local endpoint or anthropic at startup',
     open() {
       const cfg = loadConfig().config;
       return {
@@ -65,13 +66,15 @@ const CONFIG_SECTIONS: ConfigSection[] = [
             kind: 'select',
             key: 'provider',
             label: 'Provider',
-            // All three, because SelectRow clamps an out-of-options value to
-            // index 0 — so omitting openai-compatible did not merely hide it,
-            // it silently moved anyone using it onto Ollama the moment they
-            // touched the arrow keys.
+            // Every accepted value must appear: SelectRow clamps an
+            // out-of-options value to index 0, so a missing entry does not
+            // merely hide a provider, it moves anyone using it onto another
+            // the moment they touch the arrow keys.
             options: [
-              { value: 'ollama', label: 'Ollama (local)' },
-              { value: 'openai-compatible', label: 'OpenAI-compatible (llama.cpp, LM Studio, …)' },
+              {
+                value: 'openai-compatible',
+                label: 'Local / OpenAI-compatible (llama.cpp, LM Studio, …)',
+              },
               { value: 'anthropic', label: 'Anthropic API' },
             ],
             defaultValue: cfg.provider,
@@ -88,14 +91,14 @@ const CONFIG_SECTIONS: ConfigSection[] = [
     },
   },
   {
-    key: 'ollama',
-    label: 'Ollama settings',
-    summary: 'base URL, default model, context window',
+    key: 'openai-compatible',
+    label: 'Local model settings',
+    summary: 'endpoint, optional model pin, context window',
     open() {
-      const cfg = loadConfig().config.ollama;
+      const cfg = loadConfig().config.openaiCompatible;
       return {
         kind: 'form',
-        title: 'Ollama settings',
+        title: 'Local model (OpenAI-compatible endpoint)',
         fields: [
           {
             kind: 'text',
@@ -107,26 +110,28 @@ const CONFIG_SECTIONS: ConfigSection[] = [
           {
             kind: 'text',
             key: 'model',
-            label: 'Default model',
+            label: 'Model (leave empty to use whatever the server is serving)',
             defaultValue: cfg.model,
-            required: true,
+            placeholder: '(auto-detected from /v1/models)',
           },
           {
             kind: 'text',
             key: 'contextWindow',
-            label: 'Context window (tokens)',
+            label: "Context window (0 = take the server's)",
             defaultValue: String(cfg.contextWindow),
-            required: true,
           },
         ],
         onSubmit: (v) => {
           const next = loadConfig().config;
-          next.ollama.baseUrl = (v['baseUrl'] ?? next.ollama.baseUrl).trim();
-          next.ollama.model = (v['model'] ?? next.ollama.model).trim();
+          next.openaiCompatible.baseUrl = (v['baseUrl'] ?? next.openaiCompatible.baseUrl).trim();
+          // An empty model is meaningful here — it re-enables detection — so
+          // it is written through rather than treated as "no answer".
+          next.openaiCompatible.model = (v['model'] ?? next.openaiCompatible.model).trim();
           const ctxN = Number.parseInt(v['contextWindow'] ?? '', 10);
-          if (Number.isFinite(ctxN) && ctxN > 0) next.ollama.contextWindow = ctxN;
+          if (Number.isFinite(ctxN) && ctxN >= 0) next.openaiCompatible.contextWindow = ctxN;
           saveConfig(next);
-          return '✓ Ollama settings saved (use /reset to apply)';
+          clearDetectedModels();
+          return '✓ local model settings saved (use /reset to apply)';
         },
         onCancel: () => '(cancelled)',
       };

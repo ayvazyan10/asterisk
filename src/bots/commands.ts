@@ -135,7 +135,9 @@ function renderStatus(ctx: CommandContext): string {
   const lines = [
     `Session   ${sid}`,
     `Provider  ${ctx.providerName}`,
-    `Model     ${cfg.provider === 'anthropic' ? cfg.anthropic.model : cfg.ollama.model}`,
+    // The name the provider reports, not the configured one: with detection
+    // on, the config usually holds nothing at all.
+    `Model     ${ctx.providerName.split(':').slice(1).join(':') || (cfg.provider === 'anthropic' ? cfg.anthropic.model : '(auto)')}`,
     `History   ${ctx.state.history.length} message${ctx.state.history.length === 1 ? '' : 's'}`,
     `Tasks     ${tasks.length} total · ${tasksByStatus.in_progress} in_progress · ${tasksByStatus.completed} done · ${tasksByStatus.pending} pending`,
     `Plan Mode ${isPlanMode() ? 'ON (read-only)' : 'off'}`,

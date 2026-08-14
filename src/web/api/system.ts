@@ -7,6 +7,7 @@ import { readConfig } from '../../config/store.ts';
 import { logs, restart, start, status, stop } from '../../daemon/lifecycle.ts';
 import { asteriskPaths } from '../../daemon/paths.ts';
 import { listHooks, listMcpServers } from '../../db/collections.ts';
+import { detectActiveModel } from '../../providers/model-detect.ts';
 import { getVersion } from '../../version.ts';
 import { issueToken, listTokens, revokeToken } from '../auth.ts';
 import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
@@ -38,7 +39,10 @@ export const getStatus: Handler = ({ db }) => {
     database: { path: paths.dbFile, bytes: dbBytes },
     daemon: { running: daemon.message.startsWith('running'), message: daemon.message },
     provider: config.provider,
-    model: config.provider === 'anthropic' ? config.anthropic.model : config.ollama.model,
+    model:
+      config.provider === 'anthropic'
+        ? config.anthropic.model
+        : config.openaiCompatible.model || '(auto-detected)',
     outputStyle: config.outputStyle,
     counts: {
       mcpServers: listMcpServers(db).length,
@@ -80,31 +84,25 @@ export const getDoctor: Handler = async ({ db }) => {
   const paths = asteriskPaths();
   const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
 
-  // Ollama reachability — the default provider, so worth checking either way.
-  const base = config.ollama.baseUrl.replace(/\/$/, '');
-  try {
-    const res = await fetch(`${base}/api/tags`, {
-      signal: AbortSignal.timeout(4000),
-    });
-    if (res.ok) {
-      const body = (await res.json()) as { models?: Array<{ name: string }> };
-      const models = body.models ?? [];
-      const present = models.some((m) => m.name === config.ollama.model);
-      checks.push({
-        name: 'Ollama',
-        ok: true,
-        detail: `${models.length} model(s) at ${base}${
-          present ? '' : ` — configured model "${config.ollama.model}" not pulled`
-        }`,
-      });
-    } else {
-      checks.push({ name: 'Ollama', ok: false, detail: `HTTP ${res.status} from ${base}` });
-    }
-  } catch (e) {
+  // The local endpoint, and what it is actually serving. With the model name
+  // detected rather than configured, "reachable" alone is not enough to tell
+  // the user their setup works — a server with nothing loaded answers too.
+  const base = config.openaiCompatible.baseUrl.replace(/\/$/, '');
+  const detected = await detectActiveModel(base, '', { force: true, timeoutMs: 4000 });
+  if (detected) {
+    const pinned = config.openaiCompatible.model;
+    const mismatch = pinned && pinned !== detected.id ? ` — pinned to "${pinned}"` : '';
+    const window = detected.contextWindow ? ` · ${detected.contextWindow} ctx` : '';
     checks.push({
-      name: 'Ollama',
+      name: 'Local model',
+      ok: true,
+      detail: `${base} serving ${detected.id}${window}${mismatch}`,
+    });
+  } else {
+    checks.push({
+      name: 'Local model',
       ok: false,
-      detail: `unreachable at ${base}: ${(e as Error).message}`,
+      detail: `no model reported at ${base}/models`,
     });
   }
 

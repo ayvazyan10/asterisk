@@ -170,7 +170,7 @@ manager
         m.findOutputStyle(cfg.outputStyle),
       );
 
-      // Silence detector — Ollama doesn't stream tool_call arguments, so a
+      // Silence detector — some servers don't stream tool_call arguments, so a
       // model generating a multi-thousand-line Write payload looks identical
       // to a hang. Push a periodic heartbeat to the sink so bots can show
       // "generating · 45s of silence" instead of a stale placeholder.
@@ -204,7 +204,7 @@ manager
         ...(outputStyle ? { outputStyle } : {}),
         // Streaming: forward per-token deltas to the sink as they arrive.
         // Also fire a 'text' event from the post-turn whole-text callback so
-        // bots running against a non-streaming provider (or Ollama models that
+        // bots running against a non-streaming provider (or models that
         // ignore stream:true for tool-only turns) still get something to show.
         // The sink-side Telegram adapter dedupes by tracking whether deltas
         // have already arrived for the current turn — see streamMode='stream'.

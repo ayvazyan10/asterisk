@@ -7,8 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **The Ollama provider.** Ollama serves an OpenAI-compatible API of its own,
+  so the dedicated `/api/chat` path was a second implementation of something
+  the project already had — and second implementations drift: its `think` flag
+  was silently dropped on one call path for a while. `openai-compatible` is now
+  the only local backend and the default, covering llama.cpp, LM Studio, vLLM,
+  Jan, LocalAI, and Ollama itself at `http://127.0.0.1:11434/v1`. Anthropic is
+  unaffected.
+- Migration 9 rewrites `provider: "ollama"` to `openai-compatible`, drops the
+  orphaned `ollama.*` settings, and removes `ollama` from `providerFallback`.
+  The base URL is deliberately not carried over: Ollama's OpenAI-compatible API
+  lives on a different port and path, and a copied value would point the agent
+  at nothing while looking configured.
+- **Plugins.** The in-process TypeScript extension surface is gone: `src/plugins`,
+  the `/plugins` command, the `plugins.*` settings and the control-panel page
+  added for them. A plugin ran with the secret store, the tool registry and the
+  permission gate, and nothing could confine it — bubblewrap confines child
+  *processes*, and a plugin is a function call. Everything one could do, an MCP
+  server does from outside the process, and Asterisk already speaks MCP as a
+  client. Shell hooks are unaffected: they hook the same lifecycle events and
+  they are child processes.
+- Migration 8 clears any `plugins.*` rows an older install left in `settings`.
+  Plugin *files* are left alone — Asterisk never wrote them.
+
 ### Added
 
+- **The active model is detected rather than configured.** Before each request
+  the local provider asks `GET /v1/models` which model the server is holding
+  and uses that, cached for a minute. Swapping the model on the server needs no
+  config change, and a name written months ago cannot keep being sent to a
+  server that no longer has it. `openaiCompatible.model` becomes a pin for the
+  case where one endpoint serves several models; `/model auto` clears it.
+- The same listing carries `meta.n_ctx`, so compaction now budgets against the
+  window the server was actually started with. It used to assume 128k, which
+  wasted more than half of a 262 144-token window and overflowed an 8 192-token
+  one before compaction ever fired.
+- `/doctor` and the panel's diagnostics report which model is answering and at
+  what context window, instead of only whether a port was open.
 - **Voice messages are transcribed.** A Telegram voice note is downloaded by
   the transport, turned into text by the core, and reaches the agent labelled
   as speech rather than disguised as typed text — the difference decides
@@ -70,19 +107,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (pid, host, port and URL of the running instance — never a token, since only
   token hashes are stored). Separate on purpose: `asterisk stop` must not take
   the panel down, and `asterisk web stop` must not stop the bots.
-
-### Removed
-
-- **Plugins.** The in-process TypeScript extension surface is gone: `src/plugins`,
-  the `/plugins` command, the `plugins.*` settings and the control-panel page
-  added for them. A plugin ran with the secret store, the tool registry and the
-  permission gate, and nothing could confine it — bubblewrap confines child
-  *processes*, and a plugin is a function call. Everything one could do, an MCP
-  server does from outside the process, and Asterisk already speaks MCP as a
-  client. Shell hooks are unaffected: they hook the same lifecycle events and
-  they are child processes.
-- Migration 8 clears any `plugins.*` rows an older install left in `settings`.
-  Plugin *files* are left alone — Asterisk never wrote them.
 
 ## [0.4.1] - 2026-08-13
 

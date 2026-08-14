@@ -13,7 +13,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   ANTHROPIC_FALLBACK_MODELS,
   listAnthropicModels,
-  listOllamaModels,
   parseProviderName,
 } from '../src/commands/models.ts';
 import { escapeRegex, quote, shellJoin, truncate } from '../src/commands/text.ts';
@@ -95,8 +94,8 @@ describe('command text helpers', () => {
 
 describe('parseProviderName', () => {
   it('splits on the first colon, so model ids keep theirs', () => {
-    expect(parseProviderName('ollama:qwen3.5:9b-q8')).toEqual({
-      kind: 'ollama',
+    expect(parseProviderName('openai-compatible:qwen3.5:9b-q8')).toEqual({
+      kind: 'openai-compatible',
       model: 'qwen3.5:9b-q8',
     });
     expect(parseProviderName('anthropic:claude-opus-5')).toEqual({
@@ -114,25 +113,6 @@ describe('parseProviderName', () => {
     expect(parseProviderName('')).toBeNull();
     expect(parseProviderName('fake:model')).toBeNull();
     expect(parseProviderName('Ollama:model')).toBeNull();
-  });
-});
-
-describe('listOllamaModels', () => {
-  it('returns the tag names and normalises a trailing slash on the base URL', async () => {
-    const { calls } = respond({ models: [{ name: 'qwen3.5:9b' }, { name: 'gemma:2b' }] });
-    expect(await listOllamaModels('http://127.0.0.1:11434/')).toEqual(['qwen3.5:9b', 'gemma:2b']);
-    expect(calls[0]?.url).toBe('http://127.0.0.1:11434/api/tags');
-  });
-
-  it('returns nothing on a non-2xx, a malformed body, or an unreachable host', async () => {
-    respond({ models: [{ name: 'x' }] }, 503);
-    expect(await listOllamaModels('http://127.0.0.1:11434')).toEqual([]);
-
-    respond({});
-    expect(await listOllamaModels('http://127.0.0.1:11434')).toEqual([]);
-
-    reject('ECONNREFUSED');
-    expect(await listOllamaModels('http://127.0.0.1:11434')).toEqual([]);
   });
 });
 

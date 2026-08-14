@@ -159,33 +159,6 @@ describe('provider mapping', () => {
   });
 });
 
-describe('provider mapping — Ollama', () => {
-  it('hoists images onto the message rather than leaving them as blocks', async () => {
-    const { flattenForOllama } = await import('../src/providers/ollama.ts');
-    const out = flattenForOllama([
-      { role: 'user', content: [{ type: 'text', text: 'what is this' }, image('QUJD')] },
-    ]);
-
-    // Ollama's /api/chat takes `images` on the message; a content block it does
-    // not recognise is dropped without complaint.
-    expect(out[0]?.images).toEqual(['QUJD']);
-    expect(out[0]?.content).toBe('what is this');
-  });
-
-  it('emits a message for an image even with no accompanying text', async () => {
-    const { flattenForOllama } = await import('../src/providers/ollama.ts');
-    const out = flattenForOllama([{ role: 'user', content: [image('QUJD')] }]);
-    expect(out).toHaveLength(1);
-    expect(out[0]?.images).toEqual(['QUJD']);
-  });
-
-  it('leaves a text-only message without an images field', async () => {
-    const { flattenForOllama } = await import('../src/providers/ollama.ts');
-    const out = flattenForOllama([{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]);
-    expect(out[0]?.images).toBeUndefined();
-  });
-});
-
 describe('provider mapping — Anthropic', () => {
   it('nests the payload under source, as the API expects', async () => {
     const { toAnthropicContent } = await import('../src/providers/anthropic.ts');

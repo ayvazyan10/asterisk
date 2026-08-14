@@ -61,7 +61,7 @@ function ctx(providerName: string) {
   } as never;
 }
 
-function withProvider(provider: 'ollama' | 'openai-compatible' | 'anthropic'): void {
+function withProvider(provider: 'openai-compatible' | 'anthropic'): void {
   const config = ConfigSchema.parse({});
   saveConfig({ ...config, provider });
 }
@@ -70,15 +70,21 @@ describe('/config provider offers every provider the schema has', () => {
   it('includes openai-compatible', async () => {
     // SelectRow clamps an out-of-options value to index 0, so omitting this
     // did not merely hide it — it moved anyone using openai-compatible onto
-    // Ollama as soon as they touched the arrow keys.
-    const out = (await command('/config').execute(ctx('ollama:x'), 'provider')) as FormSpec;
+    // another provider as soon as they touched the arrow keys.
+    const out = (await command('/config').execute(
+      ctx('openai-compatible:x'),
+      'provider',
+    )) as FormSpec;
     const field = out.fields.find((f) => f.key === 'provider');
     const values = field && 'options' in field ? field.options.map((o) => o.value) : [];
-    expect(values).toEqual(['ollama', 'openai-compatible', 'anthropic']);
+    expect(values).toEqual(['openai-compatible', 'anthropic']);
   });
 
   it('round-trips the selection into config', async () => {
-    const out = (await command('/config').execute(ctx('ollama:x'), 'provider')) as FormSpec;
+    const out = (await command('/config').execute(
+      ctx('openai-compatible:x'),
+      'provider',
+    )) as FormSpec;
     await out.onSubmit({ provider: 'openai-compatible' });
     expect(loadConfig().config.provider).toBe('openai-compatible');
   });
@@ -106,13 +112,19 @@ describe('/model asks the right backend', () => {
 
 describe('/mcp edit validates like /mcp add', () => {
   async function addStdio(): Promise<void> {
-    const form = (await command('/mcp').execute(ctx('ollama:x'), 'add stdio')) as FormSpec;
+    const form = (await command('/mcp').execute(
+      ctx('openai-compatible:x'),
+      'add stdio',
+    )) as FormSpec;
     await form.onSubmit({ name: 'srv', command: 'node', args: 'server.js', enabled: 'yes' });
   }
 
   it('refuses a blank command with a message, not a raw ZodError', async () => {
     await addStdio();
-    const form = (await command('/mcp').execute(ctx('ollama:x'), 'edit srv')) as FormSpec;
+    const form = (await command('/mcp').execute(
+      ctx('openai-compatible:x'),
+      'edit srv',
+    )) as FormSpec;
     const result = await form.onSubmit({ command: '   ', args: '', enabled: 'yes' });
 
     expect(String(result)).toContain('command is required');
@@ -120,10 +132,13 @@ describe('/mcp edit validates like /mcp add', () => {
   });
 
   it('refuses a url that is not http(s)', async () => {
-    const add = (await command('/mcp').execute(ctx('ollama:x'), 'add http')) as FormSpec;
+    const add = (await command('/mcp').execute(ctx('openai-compatible:x'), 'add http')) as FormSpec;
     await add.onSubmit({ name: 'web', url: 'https://example.com/mcp', enabled: 'yes' });
 
-    const form = (await command('/mcp').execute(ctx('ollama:x'), 'edit web')) as FormSpec;
+    const form = (await command('/mcp').execute(
+      ctx('openai-compatible:x'),
+      'edit web',
+    )) as FormSpec;
     const result = await form.onSubmit({ url: 'notaurl', enabled: 'yes' });
 
     expect(String(result)).toMatch(/http:\/\/ or https:\/\//);
@@ -141,7 +156,10 @@ describe('/code reports no matches as no matches', () => {
     // Built at runtime: a literal here would be found by the very search it
     // is meant to come up empty on — the file is inside the search path.
     const absent = ['zzq', 'nothing', 'matches', 'this'].join('-') + Date.now();
-    const out = (await command('/code').execute(ctx('ollama:x'), `refs ${absent}`)) as string;
+    const out = (await command('/code').execute(
+      ctx('openai-compatible:x'),
+      `refs ${absent}`,
+    )) as string;
 
     expect(out).not.toMatch(/Command failed/);
     expect(out).toMatch(/no matches/);

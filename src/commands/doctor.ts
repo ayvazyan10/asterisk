@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import { loadConfig } from '../config/load.ts';
 import { asteriskPaths } from '../daemon/paths.ts';
 import { statusFromPidFile } from '../daemon/pidfile.ts';
+import { detectActiveModel } from '../providers/model-detect.ts';
 import { sandboxStatus } from '../tools/sandbox.ts';
 import { parseProviderName } from './models.ts';
 import type { SlashCommand } from './registry.ts';
@@ -29,20 +30,22 @@ export const doctorCommand: SlashCommand = {
     const current = parseProviderName(ctx.provider.name);
     lines.push(`Provider     ${ctx.provider.name}`);
 
-    // Ollama connectivity
+    // Local endpoint: is it up, and what is it serving? The second half is
+    // the useful part now that the model name is detected rather than
+    // configured — "reachable" with no model loaded is still a broken setup.
+    const localBase = loadConfig().config.openaiCompatible.baseUrl;
     try {
-      const res = await fetch(`${loadConfig().config.ollama.baseUrl.replace(/\/$/, '')}/api/tags`, {
-        signal: AbortSignal.timeout(3000),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { models?: Array<{ name: string }> };
-        const count = data.models?.length ?? 0;
-        lines.push(`  ✓ Ollama     reachable · ${count} model${count === 1 ? '' : 's'} installed`);
+      const detected = await detectActiveModel(localBase, '', { force: true, timeoutMs: 3000 });
+      if (detected) {
+        const window = detected.contextWindow
+          ? ` · ${detected.contextWindow.toLocaleString('en-US')} ctx`
+          : '';
+        lines.push(`  ✓ Local      ${localBase} · serving ${detected.id}${window}`);
       } else {
-        lines.push(`  ✗ Ollama     HTTP ${res.status}`);
+        lines.push(`  ✗ Local      ${localBase} reachable but reported no model`);
       }
     } catch {
-      lines.push(`  ✗ Ollama     unreachable at ${loadConfig().config.ollama.baseUrl}`);
+      lines.push(`  ✗ Local      unreachable at ${localBase}`);
     }
 
     // Anthropic key

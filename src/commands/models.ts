@@ -4,19 +4,6 @@
 // than being imported back out of the registry — that would close an import
 // cycle at value level.
 
-export async function listOllamaModels(baseUrl: string): Promise<string[]> {
-  try {
-    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/tags`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { models?: Array<{ name: string }> };
-    return (data.models ?? []).map((m) => m.name);
-  } catch {
-    return [];
-  }
-}
-
 /**
  * Model ids an OpenAI-compatible endpoint advertises.
  *
@@ -86,7 +73,7 @@ export async function listAnthropicModels(apiKey: string): Promise<AnthropicMode
   }
 }
 
-export type ProviderKind = 'ollama' | 'openai-compatible' | 'anthropic';
+export type ProviderKind = 'openai-compatible' | 'anthropic';
 
 /** Splits `<kind>:<model>`; model ids may contain colons, so only the first splits. */
 export function parseProviderName(name: string): { kind: ProviderKind; model: string } | null {
@@ -94,6 +81,6 @@ export function parseProviderName(name: string): { kind: ProviderKind; model: st
   if (colon === -1) return null;
   const kind = name.slice(0, colon);
   const model = name.slice(colon + 1);
-  if (kind !== 'ollama' && kind !== 'openai-compatible' && kind !== 'anthropic') return null;
+  if (kind !== 'openai-compatible' && kind !== 'anthropic') return null;
   return { kind, model };
 }

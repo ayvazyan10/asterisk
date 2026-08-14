@@ -1,16 +1,15 @@
 // The single place a Provider is built from configuration.
 //
 // This used to be four near-identical `pickProvider` functions (REPL entry,
-// daemon, sub-agent, /reset) that had already drifted apart — the sub-agent
-// copy silently dropped Ollama's `think` flag, and the REPL copy ignored the
-// stored config entirely. Everything routes through here now.
+// daemon, sub-agent, /reset) that had already drifted apart — one silently
+// dropped a provider flag, another ignored the stored config entirely.
+// Everything routes through here now.
 
 import type { LoadedConfig } from '../config/load.ts';
 import type { AsteriskConfig } from '../config/schema.ts';
 import type { Provider } from '../types/messages.ts';
 import { createAnthropicProvider } from './anthropic.ts';
 import { type FallbackLink, createFallbackProvider } from './fallback.ts';
-import { createOllamaProvider } from './ollama.ts';
 import { createOpenAiCompatibleProvider } from './openai-compatible.ts';
 
 export type { ProviderKind } from './kinds.ts';
@@ -24,9 +23,9 @@ export interface ProviderChoice {
 }
 
 /**
- * Builds the configured provider, falling back to Ollama when Anthropic is
- * selected without a key. Local providers never fall back — a wrong base URL
- * should surface as a connection error, not a silent switch.
+ * Builds the configured provider, falling back to the local endpoint when
+ * Anthropic is selected without a key. The local provider never falls back —
+ * a wrong base URL should surface as a connection error, not a silent switch.
  */
 export function chooseProvider(loaded: LoadedConfig): ProviderChoice {
   const { config, secrets } = loaded;
@@ -35,8 +34,8 @@ export function chooseProvider(loaded: LoadedConfig): ProviderChoice {
     const apiKey = secrets.ANTHROPIC_API_KEY;
     if (!apiKey) {
       return {
-        provider: buildOllama(config),
-        kind: 'ollama',
+        provider: buildOpenAiCompatible(loaded),
+        kind: 'openai-compatible',
         fallbackReason: 'anthropic selected but ANTHROPIC_API_KEY is not set',
       };
     }
@@ -46,11 +45,7 @@ export function chooseProvider(loaded: LoadedConfig): ProviderChoice {
     };
   }
 
-  if (config.provider === 'openai-compatible') {
-    return { provider: buildOpenAiCompatible(loaded), kind: 'openai-compatible' };
-  }
-
-  return { provider: buildOllama(config), kind: 'ollama' };
+  return { provider: buildOpenAiCompatible(loaded), kind: 'openai-compatible' };
 }
 
 /**
@@ -86,8 +81,7 @@ function buildKind(kind: AsteriskConfig['provider'], loaded: LoadedConfig): Prov
         ? createAnthropicProvider({ apiKey, model: loaded.config.anthropic.model })
         : null;
     }
-    if (kind === 'openai-compatible') return buildOpenAiCompatible(loaded);
-    return buildOllama(loaded.config);
+    return buildOpenAiCompatible(loaded);
   } catch {
     return null;
   }
@@ -96,17 +90,6 @@ function buildKind(kind: AsteriskConfig['provider'], loaded: LoadedConfig): Prov
 /** Convenience wrapper for callers that don't care why a fallback happened. */
 export function createProviderFromConfig(loaded: LoadedConfig): Provider {
   return createProviderChain(loaded).provider;
-}
-
-function buildOllama(config: AsteriskConfig): Provider {
-  return createOllamaProvider({
-    baseUrl: config.ollama.baseUrl,
-    model: config.ollama.model,
-    contextWindow: config.ollama.contextWindow,
-    think: config.ollama.think,
-    modelTimeoutMs: config.ollama.modelTimeoutMs,
-    modelIdleTimeoutMs: config.ollama.modelIdleTimeoutMs,
-  });
 }
 
 function buildOpenAiCompatible(loaded: LoadedConfig): Provider {

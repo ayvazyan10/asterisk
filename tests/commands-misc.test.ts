@@ -390,19 +390,21 @@ describe('/doctor', () => {
   });
 
   /** Answers the two endpoints /doctor probes. */
-  function endpoints(ollama: 'ok' | 'error' | 'down', anthropic: 'ok' | 'error' | 'down'): void {
+  function endpoints(local: 'ok' | 'error' | 'down', anthropic: 'ok' | 'error' | 'down'): void {
     globalThis.fetch = (async (url: string) => {
-      const target = String(url).includes('anthropic.com') ? anthropic : ollama;
+      const target = String(url).includes('anthropic.com') ? anthropic : local;
       if (target === 'down') throw new Error('ECONNREFUSED');
       if (target === 'error') return new Response('nope', { status: 503 });
-      return new Response(JSON.stringify({ models: [{ name: 'qwen' }] }), {
+      // The local half is /v1/models, which is also how the model name and
+      // context window are detected.
+      return new Response(JSON.stringify({ data: [{ id: 'qwen', meta: { n_ctx: 32768 } }] }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
     }) as unknown as typeof fetch;
   }
 
-  it('reports a reachable Ollama, a valid key, the tools, and the security posture', async () => {
+  it('reports the model the local server is serving, a valid key, the tools, and the security posture', async () => {
     const cfg = config();
     cfg.mcpServers = [
       { name: 'a', transport: 'stdio', command: 'x', args: [], env: {}, enabled: true },
@@ -416,7 +418,9 @@ describe('/doctor', () => {
     ctx.state.history.push(...say('hi'));
     const out = await runText(ctx, '/doctor');
 
-    expect(out).toContain('✓ Ollama     reachable · 1 model installed');
+    // The useful fact is which model answered, not merely that a port was open.
+    expect(out).toContain('serving qwen');
+    expect(out).toContain('32,768 ctx');
     expect(out).toContain('✓ Anthropic  API key valid');
     expect(out).toContain('System tools');
     expect(out).toContain('git');
@@ -433,7 +437,7 @@ describe('/doctor', () => {
     endpoints('error', 'error');
 
     const out = await runText(makeContext(), '/doctor');
-    expect(out).toContain('✗ Ollama     HTTP 503');
+    expect(out).toContain('reported no model');
     expect(out).toContain('✗ Anthropic  API returned 503');
   });
 
@@ -448,7 +452,7 @@ describe('/doctor', () => {
   it('reports unreachable endpoints, and no key at all as a note rather than a failure', async () => {
     endpoints('down', 'down');
     const out = await runText(makeContext(), '/doctor');
-    expect(out).toContain(`✗ Ollama     unreachable at ${config().ollama.baseUrl}`);
+    expect(out).toContain(config().openaiCompatible.baseUrl);
     expect(out).toContain('· Anthropic  no API key set');
     expect(out).toContain('config     ');
     expect(out).toContain('(using defaults)');

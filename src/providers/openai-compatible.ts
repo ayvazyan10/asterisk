@@ -5,8 +5,10 @@
 // same wire format. It is also usable against hosted OpenAI-compatible APIs by
 // setting an API key.
 //
-// Ollama keeps its own provider because Asterisk drives its native /api/chat
-// (num_ctx, think, NDJSON framing). Everything else goes through here.
+// The model name is not taken from configuration by default: a local server
+// holds one model, the user swaps it by restarting the server, and a name in
+// the config is a stale copy of a fact the server already publishes. See
+// model-detect.ts.
 //
 // Reference: https://platform.openai.com/docs/api-reference/chat/create
 // llama.cpp server: https://github.com/ggml-org/llama.cpp/tree/master/tools/server
@@ -21,6 +23,7 @@ import type {
   ToolUseBlock,
 } from '../types/messages.ts';
 import { ProviderError, classifyHttpError, parseRetryAfter } from './errors.ts';
+import { type DetectedModel, detectActiveModel } from './model-detect.ts';
 import {
   type RepetitionOptions,
   createRepetitionGuard,
@@ -263,16 +266,48 @@ export function createOpenAiCompatibleProvider(
   const cfg: OpenAiCompatibleConfig = { ...OPENAI_COMPATIBLE_DEFAULTS, ...overrides };
   const root = cfg.baseUrl.replace(/\/+$/, '');
 
+  // What the server said it is serving, from the last detection. Held here so
+  // `name` and `contextWindow` report the model that will actually answer,
+  // rather than whatever the config was written against.
+  let detected: DetectedModel | null = null;
+
+  /**
+   * Settles which model this request names.
+   *
+   * Detection wins over the configured name: a local server holds one model
+   * and the user swaps it by restarting the server, so the server is the
+   * authority and the config is the fallback for when it cannot be reached.
+   */
+  const resolveModel = async (): Promise<string> => {
+    detected = await detectActiveModel(root, cfg.apiKey);
+    const model = detected?.id || cfg.model;
+    if (!model) {
+      throw new ProviderError(
+        'network',
+        `no model to talk to: ${root}/models could not be reached and openaiCompatible.model is empty. Start the server, or pin a model name.`,
+      );
+    }
+    return model;
+  };
+
   return {
-    name: `openai-compatible:${cfg.model || 'default'}`,
-    // 0 means "unknown"; compaction falls back to its own default.
-    ...(cfg.contextWindow > 0 ? { contextWindow: cfg.contextWindow } : {}),
+    get name(): string {
+      return `openai-compatible:${detected?.id || cfg.model || 'auto'}`;
+    },
+    // The server's own n_ctx beats the configured guess; 0/undefined means
+    // "unknown" and compaction falls back to its own default.
+    get contextWindow(): number | undefined {
+      // undefined means "unknown"; compaction falls back to its own default.
+      const window = detected?.contextWindow ?? cfg.contextWindow;
+      return window && window > 0 ? window : undefined;
+    },
     async send(req: ProviderRequest): Promise<ProviderResponse> {
       const streaming = !!req.onText;
       const maxTokens = req.maxTokens ?? (cfg.maxTokens > 0 ? cfg.maxTokens : undefined);
+      const model = await resolveModel();
 
       const body: Record<string, unknown> = {
-        model: cfg.model,
+        model,
         messages: toOpenAiMessages(req.system, req.messages),
         stream: streaming,
         ...(req.tools.length > 0 ? { tools: toOpenAiTools(req.tools) } : {}),

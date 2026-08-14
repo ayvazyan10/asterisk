@@ -24,7 +24,6 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAgentState, runAgentTurn } from '../src/agent/loop.ts';
-import { createOllamaProvider } from '../src/providers/ollama.ts';
 import { createOpenAiCompatibleProvider } from '../src/providers/openai-compatible.ts';
 import { findRunawayRepetition } from '../src/providers/repetition.ts';
 import { recoverToolCallsFromText } from '../src/providers/text-tool-calls.ts';
@@ -70,18 +69,38 @@ function text(blocks: readonly ContentBlock[]): string {
 }
 
 /** One non-streaming JSON body from the endpoint. */
+/**
+ * A model listing, which the provider fetches before every chat request to
+ * learn what the server is serving. Returning an empty list keeps the
+ * configured model in play without the detection consuming the chat response
+ * these helpers are staging.
+ */
+function modelsResponse(): Response {
+  return new Response(JSON.stringify({ data: [] }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+function isModelsRequest(url: unknown): boolean {
+  return String(url).endsWith('/models');
+}
+
 function respond(body: unknown): void {
-  globalThis.fetch = (async () =>
-    new Response(JSON.stringify(body), {
+  globalThis.fetch = (async (url: string) => {
+    if (isModelsRequest(url)) return modelsResponse();
+    return new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'content-type': 'application/json' },
-    })) as unknown as typeof fetch;
+    });
+  }) as unknown as typeof fetch;
 }
 
 /** SSE frames, with a count of how many the provider actually pulled. */
 function sse(frames: string[]): { pulled: () => number } {
   let i = 0;
-  globalThis.fetch = (async () => {
+  globalThis.fetch = (async (url: string) => {
+    if (isModelsRequest(url)) return modelsResponse();
     const enc = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       pull(ctrl) {
@@ -99,7 +118,8 @@ function sse(frames: string[]): { pulled: () => number } {
 
 function ndjson(lines: string[]): { pulled: () => number } {
   let i = 0;
-  globalThis.fetch = (async () => {
+  globalThis.fetch = (async (url: string) => {
+    if (isModelsRequest(url)) return modelsResponse();
     const enc = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       pull(ctrl) {
@@ -641,48 +661,6 @@ describe('runaway repetition', () => {
     expect(answer.startsWith('ha')).toBe(true);
   });
 
-  it('stops pulling an Ollama stream that has degenerated', async () => {
-    const lines = Array.from({ length: 60 }, () =>
-      JSON.stringify({ message: { role: 'assistant', content: 'na na na na na na na na ' } }),
-    );
-    lines.push(JSON.stringify({ message: { role: 'assistant', content: '' }, done: true }));
-    const stream = ndjson(lines);
-
-    const res = await createOllamaProvider({
-      baseUrl: 'http://x',
-      model: 'm',
-      repetition: { minSpan: 120, minRepeats: 4, maxUnit: 32 },
-    }).send({ ...base, onText: () => {} });
-
-    expect(stream.pulled()).toBeLessThan(lines.length);
-    expect(res.stopReason).toBe('stop_sequence');
-    expect((res.content[0] as TextBlock).text.length).toBeLessThan(400);
-  });
-
-  it('does not leak reasoning when the truncation cuts a think block open', async () => {
-    respond(null);
-    globalThis.fetch = (async () =>
-      new Response(
-        JSON.stringify({
-          message: {
-            role: 'assistant',
-            content: `<think>secret plan. ${'loop loop '.repeat(60)}`,
-          },
-          done: true,
-        }),
-        { status: 200 },
-      )) as unknown as typeof fetch;
-
-    const res = await createOllamaProvider({
-      baseUrl: 'http://x',
-      model: 'm',
-      repetition: { minSpan: 120, minRepeats: 4, maxUnit: 32 },
-    }).send(base);
-
-    expect(text(res.content)).not.toMatch(/secret plan/);
-    expect(text(res.content)).not.toMatch(/loop loop/);
-  });
-
   it('refuses a tool call the model has already repeated to no effect', async () => {
     const call = (id: string): ProviderResponse => ({
       content: [{ type: 'tool_use', id, name: 'Bash', input: { command: 'echo stuck' } }],
@@ -715,52 +693,6 @@ describe('runaway repetition', () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('defensive wire handling', () => {
-  it('reads Ollama tool arguments that arrived as a JSON string', async () => {
-    globalThis.fetch = (async () =>
-      new Response(
-        JSON.stringify({
-          message: {
-            role: 'assistant',
-            content: '',
-            // Documented as an object; a model whose template stringifies it
-            // used to have the string spread into {0:'{',1:'"',…}.
-            tool_calls: [{ function: { name: 'Read', arguments: '{"path": "/etc/hostname"}' } }],
-          },
-          done: true,
-        }),
-        { status: 200 },
-      )) as unknown as typeof fetch;
-
-    const res = await createOllamaProvider({ baseUrl: 'http://x', model: 'm' }).send(base);
-    expect((res.content[0] as ToolUseBlock).input).toEqual({ path: '/etc/hostname' });
-  });
-
-  it('skips an Ollama tool call with no name', async () => {
-    globalThis.fetch = (async () =>
-      new Response(
-        JSON.stringify({
-          message: {
-            role: 'assistant',
-            content: 'hi',
-            tool_calls: [{ function: { arguments: {} } }],
-          },
-          done: true,
-        }),
-        { status: 200 },
-      )) as unknown as typeof fetch;
-
-    const res = await createOllamaProvider({ baseUrl: 'http://x', model: 'm' }).send(base);
-    expect(res.content.some((b) => b.type === 'tool_use')).toBe(false);
-    expect(res.stopReason).toBe('end_turn');
-  });
-
-  it('survives an Ollama response with no message at all', async () => {
-    globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ done: true }), { status: 200 })) as unknown as typeof fetch;
-    const res = await createOllamaProvider({ baseUrl: 'http://x', model: 'm' }).send(base);
-    expect(res.content).toEqual([]);
-  });
-
   it('survives an endpoint that answers with content parts instead of a string', async () => {
     respond({
       choices: [

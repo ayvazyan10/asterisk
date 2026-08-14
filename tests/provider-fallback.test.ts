@@ -147,18 +147,14 @@ describe('createFallbackProvider', () => {
     const onFailover = vi.fn();
     const chain = createFallbackProvider(
       [
-        { provider: failing('first', new ProviderError('network', 'refused')), label: 'ollama' },
+        { provider: failing('first', new ProviderError('network', 'refused')), label: 'local' },
         { provider: working('second'), label: 'anthropic' },
       ],
       { onFailover },
     );
 
     await chain.send(request());
-    expect(onFailover).toHaveBeenCalledWith(
-      'ollama',
-      'anthropic',
-      expect.stringMatching(/refused/),
-    );
+    expect(onFailover).toHaveBeenCalledWith('local', 'anthropic', expect.stringMatching(/refused/));
   });
 
   it('advertises the smallest window in the chain', () => {
@@ -182,10 +178,10 @@ describe('createFallbackProvider', () => {
 
   it('names every link so the transcript shows the chain', () => {
     const chain = createFallbackProvider([
-      { provider: working('a'), label: 'ollama:qwen' },
+      { provider: working('a'), label: 'openai-compatible:qwen' },
       { provider: working('b'), label: 'anthropic:haiku' },
     ]);
-    expect(chain.name).toBe('ollama:qwen → anthropic:haiku');
+    expect(chain.name).toBe('openai-compatible:qwen → anthropic:haiku');
   });
 });
 
@@ -205,7 +201,10 @@ describe('createProviderChain', () => {
   it('ignores a fallback that names the primary', async () => {
     const { createProviderChain } = await load();
     const chosen = createProviderChain({
-      config: await config({ provider: 'ollama', providerFallback: ['ollama'] }),
+      config: await config({
+        provider: 'openai-compatible',
+        providerFallback: ['openai-compatible'],
+      }),
       secrets: {},
     });
     expect(chosen.provider.name).not.toContain('→');
@@ -214,7 +213,7 @@ describe('createProviderChain', () => {
   it('drops an Anthropic fallback with no key instead of queuing a certain failure', async () => {
     const { createProviderChain } = await load();
     const chosen = createProviderChain({
-      config: await config({ provider: 'ollama', providerFallback: ['anthropic'] }),
+      config: await config({ provider: 'openai-compatible', providerFallback: ['anthropic'] }),
       secrets: {},
     });
     expect(chosen.provider.name).not.toContain('→');
@@ -223,8 +222,9 @@ describe('createProviderChain', () => {
   it('builds a chain when the fallback is usable', async () => {
     const { createProviderChain } = await load();
     const chosen = createProviderChain({
-      config: await config({ provider: 'ollama', providerFallback: ['openai-compatible'] }),
-      secrets: {},
+      config: await config({ provider: 'openai-compatible', providerFallback: ['anthropic'] }),
+      // With a key the Anthropic link can actually answer, so it stays.
+      secrets: { ANTHROPIC_API_KEY: 'sk-test' },
     });
     expect(chosen.provider.name).toContain('→');
   });

@@ -4,19 +4,21 @@ A lightweight, personal AI assistant. Asterisk gives you an interactive
 agent in your terminal and an optional long-running daemon that bridges the
 same assistant to Telegram.
 
-- **Local by default** — talks to a local [Ollama](https://ollama.com) model
-  out of the box; the public `@anthropic-ai/sdk` is wired in as an opt-in
+- **Local by default** — talks to a local [llama.cpp](https://github.com/ggml-org/llama.cpp)
+  server (or LM Studio, vLLM, Jan, or any `/v1/chat/completions` endpoint) out
+  of the box, and asks it which model it is serving rather than making you
+  configure one; the public `@anthropic-ai/sdk` is wired in as an opt-in
   alternative.
 - **Real tools** — filesystem, shell, web, **a real Chromium browser via
   Playwright**, MCP-server integration, sub-agents, scheduled and recurring
   prompts, and more.
 - **No telemetry, no cloud control plane.** Everything runs on your machine.
-- **Built on documented APIs** — Anthropic Messages + tool-use loop, Ollama
-  HTTP, Telegram Bot API ([grammY](https://grammy.dev)),
+- **Built on documented APIs** — Anthropic Messages + tool-use loop, the
+  OpenAI-compatible chat API, Telegram Bot API ([grammY](https://grammy.dev)),
   [Model Context Protocol](https://modelcontextprotocol.io), Playwright.
 - **Apache 2.0** licensed.
 
-Status `0.4.1` — early but real. 45 built-in tools, 29 slash commands,
+Status `0.4.1` — early but real. 46 built-in tools, 29 slash commands,
 14 daemon-managed scheduling/lifecycle features, **29 bundled skills**,
 **27 specialised sub-agent types** the agent can dispatch on demand,
 layered multi-language rules, switchable output styles
@@ -93,20 +95,19 @@ bun run build
 Requirements:
 
 - [Bun](https://bun.sh) ≥ 1.2 (handled by the installer).
-- A local model server — Ollama, or anything speaking the OpenAI
-  `/v1/chat/completions` API (llama.cpp's `llama-server`, LM Studio, vLLM,
-  Jan, LocalAI) — OR an `ANTHROPIC_API_KEY`.
+- A local model server speaking the OpenAI `/v1/chat/completions` API —
+  llama.cpp's `llama-server`, LM Studio, vLLM, Jan, LocalAI, or Ollama's own
+  OpenAI-compatible endpoint — OR an `ANTHROPIC_API_KEY`.
 
 ### Connecting a local model
 
-Ollama works out of the box. For everything else, point Asterisk at the
-endpoint and pick the `openai-compatible` provider:
+Point Asterisk at the endpoint; the model name is optional, because Asterisk
+asks the server what it is serving:
 
 ```bash
-asterisk configure       # answer "openai-compatible", then the base URL + model
+asterisk configure       # base URL; leave the model blank to auto-detect
 # or, in the REPL:
-/provider openai-compatible
-/model gemma-4-26b
+/model                   # pick from what the server lists, or "auto"
 ```
 
 A llama.cpp server started with `--alias gemma-4-26b --port 8080` is reached
@@ -114,6 +115,22 @@ at `http://127.0.0.1:8080/v1`. Tool calling, streaming, and reasoning output
 (`--reasoning-format deepseek`) are all supported. Set
 `ASTERISK_OPENAI_API_KEY` only if the endpoint is a hosted service that needs
 one.
+
+**The active model is detected, not configured.** Before each request Asterisk
+asks `GET /v1/models` which model the server is holding, and uses that — so
+swapping the model means restarting your server, with nothing to change on
+Asterisk's side. The answer is cached for a minute, so this costs one request
+per minute, not one per turn.
+
+The same listing carries `meta.n_ctx`, the context window the server was
+actually started with, and compaction budgets history against it. That number
+used to be a guess: 128k assumed by default, which wastes more than half a
+262 144-token window and overflows an 8 192-token one before compaction ever
+fires.
+
+Pin a model with `/model <id>` when one endpoint serves several; `/model auto`
+goes back to detection. If the server cannot be reached, a pinned name is used
+as the fallback, and with neither the failure names both halves of the fix.
 
 ```bash
 asterisk                # interactive REPL
@@ -188,7 +205,7 @@ authentication is refused outright.
 | `/help [name]`     | List commands or show details for one                       |
 | `/clear`           | Forget the current conversation history                     |
 | `/model [name]`    | List installed models or switch the active one              |
-| `/provider [name]` | Switch between `ollama` and `anthropic` at runtime          |
+| `/provider [name]` | Switch between `openai-compatible` and `anthropic`         |
 | `/tools`           | List registered tools (built-ins + MCP)                     |
 | `/status`          | Live runtime view: provider, bots, MCP, daemon              |
 | `/config`          | Interactive forms for each config section                   |
@@ -204,7 +221,7 @@ authentication is refused outright.
 | `/tasks`           | List the agent's in-flight tasks for this session           |
 | `/hooks`           | Manage agent-loop lifecycle hooks (visual)                  |
 | `/permissions`     | Inspect and edit what `Bash` may run without asking         |
-| `/doctor`          | Diagnostics — checks Ollama, Anthropic, system tools, MCP   |
+| `/doctor`          | Diagnostics — local model, Anthropic, system tools, MCP     |
 | `/quit`            | Exit the REPL                                               |
 
 ## Built-in tools
@@ -225,6 +242,10 @@ by the `vision` settings. Turn it off for a text-only model.
 **Web research**
 `WebFetch` (URL → readable text) · `WebSearch` (Brave / Tavily / SearXNG /
 DDG instant-answer, picks the first backend you've configured a key for)
+
+**Speech**
+`Transcribe` — an audio file to text, through the same backends that read
+incoming voice messages. See [Voice messages](#voice-messages).
 
 **Memory**
 `Remember` · `Recall` — notes that survive across sessions, searched with
@@ -630,7 +651,7 @@ src/
 │                    # tool concurrency, context compaction
 ├── agent/           # compaction.ts · file-history.ts · output-store.ts
 │                    # persistence.ts — conversation save/restore
-├── providers/       # ollama (default) · anthropic · errors (ProviderError)
+├── providers/       # openai-compatible (default) · anthropic · model-detect
 ├── tools/           # bash · read · write · edit · grep · glob ·
 │                    # browser/ (Playwright) · webfetch · websearch ·
 │                    # tasks · subagent · planmode · worktree · notify ·
@@ -653,7 +674,7 @@ src/
 ```
 
 The provider abstraction is provider-neutral: tools and the agent loop don't
-know whether they're talking to Ollama or Anthropic. The same loop drives
+know whether they're talking to a local server or Anthropic. The same loop drives
 the REPL and each per-chat conversation in the daemon.
 
 ## Configuration reference
@@ -668,16 +689,12 @@ the panel's **Download JSON** button produces and **Upload JSON** accepts:
 
 ```jsonc
 {
-  "provider": "ollama",                       // or "openai-compatible" | "anthropic"
+  "provider": "openai-compatible",            // or "anthropic"
   "providerFallback": [],                     // e.g. ["anthropic"] — tried when the primary is unreachable
-  "ollama": {
-    "baseUrl": "http://127.0.0.1:11434",
-    "model": "qwen3.5:9b-q8-max",
-    "contextWindow": 131072
-  },
-  "openaiCompatible": {                       // llama.cpp / LM Studio / vLLM / …
+  "openaiCompatible": {                       // llama.cpp / LM Studio / vLLM / Ollama's /v1 / …
     "baseUrl": "http://127.0.0.1:8080/v1",
-    "model": "gemma-4-26b",                   // blank = server default
+    "model": "",                              // blank = ask the server (recommended)
+    "contextWindow": 0,                       // 0 = take the window the server reports
     "maxTokens": 0,                           // 0 = let the server decide
     "modelTimeoutMs": 300000,
     "modelIdleTimeoutMs": 90000
@@ -867,7 +884,7 @@ takes. Its seatbelt counterpart ships with macOS.
 ## Reliability
 
 **Provider fallback.** `providerFallback` lists backends to try, in order, when
-the primary one cannot answer — a laptop whose Ollama is not running falls
+the primary one cannot answer — a laptop whose model server is not running falls
 through to a configured Anthropic key instead of failing every turn. Only
 availability failures step down the chain (network, 5xx, overloaded, rate
 limit, auth); a rejected request is *not* replayed elsewhere, because it would

@@ -22,6 +22,7 @@ import { statusFromPidFile } from '../daemon/pidfile.ts';
 import type { McpManager } from '../mcp/manager.ts';
 import { OUTPUT_STYLES, findOutputStyle } from '../output-styles/styles.ts';
 import { chooseProvider } from '../providers/factory.ts';
+import { clearDetectedModels } from '../providers/model-detect.ts';
 import type { CommandResult, FormSpec, ListSpec } from '../repl/forms/types.ts';
 import { loadRules } from '../rules/loader.ts';
 import { type Skill, loadSkills, loadSkillsWithIssues } from '../skills/loader.ts';
@@ -43,7 +44,6 @@ import {
   ANTHROPIC_FALLBACK_MODELS,
   type AnthropicModel,
   listAnthropicModels,
-  listOllamaModels,
   listOpenAiCompatibleModels,
 } from './models.ts';
 import { permissionsCommand } from './permissions.ts';
@@ -112,27 +112,6 @@ export const COMMANDS: SlashCommand[] = [
       }
 
       // No args → visual model picker.
-      if (current?.kind === 'ollama') {
-        const cfg = loadConfig().config.ollama;
-        const models = await listOllamaModels(cfg.baseUrl);
-        if (models.length === 0) {
-          return `(could not reach Ollama at ${cfg.baseUrl})`;
-        }
-        const items = models.map((m) => ({
-          value: m,
-          label: m,
-          ...(m === current.model ? { badge: '* current' } : {}),
-        }));
-        const list: ListSpec = {
-          kind: 'list',
-          title: 'Pick a model',
-          items,
-          onPick: async (value) => switchModel(ctx, value),
-          onCancel: () => null,
-        };
-        return list;
-      }
-
       if (current?.kind === 'openai-compatible') {
         // Ask the endpoint what it serves. Falling through to the Anthropic
         // list here used to write a Claude id into openaiCompatible.model,
@@ -142,14 +121,24 @@ export const COMMANDS: SlashCommand[] = [
         if (models.length === 0) {
           return `(could not reach ${cfg.baseUrl}/models — pass a model name: /model <id>)`;
         }
+        const pinned = loadConfig().config.openaiCompatible.model;
         const list: ListSpec = {
           kind: 'list',
           title: 'Pick a model',
-          items: models.map((m) => ({
-            value: m,
-            label: m,
-            ...(m === current.model ? { badge: '* current' } : {}),
-          })),
+          items: [
+            // First, because it is the normal state: the server holds one
+            // model and Asterisk asks which. Picking a name pins it instead.
+            {
+              value: AUTO_MODEL,
+              label: 'auto — whatever the server is serving',
+              ...(pinned ? {} : { badge: '* current' }),
+            },
+            ...models.map((m) => ({
+              value: m,
+              label: m,
+              ...(m === pinned ? { badge: '* current' } : {}),
+            })),
+          ],
           onPick: async (value) => switchModel(ctx, value),
           onCancel: () => null,
         };
@@ -185,8 +174,8 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/provider',
-    description: 'Switch between ollama, openai-compatible, and anthropic',
-    usage: '/provider [ollama|openai-compatible|anthropic]',
+    description: 'Switch between openai-compatible and anthropic',
+    usage: '/provider [openai-compatible|anthropic]',
     execute(ctx, args) {
       const target = args.trim().toLowerCase();
       if (target) return switchProvider(ctx, target);
@@ -196,15 +185,9 @@ export const COMMANDS: SlashCommand[] = [
         title: 'Pick a provider',
         items: [
           {
-            value: 'ollama',
-            label: 'Ollama (local)',
-            description: cfg.ollama.model,
-            ...(ctx.provider.name.startsWith('ollama:') ? { badge: '* current' } : {}),
-          },
-          {
             value: 'openai-compatible',
             label: 'OpenAI-compatible (llama.cpp, LM Studio, vLLM, …)',
-            description: `${cfg.openaiCompatible.model || '(server default)'} @ ${cfg.openaiCompatible.baseUrl}`,
+            description: `${cfg.openaiCompatible.model || '(auto-detected)'} @ ${cfg.openaiCompatible.baseUrl}`,
             ...(ctx.provider.name.startsWith('openai-compatible:') ? { badge: '* current' } : {}),
           },
           {
@@ -263,10 +246,10 @@ export const COMMANDS: SlashCommand[] = [
 
       const provider = parseProviderName(ctx.provider.name);
       const providerLabel =
-        provider?.kind === 'ollama'
-          ? `ollama · ${provider.model} · ${cfg.ollama.baseUrl}`
-          : provider?.kind === 'anthropic'
-            ? `anthropic · ${provider.model}`
+        provider?.kind === 'anthropic'
+          ? `anthropic · ${provider.model}`
+          : provider?.kind === 'openai-compatible'
+            ? `openai-compatible · ${provider.model} · ${cfg.openaiCompatible.baseUrl}`
             : ctx.provider.name;
 
       const configLine = cfgExists
@@ -695,9 +678,11 @@ async function soulInit(): Promise<string> {
  * factory a config with that one field overridden. The switch is in-memory —
  * `/config` persists it.
  */
+/** What `/model auto` writes: an empty pin, which re-enables detection. */
+const AUTO_MODEL = '';
+
 function switchModel(ctx: CommandContext, model: string): string {
-  const trimmed = model.trim();
-  if (!trimmed) return 'no model specified';
+  const trimmed = model.trim() === 'auto' ? AUTO_MODEL : model.trim();
   const current = parseProviderName(ctx.provider.name);
   if (!current) return `cannot parse current provider: ${ctx.provider.name}`;
 
@@ -707,23 +692,28 @@ function switchModel(ctx: CommandContext, model: string): string {
     return 'ANTHROPIC_API_KEY not set; run `asterisk configure`';
   }
 
+  if (kind === 'anthropic' && !trimmed) return 'no model specified';
+
   loaded.config = {
     ...loaded.config,
     provider: kind,
-    ...(kind === 'ollama' ? { ollama: { ...loaded.config.ollama, model: trimmed } } : {}),
     ...(kind === 'openai-compatible'
       ? { openaiCompatible: { ...loaded.config.openaiCompatible, model: trimmed } }
       : {}),
     ...(kind === 'anthropic' ? { anthropic: { ...loaded.config.anthropic, model: trimmed } } : {}),
   };
 
+  // A pin change must not be masked by a cached detection from a second ago.
+  clearDetectedModels();
   ctx.setProvider(chooseProvider(loaded).provider);
-  return `✓ switched to ${kind}:${trimmed}`;
+  return trimmed
+    ? `✓ switched to ${kind}:${trimmed}`
+    : '✓ model unpinned — using whatever the server reports';
 }
 
 function switchProvider(ctx: CommandContext, target: string): string {
-  if (target !== 'ollama' && target !== 'openai-compatible' && target !== 'anthropic') {
-    return `unknown provider: ${target} (expected ollama, openai-compatible, or anthropic)`;
+  if (target !== 'openai-compatible' && target !== 'anthropic') {
+    return `unknown provider: ${target} (expected openai-compatible or anthropic)`;
   }
 
   const loaded = loadConfig();

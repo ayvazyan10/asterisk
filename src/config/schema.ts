@@ -9,46 +9,10 @@
 
 import { z } from 'zod';
 
-// `openai-compatible` is the universal local-model path — llama.cpp,
+// `openai-compatible` is the local-model path and the default — llama.cpp,
 // LM Studio, vLLM, Jan, LocalAI, or any proxy speaking /v1/chat/completions.
-// Ollama keeps a dedicated entry because Asterisk drives its native API.
-const ProviderSchema = z.enum(['ollama', 'openai-compatible', 'anthropic']);
-
-const OllamaSchema = z.object({
-  baseUrl: z
-    .string()
-    .url()
-    .default('http://127.0.0.1:11434')
-    .describe('HTTP endpoint of the Ollama server.'),
-  model: z
-    .string()
-    .default('carstenuhlig/omnicoder-9b:q8_0')
-    .describe('Model tag to run, as shown by `ollama list`.'),
-  contextWindow: z
-    .number()
-    .int()
-    .positive()
-    .default(65536)
-    .describe('Tokens of context to request. Larger windows need more VRAM.'),
-  think: z
-    .boolean()
-    .default(false)
-    .describe('Ask the model for structured reasoning blocks before its answer.'),
-  modelTimeoutMs: z
-    .number()
-    .int()
-    .min(10000)
-    .max(1800000)
-    .default(300_000)
-    .describe('Hard limit on a single generation before it is aborted.'),
-  modelIdleTimeoutMs: z
-    .number()
-    .int()
-    .min(5000)
-    .max(300000)
-    .default(90_000)
-    .describe('Abort a generation that stops emitting tokens for this long.'),
-});
+// `anthropic` is the opt-in hosted alternative.
+const ProviderSchema = z.enum(['openai-compatible', 'anthropic']);
 
 const OpenAiCompatibleSchema = z.object({
   baseUrl: z
@@ -59,7 +23,9 @@ const OpenAiCompatibleSchema = z.object({
   model: z
     .string()
     .default('')
-    .describe('Model id as the server reports it in /v1/models. Blank uses the server default.'),
+    .describe(
+      'Pin a model id. Normally left blank: Asterisk asks the server what it is serving (GET /v1/models) and uses that, along with the context window it reports.',
+    ),
   maxTokens: z
     .number()
     .int()
@@ -420,14 +386,15 @@ export type McpServerConfig = z.infer<typeof McpServerSchema>;
 export const OutputStyleSchema = z.enum(['default', 'concise', 'explanatory', 'learning']);
 
 export const ConfigSchema = z.object({
-  provider: ProviderSchema.default('ollama').describe('Which backend the agent loop talks to.'),
+  provider: ProviderSchema.default('openai-compatible').describe(
+    'Which backend the agent loop talks to. openai-compatible covers llama.cpp, LM Studio, vLLM, Jan and any /v1/chat/completions proxy.',
+  ),
   providerFallback: z
     .array(ProviderSchema)
     .default([])
     .describe(
       'Backends to try, in order, when the primary one is unreachable. Only availability failures step down the chain — a rejected request is not retried elsewhere.',
     ),
-  ollama: OllamaSchema.default({}),
   openaiCompatible: OpenAiCompatibleSchema.default({}),
   anthropic: AnthropicSchema.default({}),
   bots: BotsSchema.default({}),

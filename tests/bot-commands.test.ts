@@ -19,8 +19,8 @@ import {
 } from '../src/tools/tasks.ts';
 import { enterWorktreeTool, exitWorktreeTool } from '../src/tools/worktree.ts';
 
-function ctx(state: AgentState) {
-  return { state, providerName: 'ollama:test' };
+function ctx(state: AgentState, providerName = 'openai-compatible:test') {
+  return { state, providerName };
 }
 
 const SESSION = { id: 'bot:test', scope: 'unknown' as const };
@@ -115,7 +115,7 @@ describe('bot commands', () => {
     state.history.push({ role: 'user', content: [{ type: 'text', text: 'hi' }] });
     const r = await runWithSession(SESSION, async () => tryHandleBotCommand('/status', ctx(state)));
     expect(r?.text).toMatch(/Session\s+bot:test/);
-    expect(r?.text).toMatch(/Provider\s+ollama:test/);
+    expect(r?.text).toMatch(/Provider\s+openai-compatible:test/);
     expect(r?.text).toMatch(/History\s+1 message/);
     expect(r?.text).toMatch(/Plan Mode\s+off/);
   });
@@ -260,17 +260,25 @@ describe('bot commands', () => {
     });
   });
 
-  it('/status names the anthropic model when anthropic is the provider', async () => {
-    // The model line reads from a different config branch per provider, so a
-    // provider switch is exactly where it can start reporting the wrong one.
+  it('/status names the model the provider reports, not the configured one', async () => {
+    // With detection on, the config usually holds no model at all — so the
+    // line has to come from the live provider name or it reports "(auto)"
+    // while a model is plainly answering.
     const cfg = loadConfig().config;
-    saveConfig({
-      ...cfg,
-      provider: 'anthropic',
-      anthropic: { ...cfg.anthropic, model: 'claude-sonnet-5' },
-    });
-    const r = await runWithSession(SESSION, async () => tryHandleBotCommand('/status', ctx(state)));
+    saveConfig({ ...cfg, provider: 'anthropic', anthropic: { ...cfg.anthropic, model: 'stale' } });
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/status', ctx(state, 'anthropic:claude-sonnet-5')),
+    );
     expect(r?.text).toMatch(/Model\s+claude-sonnet-5/);
+  });
+
+  it('/status falls back to the configured model when the name carries none', async () => {
+    const cfg = loadConfig().config;
+    saveConfig({ ...cfg, provider: 'anthropic', anthropic: { ...cfg.anthropic, model: 'haiku' } });
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/status', ctx(state, 'anthropic')),
+    );
+    expect(r?.text).toMatch(/Model\s+haiku/);
   });
 
   it('/status names the active worktree', async () => {
