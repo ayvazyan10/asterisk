@@ -21,9 +21,14 @@ const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
 
   class FakeBot {
     handler: Handler | null = null;
+    /** The approval controller's callback_query listener. */
+    callbackHandler: Handler | null = null;
     startCalls = 0;
     stopCalls = 0;
     setMyCommandsCalls: unknown[][] = [];
+    /** Messages sent through bot.api rather than a reply — the permission prompt. */
+    sent: Array<{ chatId: string; text: string; extra: Record<string, unknown> }> = [];
+    apiEdits: Array<{ chatId: string; messageId: number; text: string }> = [];
     /** Set to make setMyCommands reject, as Telegram sometimes does. */
     setMyCommandsError: Error | null = null;
     /** Set to make stop() reject — grammy does when the runner already died. */
@@ -34,6 +39,17 @@ const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
         this.setMyCommandsCalls.push(args);
         if (this.setMyCommandsError) throw this.setMyCommandsError;
       },
+      sendMessage: async (
+        chatId: string,
+        text: string,
+        extra: Record<string, unknown>,
+      ): Promise<{ message_id: number }> => {
+        this.sent.push({ chatId, text, extra });
+        return { message_id: 500 + this.sent.length };
+      },
+      editMessageText: async (chatId: string, messageId: number, text: string): Promise<void> => {
+        this.apiEdits.push({ chatId, messageId, text });
+      },
     };
 
     constructor(readonly token: string) {
@@ -42,6 +58,7 @@ const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
 
     on(event: string, handler: Handler): void {
       if (event === 'message:text') this.handler = handler;
+      if (event === 'callback_query:data') this.callbackHandler = handler;
     }
 
     async start(): Promise<void> {
@@ -166,7 +183,15 @@ async function start(
   await adapter.start(handler);
   const bot = fakeBotInstances.at(-1);
   if (!bot?.handler) throw new Error('adapter never registered a message handler');
-  return bot.handler;
+  const registered = bot.handler;
+  // The adapter no longer awaits the turn inside the handler — grammy's
+  // polling is sequential, and holding it there deadlocks a turn that is
+  // waiting on a later update (a permission button press). Tests still want
+  // "the turn is done", so they wait for it explicitly.
+  return async (ctx: unknown) => {
+    await registered(ctx);
+    await adapter.whenIdle();
+  };
 }
 
 beforeEach(() => {
@@ -792,6 +817,54 @@ describe('the placeholder spinner', () => {
   });
 });
 
+describe('permission prompts during a live turn', () => {
+  it('handles the button press while the turn that raised it is still waiting', async () => {
+    // The regression this pins down: grammy's built-in polling processes
+    // updates one at a time, so a handler that awaits its turn holds the whole
+    // update stream. A turn waiting on a permission prompt then waits for a
+    // button press that can never be delivered — the question sits there with
+    // its spinner until the policy times out and denies it.
+    const adapter = createTelegramAdapter({ token: 't', allowedUserIds: [7] });
+    let outcome: string | undefined;
+
+    await adapter.start(async (msg) => {
+      outcome = await adapter.promptApproval?.(msg.chatId, {
+        command: 'docker ps',
+        reason: 'docker is not on the allowlist',
+        rules: ['docker ps'],
+        timeoutMs: 5_000,
+      });
+      return `outcome=${outcome}`;
+    });
+
+    const bot = fakeBotInstances.at(-1);
+    const ctx = new FakeCtx();
+    // Returns immediately: the turn is now running off the update stream.
+    await bot?.handler?.(ctx);
+    await vi.waitFor(() => expect(bot?.sent).toHaveLength(1));
+    expect(bot?.sent[0]?.text).toContain('docker ps');
+
+    const keyboard = bot?.sent[0]?.extra['reply_markup'] as {
+      inline_keyboard: Array<Array<{ callback_data: string }>>;
+    };
+    const allowOnce = keyboard.inline_keyboard.flat()[0]?.callback_data;
+
+    const answers: unknown[] = [];
+    await bot?.callbackHandler?.({
+      callbackQuery: { data: allowOnce },
+      from: { id: 7 },
+      answerCallbackQuery: async (arg: unknown) => {
+        answers.push(arg);
+      },
+    });
+
+    await adapter.whenIdle();
+    expect(answers).toEqual([{ text: '✅ allowed once' }]);
+    expect(outcome).toBe('allow-once');
+    expect(ctx.texts('reply')).toContain('outcome=allow-once');
+  });
+});
+
 describe('bot manager wiring', () => {
   it('starts the configured telegram adapter and forwards its options', async () => {
     // The manager is the only place config becomes adapter options. A dropped
@@ -818,7 +891,10 @@ describe('bot manager wiring', () => {
 
     const ctx = new FakeCtx();
     await bot?.handler?.(ctx);
-    expect(ctx.texts('reply')).toEqual(['**bold**']);
+    // The handler hands the turn off rather than awaiting it, so the reply
+    // lands a tick later — asserting straight after the call would pass only
+    // by whatever the microtask queue happened to do.
+    await vi.waitFor(() => expect(ctx.texts('reply')).toEqual(['**bold**']));
 
     await manager.stop();
     expect(bot?.stopCalls).toBe(1);

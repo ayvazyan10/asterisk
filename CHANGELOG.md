@@ -25,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   about the process; scheduled runs (`scheduled:<source>`) stay unattended and
   keep falling back to `permissions.headless`.
 
+### Fixed
+
+- **A Telegram turn no longer blocks the update it is waiting for.** grammy's
+  built-in polling processes updates one at a time (`handleUpdates` in bot.js:
+  "handle updates sequentially (!)"), and the message handler awaited the whole
+  agent turn — so a turn that asked for permission held the update stream while
+  waiting for a button press that could not be delivered. The prompt sat there
+  with its spinner until the policy timed out and denied a command the user had
+  already approved. Turns now run off the update stream; ordering is unaffected,
+  because the daemon already queues turns per chat.
+
 ### Changed
 
 - **`asterisk web` starts in the background.** It prints the panel's URL — with

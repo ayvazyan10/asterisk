@@ -46,7 +46,18 @@ export interface TelegramAdapterOptions {
   parseMode?: TelegramParseMode;
 }
 
-export function createTelegramAdapter(opts: TelegramAdapterOptions): BotAdapter {
+export interface TelegramAdapter extends BotAdapter {
+  /**
+   * Resolves once no turn started by this adapter is still running.
+   *
+   * Turns are handled off the update stream (see the message handler), so
+   * "the handler returned" no longer means "the turn finished" — this is how
+   * a caller that needs the latter waits for it.
+   */
+  whenIdle(): Promise<void>;
+}
+
+export function createTelegramAdapter(opts: TelegramAdapterOptions): TelegramAdapter {
   if (!opts.token) {
     throw new Error('Telegram adapter requires ASTERISK_TELEGRAM_BOT_TOKEN');
   }
@@ -56,6 +67,8 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): BotAdapter 
   const parseMode: TelegramParseMode = opts.parseMode ?? 'html';
   const bot = new Bot(opts.token);
   const approvals = createApprovalController(allowed);
+  /** Turns running outside the update stream — see the handler below. */
+  const inFlight = new Set<Promise<void>>();
   let started = false;
 
   return {
@@ -78,11 +91,26 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): BotAdapter 
           text,
           timestamp: Date.now(),
         };
-        try {
-          await handleTurn(ctx, msg, handler, streamMode, throttleMs, parseMode);
-        } catch (e) {
-          await ctx.reply(`asterisk error: ${(e as Error).message}`);
-        }
+
+        // Deliberately not awaited. grammy's built-in polling handles updates
+        // one at a time — `handleUpdates` in bot.js says "handle updates
+        // sequentially (!)" — so awaiting the turn here holds the whole update
+        // stream for as long as the turn runs. That is fatal for a turn that is
+        // *waiting on an update*: a permission prompt asks the chat, the user
+        // presses the button, and the callback_query cannot be processed
+        // because the message that raised it is still being awaited. The turn
+        // then times out and denies a command the user had just approved.
+        //
+        // Ordering is not lost by letting go: the daemon runs turns through a
+        // per-chat queue, so a second message still waits for the first.
+        const task = handleTurn(ctx, msg, handler, streamMode, throttleMs, parseMode)
+          .catch(async (e: unknown) => {
+            await ctx.reply(`asterisk error: ${(e as Error).message}`).catch(() => {});
+          })
+          .finally(() => {
+            inFlight.delete(task);
+          });
+        inFlight.add(task);
       });
 
       // Register slash commands with Telegram so users see autocomplete
@@ -115,6 +143,9 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): BotAdapter 
     },
     promptApproval(chatId: string, prompt: ApprovalPrompt): Promise<ApprovalOutcome> {
       return approvals.prompt(bot, chatId, prompt);
+    },
+    async whenIdle(): Promise<void> {
+      while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
     },
   };
 }
