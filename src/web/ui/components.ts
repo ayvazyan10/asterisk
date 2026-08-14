@@ -431,14 +431,6 @@ export const COMPONENTS = String.raw`
    else's console. They are readonly inputs rather than text because a value
    you must paste elsewhere has to be selectable, copyable and whole — text
    that ellipsises or a line inside an alert() is neither. */
-/* Running prose inside a card — the plugin page's security note is argument,
-   not a list of fields, and it needs paragraphs to read as one. */
-.prose p { font-size: var(--t-sm); color: var(--ink-dim); line-height: 1.6; max-width: 74ch; }
-.prose p + p { margin-top: 0.6rem; }
-.prose em { color: var(--ink); font-style: italic; }
-
-.plugin-path { font-family: var(--font-machine); font-size: var(--t-sm); color: var(--ink); }
-
 .copy-row { display: flex; gap: 0.4rem; align-items: center; }
 .copy-row .input { flex: 1 1 auto; font-family: var(--font-machine); font-size: var(--t-xs); }
 .copy-row .input[readonly] { background: var(--bg); }

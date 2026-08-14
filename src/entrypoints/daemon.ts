@@ -11,7 +11,6 @@ import { createDaemonLogger } from '../daemon/logger.ts';
 import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
 import { closeDb } from '../db/index.ts';
 import { createMcpManager } from '../mcp/manager.ts';
-import { initialisePlugins } from '../plugins/runtime.ts';
 import { chooseProvider } from '../providers/factory.ts';
 import { loadRules } from '../rules/loader.ts';
 import { loadSouls } from '../soul/loader.ts';
@@ -37,10 +36,6 @@ function pickProvider(): Provider {
 
 const provider = pickProvider();
 log.info({ provider: provider.name }, 'provider ready');
-
-const pluginLoad = await initialisePlugins();
-for (const line of pluginLoad.errors) log.warn({ plugin: line }, 'plugin not loaded');
-for (const line of pluginLoad.notices) log.info({ plugin: line }, 'plugin');
 
 const mcp = createMcpManager();
 mcp

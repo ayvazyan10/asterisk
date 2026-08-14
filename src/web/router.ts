@@ -32,7 +32,6 @@ import {
   setConnectorToken,
 } from './api/connectors.ts';
 import { deleteContent, listContent, readContent, writeContent } from './api/content.ts';
-import { getPlugins } from './api/plugins.ts';
 import { deleteSkill, getSkill, getSkills, putSkill } from './api/skills.ts';
 import {
   daemonAction,
@@ -76,10 +75,6 @@ export const ROUTES: readonly Route[] = [
   { method: 'POST', pattern: '/api/mcp/:name/connect', handler: beginMcpAuth },
   { method: 'POST', pattern: '/api/mcp/:name/disconnect', handler: clearMcpAuth },
   { method: 'DELETE', pattern: '/api/mcp/:name', handler: removeMcpServer },
-
-  // Read-only, and it imports nothing — see ./api/plugins.ts. Writes go
-  // through the settings PATCH like any other configured field.
-  { method: 'GET', pattern: '/api/plugins', handler: getPlugins },
 
   { method: 'GET', pattern: '/api/hooks', handler: getHooks },
   { method: 'PUT', pattern: '/api/hooks', handler: putHook },

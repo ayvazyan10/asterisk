@@ -3,7 +3,6 @@
 // alongside the built-ins without a special code path.
 
 import { MCP_RESOURCE_TOOLS } from '../mcp/resources.ts';
-import { activePluginTools } from '../plugins/runtime.ts';
 import { agentBatchTool } from './agent-batch.ts';
 import { ASK_TOOLS } from './ask.ts';
 import { attachTool } from './attach.ts';
@@ -65,9 +64,7 @@ export function setExtraTools(tools: Tool[]): void {
 }
 
 export function listTools(): Tool[] {
-  // Plugin tools sit after the built-ins and MCP tools, so a plugin cannot
-  // shadow a built-in by name — getTool() takes the first match.
-  const all = [...BUILTIN_TOOLS, ...extraTools, ...activePluginTools()];
+  const all = [...BUILTIN_TOOLS, ...extraTools];
   // Plan Mode hides write/mutating tools so the agent can only research.
   if (isPlanMode()) return all.filter((t) => isReadOnlyToolName(t.name));
   return all;

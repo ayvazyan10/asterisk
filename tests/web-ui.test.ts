@@ -22,7 +22,6 @@ import { APP_AUTHORED } from '../src/web/ui/app-authored.ts';
 import { APP_CONNECTORS } from '../src/web/ui/app-connectors.ts';
 import { APP_CORE } from '../src/web/ui/app-core.ts';
 import { APP_LOGS } from '../src/web/ui/app-logs.ts';
-import { APP_PLUGINS } from '../src/web/ui/app-plugins.ts';
 import { APP_SETTINGS } from '../src/web/ui/app-settings.ts';
 import { APP_SKILLS } from '../src/web/ui/app-skills.ts';
 import { APP_STAR } from '../src/web/ui/app-star.ts';
@@ -43,7 +42,6 @@ const CLIENT = [
   APP_SKILLS,
   APP_AUTHORED,
   APP_CONNECTORS,
-  APP_PLUGINS,
   APP_VIEWS,
 ].join('\n');
 
@@ -89,7 +87,6 @@ describe('the client script', () => {
         'APP_SKILLS',
         'APP_AUTHORED',
         'APP_CONNECTORS',
-        'APP_PLUGINS',
         'APP_VIEWS',
       ]),
     );
@@ -137,7 +134,9 @@ describe('the client script', () => {
       }
     }
     expect(outbound).toBeGreaterThan(0);
-    expect(inPage).toBeGreaterThan(0);
+    // No floor on in-page links: the panel's only ones were on a page that has
+    // since been removed. The rule is about how one behaves, not that one exists.
+    expect(inPage).toBeGreaterThanOrEqual(0);
   });
 
   it('parses as JavaScript', () => {

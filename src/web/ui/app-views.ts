@@ -461,7 +461,6 @@ async function loadOverview() {
 const LOADERS = {
   overview: loadOverview, settings: loadSettings, mcp: loadMcp, hooks: loadHooks,
   connectors: loadConnectors,
-  plugins: loadPlugins,
   credentials: loadCredentials,
   logs: loadLogRecords,
 };
@@ -469,7 +468,6 @@ const LOADERS = {
 const VIEWS = {
   overview: viewOverview, settings: viewSettings, mcp: viewMcp, hooks: viewHooks,
   connectors: viewConnectors,
-  plugins: viewPlugins,
   credentials: viewCredentials,
   logs: viewLogs,
 };
@@ -548,7 +546,7 @@ document.addEventListener('click', async (ev) => {
     '[data-revert],[data-mcp-toggle],[data-mcp-delete],[data-mcp-connect],[data-mcp-disconnect],' +
     '[data-connector-connect],[data-connector-token],[data-connector-client],[data-copy],' +
     '[data-connector-remove],[data-connector-filter],' +
-    '[data-hook-toggle],[data-hook-delete],[data-plugin-remove],' +
+    '[data-hook-toggle],[data-hook-delete],' +
     '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-record],' +
     '[data-skill-open],[data-agent-open],[data-jump],[data-settings-filter],[data-log-level],' +
     '[data-expand]');
@@ -666,12 +664,6 @@ document.addEventListener('click', async (ev) => {
     if (ok) { await loadHooks(); await loadStatus(); render(); }
     return;
   }
-  if (d.pluginRemove) {
-    if (!confirm('Remove "' + d.pluginRemove + '" from the plugin list?\n\n' +
-      'The file is left alone — only the entry goes.')) return;
-    return removePlugin(d.pluginRemove);
-  }
-
   if (d.hookDelete) {
     if (!confirm('Delete hook "' + d.hookDelete + '"?')) return;
     const ok = await guard(() => api('/hooks/' + encodeURIComponent(d.hookDelete), { method: 'DELETE' }), 'Deleted');
@@ -721,8 +713,6 @@ document.addEventListener('click', async (ev) => {
       try { localStorage.setItem('asterisk-log-order', state.logOrder); } catch {}
       return render();
     }
-    case 'plugin-add': return addPlugin();
-    case 'plugin-toggle': return togglePlugins();
     case 'connector-add': return addCustomConnector();
     case 'connector-setup-save': return saveConnectorSetup();
     case 'connector-setup-cancel': return closeConnectorSetup();

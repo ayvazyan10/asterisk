@@ -1,6 +1,6 @@
 // The remaining command modules: saved-conversation management
 // (session-flows), the git and code-intelligence views (code-flows), the
-// plugin inventory, the revoke flows of /permissions, and /doctor.
+// the revoke flows of /permissions, and /doctor.
 //
 // The git views shell out with no cwd of their own, so those tests build a
 // throwaway repository and chdir into it — asserting against the real
@@ -21,7 +21,6 @@ import { asteriskPaths } from '../src/daemon/paths.ts';
 import { writePid } from '../src/daemon/pidfile.ts';
 import { getDb } from '../src/db/index.ts';
 import { grantRules, grantedAllowRules } from '../src/db/permissions.ts';
-import { _resetPluginsForTesting, initialisePlugins } from '../src/plugins/runtime.ts';
 import type { Message } from '../src/types/messages.ts';
 import {
   asList,
@@ -325,87 +324,6 @@ describe('/code', () => {
     const out = await runText(makeContext(), '/code', 'refs zzz_no_such_symbol_zzz');
     expect(typeof out).toBe('string');
     expect(out.length).toBeGreaterThan(0);
-  });
-});
-
-describe('/plugins', () => {
-  withTempHome('plugins');
-
-  afterEach(() => {
-    _resetPluginsForTesting();
-  });
-
-  it('explains why plugins are off, and lists what is configured but not loaded', async () => {
-    const cfg = config();
-    cfg.plugins.load = ['/srv/plugins/greeter.ts'];
-    saveConfig(cfg);
-
-    const out = await runText(makeContext(), '/plugins');
-    expect(out).toContain('Plugins · disabled');
-    expect(out).toContain('MCP server');
-    expect(out).toContain('Configured but not loaded: 1');
-    expect(out).toContain('/srv/plugins/greeter.ts');
-  });
-
-  it('reports an empty load set when plugins are on but nothing is listed', async () => {
-    const cfg = config();
-    cfg.plugins.enabled = true;
-    saveConfig(cfg);
-    await initialisePlugins();
-
-    const out = await runText(makeContext(), '/plugins');
-    expect(out).toContain('Plugins · enabled');
-    expect(out).toContain('Loaded  0');
-  });
-
-  it('names each loaded plugin, its tools, its path, and anything that failed', async () => {
-    const pluginDir = await mkdtemp(join(tmpdir(), 'asterisk-plugin-'));
-    const good = join(pluginDir, 'greeter.ts');
-    writeFileSync(
-      good,
-      [
-        'export default {',
-        "  name: 'greeter',",
-        "  description: 'adds a greeting tool',",
-        '  register(api) {',
-        '    api.registerTool({',
-        "      name: 'Greet',",
-        "      description: 'says hello',",
-        "      input_schema: { type: 'object', properties: {} },",
-        "      async execute() { return { output: 'hello', isError: false }; },",
-        '    });',
-        "    api.log('registered Greet');",
-        '  },',
-        '};',
-      ].join('\n'),
-    );
-
-    const bare = join(pluginDir, 'bare.ts');
-    writeFileSync(bare, ["export default { name: 'bare', register() {} };"].join('\n'));
-
-    const cfg = config();
-    cfg.plugins.enabled = true;
-    cfg.plugins.load = [good, bare, join(pluginDir, 'missing.ts')];
-    saveConfig(cfg);
-    await initialisePlugins();
-
-    try {
-      const out = await runText(makeContext(), '/plugins');
-      expect(out).toContain('Loaded  2');
-      // A plugin that contributes nothing still gets a line of its own.
-      expect(out.split('\n').some((l) => l.trim() === 'bare')).toBe(true);
-      expect(out).toContain('greeter');
-      expect(out).toContain('Greet');
-      expect(out).toContain('adds a greeting tool');
-      expect(out).toContain(good);
-      expect(out).toContain('Failed  1');
-      expect(out).toContain('missing.ts');
-      // Anything the plugin said while registering is surfaced too.
-      expect(out).toContain('Notices');
-      expect(out).toContain('registered Greet');
-    } finally {
-      await rm(pluginDir, { recursive: true, force: true });
-    }
   });
 });
 

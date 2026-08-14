@@ -47,7 +47,6 @@ import {
   listOpenAiCompatibleModels,
 } from './models.ts';
 import { permissionsCommand } from './permissions.ts';
-import { pluginsCommand } from './plugins.ts';
 import { forgetCommand, resumeCommand, sessionsCommand } from './session-flows.ts';
 import { escapeRegex, quote, shellJoin, truncate } from './text.ts';
 
@@ -454,7 +453,6 @@ export const COMMANDS: SlashCommand[] = [
   },
   hooksCommand,
   permissionsCommand,
-  pluginsCommand,
   {
     name: '/agents',
     description: 'List specialised sub-agent types you can dispatch via the Agent tool',

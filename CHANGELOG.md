@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Plugins.** The in-process TypeScript extension surface is gone: `src/plugins`,
+  the `/plugins` command, the `plugins.*` settings and the control-panel page
+  added for them. A plugin ran with the secret store, the tool registry and the
+  permission gate, and nothing could confine it — bubblewrap confines child
+  *processes*, and a plugin is a function call. Everything one could do, an MCP
+  server does from outside the process, and Asterisk already speaks MCP as a
+  client. Shell hooks are unaffected: they hook the same lifecycle events and
+  they are child processes.
+- Migration 8 clears any `plugins.*` rows an older install left in `settings`.
+  Plugin *files* are left alone — Asterisk never wrote them.
+
 ## [0.4.1] - 2026-08-13
 
 ### Fixed

@@ -74,7 +74,6 @@ describe('command registry', () => {
         '/output-style',
         '/permissions',
         '/plan',
-        '/plugins',
         '/provider',
         '/quit',
         '/reset',

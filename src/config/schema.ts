@@ -281,28 +281,6 @@ const VisionSchema = z.object({
     ),
 });
 
-// Plugins are TypeScript modules imported into the agent's own process, so
-// they run with everything Asterisk has — including the store holding your API
-// keys. The sandbox does not confine them; it confines child processes, and a
-// plugin is a function call. Off by default, and named one file at a time:
-// there is no directory scan, because dropping a file somewhere must never be
-// enough to get code into this process. For anything you did not write or
-// read, use an MCP server instead — a separate process is the isolation.
-const PluginsSchema = z.object({
-  enabled: z
-    .boolean()
-    .default(false)
-    .describe(
-      'Load the plugins listed below. Off by default: a plugin runs in-process with full access to your secrets and tools.',
-    ),
-  load: z
-    .array(z.string())
-    .default([])
-    .describe(
-      'Absolute paths (or ~/…) of plugin modules to import, in order. Each must default-export { name, register }.',
-    ),
-});
-
 // Hooks fire at agent-loop lifecycle events. Each hook is a shell command
 // run with the event payload on stdin (JSON). Stdout is logged into the
 // transcript as a system note; non-zero exit logs the stderr too.
@@ -397,7 +375,6 @@ export const ConfigSchema = z.object({
   permissions: PermissionsSchema.default({}),
   sandbox: SandboxSchema.default({}),
   vision: VisionSchema.default({}),
-  plugins: PluginsSchema.default({}),
   outputStyle: OutputStyleSchema.default('default').describe(
     'Behaviour modifier spliced into the system prompt.',
   ),

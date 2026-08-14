@@ -22,7 +22,6 @@ const state = {
   // { id, kind: 'client' | 'token' } while a connector is being set up by hand.
   connectorSetup: null,
   hooks: [],
-  plugins: null,
   secrets: [],
   content: [],
   tokens: [],
@@ -308,8 +307,6 @@ const TABS = [
       count: () => state.loaded.has('connectors') ? state.connectors.filter((c) => c.connected).length : null },
     { id: 'mcp', label: 'MCP servers', icon: 'mcp', count: () => state.status && state.status.counts.mcpServers },
     { id: 'hooks', label: 'Hooks', icon: 'hooks', count: () => state.status && state.status.counts.hooks },
-    { id: 'plugins', label: 'Plugins', icon: 'plugins',
-      count: () => state.plugins ? state.plugins.entries.length : null },
   ]},
   { group: 'Author', items: CONTENT_KINDS.map((k) => ({
     id: k.id,

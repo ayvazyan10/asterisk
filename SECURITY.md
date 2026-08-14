@@ -45,9 +45,10 @@ The security boundaries we care about:
 ## Out of scope
 
 - Confinement of anything other than `Bash`. `Read`/`Write`/`Edit` are
-  in-process and bounded by the write policy, not by the sandbox; in-process
-  plugins are not confined at all, which is why they are off by default and
-  enabled path-by-path. Untrusted code belongs in an MCP server.
+  in-process and bounded by the write policy, not by the sandbox. Untrusted
+  code belongs in an MCP server, where the isolation is that it is a separate
+  process; there is deliberately no in-process extension mechanism to put it
+  in instead.
 - Sandboxing on a machine with no backend available. `sandbox.mode: "auto"`
   runs unconfined when bubblewrap/seatbelt is missing or non-functional; set
   `"required"` to refuse instead. If you need hardening for untrusted

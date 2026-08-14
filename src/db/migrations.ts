@@ -287,6 +287,27 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 8,
+    name: 'drop-plugins',
+    sql: `
+      -- In-process plugins were removed from the product. Same reasoning as
+      -- migration 6: readConfig() parses the settings table through
+      -- ConfigSchema, which strips unknown keys, so orphaned 'plugins.*' rows
+      -- are harmless to read — but they are only pruned when something calls
+      -- writeConfig(), and an install that never saves a config change would
+      -- carry them forever.
+      --
+      -- Unlike WhatsApp there is no credential half to this: plugins never had
+      -- an entry in SECRET_KEYS. What a row here can still hold is a path to a
+      -- file on disk, which is worth clearing on its own.
+      --
+      -- The files themselves are left alone. Asterisk never wrote them, and
+      -- deleting something the user authored because a feature went away would
+      -- be the wrong trade.
+      DELETE FROM settings WHERE key = 'plugins' OR key LIKE 'plugins.%';
+    `,
+  },
 ];
 
 /**

@@ -113,6 +113,23 @@ describe('migrations', () => {
     db.close();
   });
 
+  it('drops plugin settings left behind by an older install', () => {
+    const db = openDriver(':memory:');
+    migrate(db);
+    db.run('DELETE FROM schema_migrations WHERE version = 8');
+
+    setSetting(db, 'plugins.enabled', true);
+    setSetting(db, 'plugins.load', ['/srv/plugins/greeter.ts']);
+    setSetting(db, 'bots.telegram.enabled', true);
+
+    expect(migrate(db)).toBe(1);
+
+    // No secret half to this one — plugins never had a SECRET_KEYS entry. What
+    // the rows still held was a path to a file on disk.
+    expect(allSettings(db).map(([key]) => key)).toEqual(['bots.telegram.enabled']);
+    db.close();
+  });
+
   it('reads a config despite settings the schema no longer declares', () => {
     // Belt and braces for the upgrade path: even if a stale row outlives the
     // migration, ConfigSchema strips unknown keys rather than failing to parse.
