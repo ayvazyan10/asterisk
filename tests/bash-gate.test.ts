@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { runWithSession } from '../src/agent/context.ts';
 import { permissionsCommand } from '../src/commands/permissions.ts';
-import { saveConfig } from '../src/config/load.ts';
+import { loadConfig, saveConfig } from '../src/config/load.ts';
 import { type AsteriskConfig, ConfigSchema } from '../src/config/schema.ts';
 import { closeDb, getDb } from '../src/db/index.ts';
 import { grantedAllowRules } from '../src/db/permissions.ts';
@@ -249,6 +249,24 @@ describe('/permissions', () => {
     expect(await run('')).toContain('printf remembered');
     expect(await run('revoke printf remembered')).toContain('Revoked');
     expect(grantedAllowRules(getDb())).toEqual([]);
+  });
+
+  it('stores a quoted rule without its quotes, so it can actually match', async () => {
+    // The documented form quotes rules that contain a space. Keeping the
+    // quotes stored `"npm test"` as the rule, which is matched against the
+    // command's first word and can never hit — the rule looked added and the
+    // prompt kept coming back.
+    expect(await run('allow "printf ok"')).toContain('Added "printf ok"');
+    expect(loadConfig().config.permissions.allow).toEqual(['printf ok']);
+
+    let asked = 0;
+    onApprovalRequest(() => {
+      asked += 1;
+    });
+    const r = await bashTool.execute({ command: 'printf ok' });
+    expect(asked).toBe(0);
+    expect(r.isError).toBe(false);
+    expect(r.output).toContain('ok');
   });
 
   it('rejects revoking something that was never granted', async () => {

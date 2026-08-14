@@ -63,9 +63,27 @@ function listBuiltins(): string {
   ].join('\n');
 }
 
+/**
+ * Strips one layer of surrounding quotes.
+ *
+ * The documented form is `/permissions allow "npm test"` — quoted, because the
+ * rule contains a space — and the quotes were being stored as part of the rule.
+ * `"npm test"` is then matched against the first word of the command and can
+ * never hit, so the rule silently did nothing and the user kept being prompted
+ * for the very command they had allowed.
+ */
+function unquote(rule: string): string {
+  const trimmed = rule.trim();
+  const first = trimmed[0];
+  if ((first === '"' || first === "'") && trimmed.length > 1 && trimmed.endsWith(first)) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
 /** Adds a rule to `permissions.allow` or `permissions.deny` in config. */
 function addConfigRule(list: 'allow' | 'deny', rule: string): string {
-  const trimmed = rule.trim();
+  const trimmed = unquote(rule);
   if (!trimmed) return `usage: /permissions ${list} <rule>`;
 
   const { config } = loadConfig();
@@ -119,7 +137,9 @@ export const permissionsCommand: SlashCommand = {
     if (!trimmed) return summary();
 
     const [verb, ...rest] = trimmed.split(/\s+/);
-    const rule = rest.join(' ');
+    // Quoting is how a rule with a space is written; the quotes are syntax,
+    // not part of the rule.
+    const rule = unquote(rest.join(' '));
 
     if (verb === 'builtin' || verb === 'builtins') return listBuiltins();
     if (verb === 'allow') return addConfigRule('allow', rule);
