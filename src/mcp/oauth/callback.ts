@@ -40,6 +40,30 @@ export interface CallbackServer {
   /** Resolves with the authorization code, or rejects on error/timeout. */
   waitForCode(timeoutMs: number): Promise<string>;
   close(): Promise<void>;
+  /**
+   * Closes and fails whoever is waiting, rather than leaving them to time out.
+   *
+   * Used when a flow is abandoned — a second Connect supersedes the first.
+   * Without it the superseded waiter sits on the full consent timeout holding
+   * nothing anyone wants.
+   */
+  abort(reason: Error): Promise<void>;
+}
+
+/**
+ * The fixed callback port is taken.
+ *
+ * Its own type because the caller can act on it — the message names the port
+ * and the override — while a bare listen error reaches the panel as an opaque
+ * 500 with a correlation id, which is what this replaced.
+ */
+export class CallbackPortBusyError extends Error {
+  constructor(readonly port: number) {
+    super(
+      `OAuth callback port ${port} is already in use. Close whatever is holding it, or set ASTERISK_OAUTH_PORT to a free port.`,
+    );
+    this.name = 'CallbackPortBusyError';
+  }
 }
 
 function page(title: string, body: string): string {
@@ -131,14 +155,22 @@ export async function startCallbackServer(opts: {
   });
 
   await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
+    server.once('error', (e: NodeJS.ErrnoException) => {
+      reject(e.code === 'EADDRINUSE' ? new CallbackPortBusyError(port) : e);
+    });
     // 127.0.0.1, never 0.0.0.0: this socket accepts an authorization code, and
     // it has no business being reachable from the network.
     server.listen(port, '127.0.0.1', () => {
-      server.removeListener('error', reject);
+      server.removeAllListeners('error');
       resolve();
     });
   });
+
+  const closeServer = (): Promise<void> =>
+    new Promise((resolve) => {
+      server.closeAllConnections?.();
+      server.close(() => resolve());
+    });
 
   return {
     redirectUrl: callbackRedirectUrl(port),
@@ -155,11 +187,13 @@ export async function startCallbackServer(opts: {
         }),
       ]);
     },
-    close(): Promise<void> {
-      return new Promise((resolve) => {
-        server.closeAllConnections?.();
-        server.close(() => resolve());
-      });
+    close: closeServer,
+    async abort(reason: Error): Promise<void> {
+      // Marked done first so a request racing the close gets the
+      // already-handled page rather than resolving a flow nobody is waiting on.
+      done = true;
+      fail?.(reason);
+      await closeServer();
     },
   };
 }

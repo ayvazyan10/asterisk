@@ -343,16 +343,23 @@ const McpStdioServerSchema = z.object({
 //   oauth — a connector. Asterisk discovers the authorization server from the
 //           401 the endpoint returns, registers itself dynamically, runs the
 //           browser consent flow once, and refreshes the token from then on.
-//           This is what every hosted MCP service (Linear, Notion, GitHub…)
-//           actually requires. Credentials go to `mcp_credentials`, never into
-//           `headers` — a header is part of the exported configuration and a
-//           token must not be.
+//           Linear, Notion, Atlassian and Sentry all work this way.
+//   token — a connector authenticated by a token the user issues themselves.
+//           GitHub is the reason this exists: its authorization server does
+//           not offer dynamic client registration, so there is no way for
+//           Asterisk to obtain a client id, and a personal access token is the
+//           documented path instead.
+//
+// Both connector modes keep the credential in `mcp_credentials` and never in
+// `headers` — a header is part of the exported configuration and a token must
+// not be. `token` therefore is not the same as putting the token in `headers`
+// by hand under `none`, which still works and still exports.
 const McpHttpServerSchema = z.object({
   name: z.string().min(1),
   transport: z.literal('http'),
   url: z.string().url(),
   headers: z.record(z.string()).default({}),
-  auth: z.enum(['none', 'oauth']).default('none'),
+  auth: z.enum(['none', 'oauth', 'token']).default('none'),
   // Requested OAuth scopes. Empty means "ask for whatever the server
   // advertises as its default", which is what most connectors expect.
   scopes: z.array(z.string()).default([]),

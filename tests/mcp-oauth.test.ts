@@ -24,7 +24,7 @@ import {
   readMcpCredentials,
   writeMcpCredentials,
 } from '../src/db/mcp-credentials.ts';
-import { startCallbackServer } from '../src/mcp/oauth/callback.ts';
+import { CallbackPortBusyError, startCallbackServer } from '../src/mcp/oauth/callback.ts';
 import { beginConnectorFlow, disconnectConnector } from '../src/mcp/oauth/connect.ts';
 import { ConsentRequiredError, createConnectorAuthProvider } from '../src/mcp/oauth/provider.ts';
 import { defined } from './helpers.ts';
@@ -447,6 +447,63 @@ describe('connector consent flow, end to end', () => {
     } finally {
       await resource.close();
       await authServer.close();
+    }
+  });
+
+  it('supersedes a flow that is still waiting instead of failing to bind', async () => {
+    const authServer = await startFakeAuthServer();
+    const resource = await startFakeResource(authServer.issuer);
+    process.env['ASTERISK_OAUTH_PORT'] = String(await freePort());
+    const db = getDb();
+
+    try {
+      // The first flow holds the fixed callback port for its whole timeout.
+      const first = await beginConnectorFlow(
+        { name: 'one', url: resource.url },
+        { db, openBrowser: () => false, timeoutMs: 60_000 },
+      );
+      expect(first.status).toBe('consent-required');
+      const abandoned = expect(first.completion).rejects.toThrow(/superseded/);
+
+      // Pressing Connect again must work rather than hitting EADDRINUSE.
+      const second = await beginConnectorFlow(
+        { name: 'two', url: resource.url },
+        { db, openBrowser: () => false, timeoutMs: 10_000 },
+      );
+      expect(second.status).toBe('consent-required');
+      await abandoned;
+
+      // ...and the surviving flow still completes.
+      const consent = new URL(defined(second.consentUrl, 'consent url'));
+      const callback = new URL(defined(consent.searchParams.get('redirect_uri'), 'redirect_uri'));
+      callback.searchParams.set('code', 'auth-code-2');
+      callback.searchParams.set('state', defined(consent.searchParams.get('state'), 'state'));
+      await fetch(callback);
+      await second.completion;
+
+      expect(mcpAuthStatus(db, 'two', resource.url).connected).toBe(true);
+      expect(mcpAuthStatus(db, 'one', resource.url).connected).toBe(false);
+    } finally {
+      await resource.close();
+      await authServer.close();
+    }
+  });
+
+  it('reports a callback port held by something else as its own error', async () => {
+    const port = await freePort();
+    process.env['ASTERISK_OAUTH_PORT'] = String(port);
+    // Something outside Asterisk is on the port — not a flow we can supersede.
+    const squatter = await startCallbackServer({ expectedState: () => undefined, port });
+
+    try {
+      await expect(
+        startCallbackServer({ expectedState: () => undefined, port }),
+      ).rejects.toBeInstanceOf(CallbackPortBusyError);
+      await expect(startCallbackServer({ expectedState: () => undefined, port })).rejects.toThrow(
+        /ASTERISK_OAUTH_PORT/,
+      );
+    } finally {
+      await squatter.close();
     }
   });
 

@@ -281,6 +281,42 @@ describe('collections API', () => {
     expect(custom).toMatchObject({ source: 'custom', installed: true, connected: false });
   });
 
+  it('sends a token connector down the token path instead of the browser flow', async () => {
+    const { status, body } = await call('/api/connectors/github/connect', { method: 'POST' });
+    expect(status).toBe(409);
+    expect(body.error).toMatch(/token/);
+    // Nothing may be written by a refused connect.
+    expect((await call('/api/mcp')).body.servers).toHaveLength(0);
+  });
+
+  it('stores a token connector’s token outside the exported config', async () => {
+    const { status } = await call(
+      '/api/connectors/github/token',
+      send('PUT', { token: 'ghp-super-secret' }),
+    );
+    expect(status).toBe(200);
+
+    const server = (await call('/api/mcp')).body.servers[0];
+    expect(server).toMatchObject({ name: 'github', auth: 'token' });
+    // The token is a credential, so it must not reach headers — which are
+    // part of what /api/config/export hands out.
+    expect(JSON.stringify(server)).not.toContain('ghp-super-secret');
+    expect(JSON.stringify((await call('/api/config/export')).body)).not.toContain(
+      'ghp-super-secret',
+    );
+
+    const github = (await call('/api/connectors')).body.connectors.find(
+      (c: { id: string }) => c.id === 'github',
+    );
+    expect(github).toMatchObject({ connected: true, auth: 'token' });
+  });
+
+  it('rejects an empty token', async () => {
+    expect((await call('/api/connectors/github/token', send('PUT', { token: '  ' }))).status).toBe(
+      400,
+    );
+  });
+
   it('refuses to take over a name already used by a stdio server', async () => {
     await call(
       '/api/mcp',

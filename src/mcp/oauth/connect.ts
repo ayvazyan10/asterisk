@@ -93,6 +93,17 @@ function isWsl(): boolean {
 }
 
 /**
+ * The flow currently holding the callback port, if any.
+ *
+ * The port is fixed (see ./callback.ts), so at most one flow can be open at a
+ * time — and a flow stays open for the whole consent timeout, minutes during
+ * which the user is looking at somebody else's login screen. Without this,
+ * pressing Connect on a second service in that window failed to bind and
+ * surfaced as an opaque internal error, which is exactly what it did.
+ */
+let activeFlow: CallbackServer | undefined;
+
+/**
  * Starts the flow and returns once there is something to tell the user.
  *
  * The returned `completion` owns the listener's lifetime — it closes it on
@@ -105,6 +116,14 @@ export async function beginConnectorFlow(
   const db = options.db ?? getDb();
   const timeoutMs = options.timeoutMs ?? DEFAULT_CONSENT_TIMEOUT_MS;
 
+  // A newer Connect wins. The click the user just made is the one they want,
+  // and the abandoned flow has nothing worth protecting — no token was issued,
+  // and its consent URL can simply be requested again.
+  if (activeFlow) {
+    await activeFlow.abort(new Error('superseded by a newer connect'));
+    activeFlow = undefined;
+  }
+
   let consentUrl: URL | undefined;
   // The provider needs the listener's redirect URL, and the listener needs the
   // provider's state — so the listener starts first and reads the state
@@ -113,6 +132,12 @@ export async function beginConnectorFlow(
   const listener: CallbackServer = await startCallbackServer({
     expectedState: () => provider?.issuedState,
   });
+  activeFlow = listener;
+
+  /** Only the flow that still owns the port may release the slot. */
+  const release = (): void => {
+    if (activeFlow === listener) activeFlow = undefined;
+  };
 
   try {
     provider = createConnectorAuthProvider({
@@ -131,6 +156,7 @@ export async function beginConnectorFlow(
     const first = await auth(provider, { serverUrl: target.url, ...scopeArg });
 
     if (first === 'AUTHORIZED') {
+      release();
       await listener.close();
       return {
         status: 'refreshed',
@@ -156,6 +182,7 @@ export async function beginConnectorFlow(
         });
         if (second !== 'AUTHORIZED') throw new Error('token exchange did not produce credentials');
       } finally {
+        release();
         await listener.close();
       }
     })();
@@ -169,6 +196,7 @@ export async function beginConnectorFlow(
 
     return { status: 'consent-required', consentUrl: href, browserOpened, completion };
   } catch (e) {
+    release();
     await listener.close();
     throw e;
   }

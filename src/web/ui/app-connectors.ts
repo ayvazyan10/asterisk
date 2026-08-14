@@ -36,8 +36,13 @@ function connectorStatus(c) {
 
 function connectorActions(c) {
   const id = esc(c.id);
-  const connect = ui.btn(c.connected ? 'Reconnect' : 'Connect',
-    { size: 'sm', variant: c.connected ? 'outline' : 'default', attrs: ' data-connector-connect="' + id + '"' });
+  // A token connector cannot open a browser flow — its server does not hand
+  // out client registrations — so the button asks for the token instead.
+  const attr = c.auth === 'token' ? ' data-connector-token="' : ' data-connector-connect="';
+  const label = c.auth === 'token' ? (c.connected ? 'Replace token' : 'Add token')
+                                   : (c.connected ? 'Reconnect' : 'Connect');
+  const connect = ui.btn(label,
+    { size: 'sm', variant: c.connected ? 'outline' : 'default', attrs: attr + id + '"' });
   if (!c.installed) return connect;
   return connect +
     (c.connected
@@ -57,7 +62,8 @@ function connectorCards() {
         '<div class="connector-card-name">' + esc(c.name) + '</div>' +
         '<div class="connector-card-detail">' + esc(c.description) + '</div>' +
       '</div>' +
-      ui.btn('Connect', { size: 'sm', attrs: ' data-connector-connect="' + esc(c.id) + '"' }) +
+      ui.btn(c.auth === 'token' ? 'Add token' : 'Connect', { size: 'sm',
+        attrs: (c.auth === 'token' ? ' data-connector-token="' : ' data-connector-connect="') + esc(c.id) + '"' }) +
     '</div>'
   ).join('') + '</div>';
 }
@@ -124,6 +130,31 @@ async function connectConnector(id) {
   // consent screen is somebody else's page.
   window.open(res.authorizationUrl, '_blank', 'noopener');
   toast('Finish authorizing in the new tab, then reload the list', 'good');
+  render();
+}
+
+/**
+ * Asks for a token and stores it.
+ *
+ * prompt() rather than a designed field because this is the one place the
+ * panel takes a secret from the user, and a real form would have to solve
+ * masking, paste handling and accidental persistence in the DOM to be an
+ * improvement. The value goes straight to the API and is never rendered.
+ */
+async function addConnectorToken(id) {
+  const c = state.connectors.find((x) => x.id === id);
+  const help = c && c.tokenHelp ? c.tokenHelp : 'Paste the access token for this service.';
+  const where = c && c.tokenUrl ? '\n\nCreate one at: ' + c.tokenUrl : '';
+  const token = prompt(help + where);
+  if (token === null) return;
+  if (!token.trim()) { toast('No token entered', 'bad'); return; }
+
+  const ok = await guard(() => api('/connectors/' + encodeURIComponent(id) + '/token', {
+    method: 'PUT', body: JSON.stringify({ token: token.trim() }),
+  }), 'Token saved');
+  if (!ok) return;
+  await loadConnectors();
+  await loadMcp();
   render();
 }
 

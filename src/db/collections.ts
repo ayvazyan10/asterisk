@@ -63,7 +63,12 @@ function rowToMcp(row: McpRow): WithId<McpServerConfig> {
           transport: 'http' as const,
           url: row.url ?? '',
           headers: parseJson<Record<string, string>>(row.headers, {}),
-          auth: row.auth === 'oauth' ? ('oauth' as const) : ('none' as const),
+          auth:
+            row.auth === 'oauth'
+              ? ('oauth' as const)
+              : row.auth === 'token'
+                ? ('token' as const)
+                : ('none' as const),
           scopes: parseJson<string[]>(row.scopes, []),
           enabled: row.enabled === 1,
         };
@@ -92,13 +97,17 @@ export function upsertMcpServer(
     0;
 
   // Stored credentials belong to the URL they were issued for. An edit that
-  // repoints the server — or turns OAuth off, or makes it a stdio server —
-  // leaves a token behind that nothing will ever legitimately use again, so it
-  // goes now rather than waiting for readMcpCredentials() to notice.
+  // repoints the server — or drops it out of a credentialled auth mode, or
+  // makes it a stdio server — leaves a token behind that nothing will ever
+  // legitimately use again, so it goes now rather than waiting for
+  // readMcpCredentials() to notice.
   const previous = db.get<McpRow>('SELECT * FROM mcp_servers WHERE name = ?', [server.name]);
-  const stillOAuth =
-    server.transport === 'http' && server.auth === 'oauth' && previous?.url === server.url;
-  if (previous && !stillOAuth) deleteMcpCredentials(db, server.name);
+  const keepsCredentials =
+    server.transport === 'http' &&
+    (server.auth === 'oauth' || server.auth === 'token') &&
+    previous?.url === server.url &&
+    previous?.auth === server.auth;
+  if (previous && !keepsCredentials) deleteMcpCredentials(db, server.name);
 
   db.run(
     `INSERT INTO mcp_servers

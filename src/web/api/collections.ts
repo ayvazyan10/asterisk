@@ -10,6 +10,7 @@ import {
   upsertMcpServer,
 } from '../../db/collections.ts';
 import { mcpAuthStatus } from '../../db/mcp-credentials.ts';
+import { CallbackPortBusyError } from '../../mcp/oauth/callback.ts';
 import { beginConnectorFlow, disconnectConnector } from '../../mcp/oauth/connect.ts';
 import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
 
@@ -68,10 +69,18 @@ export const beginMcpAuth: Handler = async ({ db, params }) => {
     throw new HttpError(`"${name}" is not a connector (auth: oauth)`, 409);
   }
 
-  const flow = await beginConnectorFlow(
-    { name, url: server.url, scopes: server.scopes },
-    { db, openBrowser: () => false },
-  );
+  let flow: Awaited<ReturnType<typeof beginConnectorFlow>>;
+  try {
+    flow = await beginConnectorFlow(
+      { name, url: server.url, scopes: server.scopes },
+      { db, openBrowser: () => false },
+    );
+  } catch (e) {
+    // A taken callback port is something the user can fix; everything else
+    // keeps the opaque-500 treatment.
+    if (e instanceof CallbackPortBusyError) throw new HttpError(e.message, 409);
+    throw e;
+  }
   audit(db, 'mcp.connect', name, { status: flow.status });
   return json({
     ok: true,

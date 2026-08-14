@@ -7,7 +7,7 @@
 import { loadConfig, saveConfig } from '../config/load.ts';
 import type { McpServerConfig } from '../config/schema.ts';
 import { getDb } from '../db/index.ts';
-import { mcpAuthStatus } from '../db/mcp-credentials.ts';
+import { mcpAuthStatus, writeMcpUserToken } from '../db/mcp-credentials.ts';
 import { beginConnectorFlow, disconnectConnector } from '../mcp/oauth/connect.ts';
 import type { FormSpec, ListSpec } from '../repl/forms/types.ts';
 import { setExtraTools } from '../tools/registry.ts';
@@ -17,7 +17,7 @@ import { truncate } from './text.ts';
 export const mcpCommand: SlashCommand = {
   name: '/mcp',
   description: 'Manage MCP servers',
-  usage: '/mcp [list|resources|read|add|edit|remove|connect|disconnect|reload]',
+  usage: '/mcp [list|resources|read|add|edit|remove|connect|token|disconnect|reload]',
   async execute(ctx, args) {
     const trimmed = args.trim();
     if (!trimmed) return mcpActionPicker(ctx);
@@ -31,6 +31,11 @@ export const mcpCommand: SlashCommand = {
     if (verb === 'disconnect') {
       const name = rest[0];
       return name ? mcpDisconnect(ctx, name) : mcpConnectorPicker(ctx, 'disconnect');
+    }
+    if (verb === 'token') {
+      const name = rest[0];
+      if (!name) return 'usage: /mcp token <name>';
+      return mcpTokenForm(ctx, name);
     }
     if (verb === 'resources') return formatMcpResources(ctx, rest[0]);
     if (verb === 'read') return readMcpResource(ctx, rest[0], rest.slice(1).join(' '));
@@ -187,7 +192,7 @@ function mcpAddForm(ctx: CommandContext, transport: 'stdio' | 'http'): FormSpec 
     ],
     onSubmit: async (v) => {
       const name = (v['name'] ?? '').trim();
-      const auth = v['auth'] === 'oauth' ? ('oauth' as const) : ('none' as const);
+      const auth = parseAuth(v['auth']);
       const added = await addServer(ctx, {
         name,
         transport: 'http',
@@ -199,9 +204,9 @@ function mcpAddForm(ctx: CommandContext, transport: 'stdio' | 'http'): FormSpec 
       });
       // A connector is useless until it is authorized, and the add flow is the
       // one moment we know the user is present to do it.
-      if (auth === 'oauth' && added.startsWith('✓')) {
+      if (added.startsWith('✓') && auth === 'oauth')
         return `${added}\n\nNext: /mcp connect ${name}`;
-      }
+      if (added.startsWith('✓') && auth === 'token') return `${added}\n\nNext: /mcp token ${name}`;
       return added;
     },
     onCancel: () => '(cancelled)',
@@ -211,7 +216,16 @@ function mcpAddForm(ctx: CommandContext, transport: 'stdio' | 'http'): FormSpec 
 const AUTH_OPTIONS = [
   { value: 'none', label: 'none', description: 'public endpoint, or a token in headers' },
   { value: 'oauth', label: 'oauth', description: 'connector — browser consent, auto-refresh' },
+  {
+    value: 'token',
+    label: 'token',
+    description: 'connector — a token you issue, stored outside the config',
+  },
 ];
+
+function parseAuth(raw: string | undefined): 'none' | 'oauth' | 'token' {
+  return raw === 'oauth' ? 'oauth' : raw === 'token' ? 'token' : 'none';
+}
 
 function mcpRemovePicker(ctx: CommandContext): ListSpec {
   const cfg = loadConfig().config;
@@ -352,7 +366,7 @@ function mcpEditForm(ctx: CommandContext, name: string): FormSpec | string {
       if (!url) return 'url is required';
       if (!/^https?:\/\//i.test(url))
         return `url must start with http:// or https:// — got "${url}"`;
-      const auth = v['auth'] === 'oauth' ? ('oauth' as const) : ('none' as const);
+      const auth = parseAuth(v['auth']);
       const httpServer = {
         name,
         transport: 'http' as const,
@@ -415,8 +429,11 @@ function formatMcpList(ctx: CommandContext): string {
 
 /** ` · oauth: connected (expires in 42m)` for connectors, nothing for anything else. */
 function authSuffix(server: McpServerConfig): string {
-  if (server.transport !== 'http' || server.auth !== 'oauth') return '';
+  if (server.transport !== 'http' || server.auth === 'none') return '';
   const status = mcpAuthStatus(getDb(), server.name, server.url);
+  if (server.auth === 'token') {
+    return status.connected ? ' · token: set' : ' · token: missing';
+  }
   if (!status.connected) return ' · oauth: not connected';
   if (status.expiresAt === undefined) return ' · oauth: connected';
   const remaining = status.expiresAt - Date.now();
@@ -441,7 +458,7 @@ function formatDuration(ms: number): string {
 function connectors(): Array<Extract<McpServerConfig, { transport: 'http' }>> {
   return loadConfig().config.mcpServers.filter(
     (s: McpServerConfig): s is Extract<McpServerConfig, { transport: 'http' }> =>
-      s.transport === 'http' && s.auth === 'oauth',
+      s.transport === 'http' && s.auth !== 'none',
   );
 }
 
@@ -466,6 +483,9 @@ async function mcpConnect(ctx: CommandContext, name: string): Promise<string> {
   if (!server) return `no MCP server named "${name}"`;
   if (server.transport !== 'http') {
     return `"${name}" is a stdio server — OAuth applies to http servers only`;
+  }
+  if (server.auth === 'token') {
+    return `"${name}" authenticates with a token, not a browser flow — use /mcp token ${name}`;
   }
   if (server.auth !== 'oauth') {
     return `"${name}" is not a connector (auth: none). Switch it with /mcp edit ${name}.`;
@@ -513,6 +533,40 @@ async function mcpConnect(ctx: CommandContext, name: string): Promise<string> {
   } catch (e) {
     return `connect failed: ${(e as Error).message}`;
   }
+}
+
+/**
+ * Takes a user-issued token for a `token` connector.
+ *
+ * A form with a secret field rather than an argument on the command line: the
+ * REPL keeps its input in scrollback and in the session transcript, and a
+ * personal access token typed as `/mcp token github ghp_…` would live in both.
+ */
+function mcpTokenForm(ctx: CommandContext, name: string): FormSpec | string {
+  const server = loadConfig().config.mcpServers.find((s: McpServerConfig) => s.name === name);
+  if (!server) return `no MCP server named "${name}"`;
+  if (server.transport !== 'http') return `"${name}" is a stdio server`;
+  if (server.auth !== 'token') {
+    return `"${name}" is not a token connector — its auth is "${server.auth}"`;
+  }
+
+  return {
+    kind: 'form',
+    title: `Token for "${name}"`,
+    fields: [{ kind: 'text', key: 'token', label: 'Access token', secret: true, required: true }],
+    onSubmit: async (v) => {
+      const token = (v['token'] ?? '').trim();
+      if (!token) return 'token is required';
+      writeMcpUserToken(getDb(), name, server.url, token);
+      const result = await ctx.mcp.reload();
+      applyMcpToolsToRegistry(ctx);
+      const failed = result.failed.find((f) => f.name === name);
+      return failed
+        ? `stored the token but connect failed: ${failed.error}`
+        : `✓ token stored for "${name}"`;
+    },
+    onCancel: () => '(cancelled)',
+  };
 }
 
 async function mcpDisconnect(ctx: CommandContext, name: string): Promise<string> {

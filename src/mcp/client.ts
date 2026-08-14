@@ -9,6 +9,8 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 import type { McpServerConfig } from '../config/schema.ts';
+import { getDb } from '../db/index.ts';
+import { readMcpAccessToken } from '../db/mcp-credentials.ts';
 import { type Tool, err, ok } from '../tools/types.ts';
 import { ConsentRequiredError, createConnectorAuthProvider } from './oauth/provider.ts';
 
@@ -80,6 +82,19 @@ export function stdioEnv(configured: Record<string, string>): Record<string, str
  * the same place for the user, and "HTTP 401" in a startup log does not say
  * so.
  */
+/**
+ * The Authorization header for a `token` connector, or nothing.
+ *
+ * Nothing rather than throwing: a connector whose token has not been supplied
+ * yet should fail against the endpoint with its own 401, which
+ * `authFailure` turns into the sentence naming the fix — the same path an
+ * expired OAuth token takes.
+ */
+function bearerHeader(name: string, url: string): Record<string, string> {
+  const token = readMcpAccessToken(getDb(), name, url);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 function authFailure(name: string, e: unknown): Error {
   if (e instanceof ConsentRequiredError) return e;
   if (e instanceof UnauthorizedError) {
@@ -114,12 +129,21 @@ export async function connectMcpServer(config: McpServerConfig): Promise<Connect
           })
         : undefined;
 
+    // `token` is the mode for endpoints whose authorization server offers no
+    // dynamic client registration, so OAuth is closed to us and the user
+    // supplies a token instead. It lives in mcp_credentials rather than in
+    // `headers` — same reason as an OAuth token: headers are exported.
+    const headers =
+      config.auth === 'token'
+        ? { ...config.headers, ...bearerHeader(config.name, config.url) }
+        : config.headers;
+
     // The SDK's StreamableHTTPClientTransport types `sessionId` as `string |
     // undefined` while the Transport interface declares it `string`. Under
     // exactOptionalPropertyTypes that's an incompatibility we resolve at the
     // boundary; the SDK accepts it at runtime.
     const transport = new StreamableHTTPClientTransport(new URL(config.url), {
-      requestInit: { headers: config.headers },
+      requestInit: { headers },
       ...(authProvider ? { authProvider } : {}),
     }) as unknown as Parameters<Client['connect']>[0];
     try {

@@ -197,6 +197,37 @@ export function clearMcpCredentials(
   );
 }
 
+/**
+ * Stores a token the user issued themselves (`auth: 'token'`).
+ *
+ * Shaped as an OAuth token set so everything downstream — the status readout,
+ * the header injection in mcp/client.ts — has one thing to read. There is no
+ * refresh token because there is no refresh: when a personal access token
+ * expires the user issues another one.
+ */
+export function writeMcpUserToken(
+  db: SqliteDriver,
+  serverName: string,
+  resource: string,
+  token: string,
+): void {
+  writeMcpCredentials(db, serverName, resource, {
+    tokens: { access_token: token, token_type: 'Bearer' },
+    expiresAt: undefined,
+  });
+}
+
+/** The bearer token for a server, whether it came from OAuth or from the user. */
+export function readMcpAccessToken(
+  db: SqliteDriver,
+  serverName: string,
+  resource: string,
+): string | undefined {
+  const record = readMcpCredentials(db, serverName, resource);
+  const tokens = record?.tokens as { access_token?: string } | undefined;
+  return typeof tokens?.access_token === 'string' ? tokens.access_token : undefined;
+}
+
 /** Connection status for one server, for `/mcp list` and the panel. */
 export interface McpAuthStatus {
   connected: boolean;

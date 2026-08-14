@@ -22,11 +22,13 @@
 // per-vendor approval process, not a row in this table. Listing them with a
 // guessed URL would produce a button that always fails.
 //
-// Requirements for an entry: a publicly documented Streamable HTTP endpoint
-// (our client speaks no legacy SSE transport) that authenticates with OAuth
-// and supports dynamic client registration, since Asterisk has no
-// pre-registered client id with anyone. Anything else belongs in the Add
-// form, where the user supplies what they know.
+// Requirements for an entry: a publicly documented Streamable HTTP endpoint —
+// our client speaks no legacy SSE transport — plus a way in. Every entry's
+// `auth` was established by actually running the flow against it, not by
+// reading a table: four register clients dynamically and take the browser
+// path, and GitHub answered "does not support dynamic client registration",
+// which is what put it on the token path instead. Anything else belongs in the
+// Add form, where the user supplies what they know.
 
 export interface CatalogConnector {
   /** Also the MCP server name, so it must be unique and shell-safe. */
@@ -34,6 +36,22 @@ export interface CatalogConnector {
   name: string;
   description: string;
   url: string;
+  /**
+   * 'oauth' — browser consent, which needs the authorization server to offer
+   *           dynamic client registration, since Asterisk has no pre-registered
+   *           client id anywhere.
+   * 'token' — the user issues a token and pastes it. The fallback for servers
+   *           that do not register clients dynamically.
+   *
+   * This is not a guess per entry: every 'oauth' below was confirmed by
+   * running a real registration against it, and GitHub is 'token' because that
+   * same attempt came back "does not support dynamic client registration".
+   */
+  auth: 'oauth' | 'token';
+  /** Where the user creates the token, for 'token' entries. */
+  tokenUrl?: string;
+  /** What kind of token, in one line. */
+  tokenHelp?: string;
   /** Empty means "whatever the server treats as default", which is the norm. */
   scopes: readonly string[];
   /** Shown as a card at the top of the page rather than a row in the table. */
@@ -48,6 +66,7 @@ export const BUNDLED_CONNECTORS: readonly CatalogConnector[] = [
     name: 'Linear',
     description: 'Issues, projects and cycles. Read and write.',
     url: 'https://mcp.linear.app/mcp',
+    auth: 'oauth',
     scopes: [],
     popular: true,
     docs: 'https://linear.app/docs/mcp',
@@ -57,6 +76,7 @@ export const BUNDLED_CONNECTORS: readonly CatalogConnector[] = [
     name: 'Notion',
     description: 'Search, read and update pages and databases.',
     url: 'https://mcp.notion.com/mcp',
+    auth: 'oauth',
     scopes: [],
     popular: true,
     docs: 'https://developers.notion.com/guides/mcp/get-started-with-mcp',
@@ -66,6 +86,13 @@ export const BUNDLED_CONNECTORS: readonly CatalogConnector[] = [
     name: 'GitHub',
     description: 'Repositories, issues, pull requests and code search.',
     url: 'https://api.githubcopilot.com/mcp/',
+    // GitHub's authorization server does not register clients dynamically, so
+    // the OAuth path is closed to a client with no pre-registered id. Its own
+    // docs give a personal access token in the Authorization header as the
+    // alternative, which is what 'token' does.
+    auth: 'token',
+    tokenUrl: 'https://github.com/settings/personal-access-tokens',
+    tokenHelp: 'A fine-grained personal access token with access to the repositories you want.',
     scopes: [],
     popular: true,
     docs: 'https://github.com/github/github-mcp-server',
@@ -75,6 +102,7 @@ export const BUNDLED_CONNECTORS: readonly CatalogConnector[] = [
     name: 'Atlassian',
     description: 'Jira, Confluence, Bitbucket and Compass.',
     url: 'https://mcp.atlassian.com/v1/mcp/authv2',
+    auth: 'oauth',
     scopes: [],
     popular: false,
     docs: 'https://github.com/atlassian/atlassian-mcp-server',
@@ -84,6 +112,7 @@ export const BUNDLED_CONNECTORS: readonly CatalogConnector[] = [
     name: 'Sentry',
     description: 'Issues, events and release health.',
     url: 'https://mcp.sentry.dev/mcp',
+    auth: 'oauth',
     scopes: [],
     popular: false,
     docs: 'https://mcp.sentry.dev/',
