@@ -10,6 +10,8 @@ const CONCURRENCY_SAFE = new Set([
   'TaskGet',
   'CodeIntel',
   'DiffReview',
+  // Reading a file and handing it to a transcriber touches no shared state.
+  'Transcribe',
   'McpListResources',
   'McpReadResource',
 ]);

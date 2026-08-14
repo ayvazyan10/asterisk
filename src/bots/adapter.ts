@@ -8,6 +8,19 @@ export interface IncomingMessage {
   userId: string;
   text: string;
   timestamp: number;
+  /**
+   * A voice message the transport downloaded, for the core to transcribe.
+   *
+   * The transport does not transcribe it itself: which backend runs, whether
+   * transcription is on at all, and what the agent is told when it fails are
+   * policy, and policy does not belong in a protocol adapter. The file is
+   * temporary — the handler owns it and deletes it when the turn is done.
+   */
+  voice?: {
+    path: string;
+    /** Length reported by the transport, for the message the agent sees. */
+    seconds?: number;
+  };
 }
 
 export type AttachmentKind = 'image' | 'video' | 'audio' | 'document';

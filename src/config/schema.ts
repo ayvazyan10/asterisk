@@ -182,6 +182,61 @@ const WebSchema = z.object({
     .describe('Open the panel in the default browser on start.'),
 });
 
+// Speech to text. Two backends, because the two ways people actually run
+// Whisper are a local binary and an HTTP endpoint that speaks OpenAI's audio
+// API — the latter covers Groq, OpenAI, whisper.cpp's server and any local
+// proxy without a provider written per service.
+const SttSchema = z.object({
+  enabled: z
+    .boolean()
+    .default(true)
+    .describe('Transcribe voice messages. Off means a voice message is reported, not read.'),
+  provider: z
+    .enum(['auto', 'command', 'openai-compatible', 'off'])
+    .default('auto')
+    .describe(
+      'auto — use the command when one is configured, otherwise the HTTP endpoint. command / openai-compatible pin the choice, and a pinned backend that is not configured fails loudly instead of falling back.',
+    ),
+  command: z
+    .string()
+    .default('')
+    .describe(
+      'Local transcription command. {input} is the audio file; {model} and {language} are substituted when set; if {output_dir} appears, the transcript is read from the .txt it leaves there instead of stdout. Example: whisper-ctranslate2 {input} --model {model} --language {language} --output_format txt --output_dir {output_dir}',
+    ),
+  baseUrl: z
+    .string()
+    .default('')
+    .describe(
+      'OpenAI-compatible base URL for POST /audio/transcriptions, e.g. https://api.groq.com/openai/v1 or a local whisper server. The key, if the service needs one, is the ASTERISK_STT_API_KEY secret.',
+    ),
+  model: z
+    .string()
+    .default('')
+    .describe(
+      'Model name passed to the backend. Empty sends none, which is what a local command with a baked-in model wants.',
+    ),
+  language: z
+    .string()
+    .default('')
+    .describe(
+      'ISO code forced on the transcriber, e.g. ru. Empty lets Whisper detect it — which is what multilingual speakers want.',
+    ),
+  timeoutSeconds: z
+    .number()
+    .int()
+    .min(5)
+    .max(600)
+    .default(120)
+    .describe('How long a single transcription may take before it is abandoned.'),
+  maxFileMb: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(25)
+    .describe('Refuse audio larger than this. 25 is the limit hosted Whisper APIs impose.'),
+});
+
 // Who may run what through the Bash tool. This is a consent boundary, not a
 // sandbox: an approved command runs with the full privileges of the user who
 // started Asterisk. See tools/bash-permissions.ts for the rule syntax.
@@ -378,6 +433,7 @@ export const ConfigSchema = z.object({
   bots: BotsSchema.default({}),
   daemon: DaemonSchema.default({}),
   web: WebSchema.default({}),
+  stt: SttSchema.default({}),
   permissions: PermissionsSchema.default({}),
   sandbox: SandboxSchema.default({}),
   vision: VisionSchema.default({}),
@@ -396,6 +452,10 @@ export const SECRET_KEYS = [
   // local servers accept requests without one.
   'ASTERISK_OPENAI_API_KEY',
   'ASTERISK_TELEGRAM_BOT_TOKEN',
+  // Separate from the chat key on purpose: transcription usually runs against
+  // a different service (Groq's free tier, a local whisper server) than the
+  // model does.
+  'ASTERISK_STT_API_KEY',
 ] as const;
 
 export type SecretKey = (typeof SECRET_KEYS)[number];

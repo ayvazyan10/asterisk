@@ -18,6 +18,8 @@ export interface AsteriskPaths {
   webPidFile: string;
   webLog: string;
   webStateFile: string;
+  /** Voice messages downloaded for transcription, deleted once read. */
+  audioDir: string;
 }
 
 export function asteriskPaths(): AsteriskPaths {
@@ -35,6 +37,7 @@ export function asteriskPaths(): AsteriskPaths {
     webPidFile: join(root, 'web.pid'),
     webLog: join(root, 'logs', 'web.log'),
     webStateFile: join(root, 'web.json'),
+    audioDir: join(root, 'audio'),
   };
 }
 

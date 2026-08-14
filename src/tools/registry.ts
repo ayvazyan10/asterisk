@@ -23,6 +23,7 @@ import { SCHEDULE_TOOLS } from './schedule.ts';
 import { subAgentTool } from './subagent.ts';
 import { TASK_TOOLS } from './tasks.ts';
 import { toolSearchTool } from './tool-search.ts';
+import { transcribeTool } from './transcribe.ts';
 import type { Tool } from './types.ts';
 import { webFetchTool } from './webfetch.ts';
 import { webSearchTool } from './websearch.ts';
@@ -53,6 +54,7 @@ export const BUILTIN_TOOLS: Tool[] = [
   toolSearchTool,
   codeIntelTool,
   runCodeTool,
+  transcribeTool,
   diffReviewTool,
   ...MCP_RESOURCE_TOOLS,
 ];

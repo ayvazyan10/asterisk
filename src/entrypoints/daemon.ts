@@ -7,6 +7,7 @@ import type { AgentState } from '../agent/loop.ts';
 import { loadConversation, saveConversation } from '../agent/persistence.ts';
 import { attachChatApprovals } from '../bots/approval-bridge.ts';
 import { createBotManager } from '../bots/manager.ts';
+import { intakeVoice } from '../bots/voice-intake.ts';
 import { loadConfig } from '../config/load.ts';
 import { createDaemonLogger } from '../daemon/logger.ts';
 import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
@@ -123,14 +124,37 @@ manager
       const sessionId = `bot:${msg.chatId}`;
       const sink = hopts?.sink;
 
+      // A voice message becomes text before anything else looks at it.
+      // Transcription can take tens of seconds on a large local model, so the
+      // chat is told what is happening rather than sitting on a stale spinner.
+      if (msg.voice) sink?.({ type: 'status', text: 'transcribing voice message…' });
+      const intake = await intakeVoice(msg);
+      const userText = intake.text;
+      if (intake.outcome) {
+        if (intake.outcome.ok) {
+          log.info(
+            { chatId: msg.chatId, backend: intake.outcome.backend, chars: userText.length },
+            'voice transcribed',
+          );
+        } else {
+          log.warn({ chatId: msg.chatId, err: intake.outcome.error }, 'voice transcription failed');
+        }
+      }
+
       // Bot-level slash commands run inside the chat's session ALS scope so
       // they can read/mutate per-session state (tasks, plan mode). Handled
       // directly without spending tokens on the agent.
-      const handled = await runWithSession({ id: sessionId, scope: 'unknown' }, async () =>
-        tryHandleBotCommand(msg.text, { state, providerName: provider.name }),
-      );
+      //
+      // Spoken input is exempt: a transcript that happens to begin with "/"
+      // is a sentence Whisper heard, not a command the user typed, and running
+      // it as one would act on a homophone.
+      const handled = msg.voice
+        ? null
+        : await runWithSession({ id: sessionId, scope: 'unknown' }, async () =>
+            tryHandleBotCommand(userText, { state, providerName: provider.name }),
+          );
       if (handled) {
-        log.debug({ chatId: msg.chatId, command: msg.text.split(' ')[0] }, 'bot command');
+        log.debug({ chatId: msg.chatId, command: userText.split(' ')[0] }, 'bot command');
         sink?.({ type: 'final' });
         // Note: heartbeat hasn't been created yet at this branch (declared
         // below the slash-command check). Nothing to clear here.
@@ -168,7 +192,7 @@ manager
       }
 
       const attachments: Array<{ kind: string; path: string; caption?: string }> = [];
-      const turn = await runAgentTurn(provider, state, msg.text, {
+      const turn = await runAgentTurn(provider, state, userText, {
         // Per-user isolation — every chatId gets its own task list, plan-mode
         // flag, browser context, monitored processes, etc. Every transport
         // shares this code path; the chatId itself is unique enough across

@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Voice messages are transcribed.** A Telegram voice note is downloaded by
+  the transport, turned into text by the core, and reaches the agent labelled
+  as speech rather than disguised as typed text — the difference decides
+  whether "I didn't catch that" is a sensible reply. The recording is deleted
+  once read, and a failure is reported to the agent with its reason instead of
+  vanishing. Two backends behind one `stt` config section: a local command
+  template (`{input}`, `{model}`, `{language}`, `{output_dir}`) for
+  whisper.cpp / whisper-ctranslate2 / any script, and any OpenAI-compatible
+  `/audio/transcriptions` endpoint for Groq, OpenAI or a local whisper server.
+  `auto` prefers the local command; a pinned backend is never silently swapped
+  for the other, because that would decide on the user's behalf whether their
+  voice leaves the machine. New secret `ASTERISK_STT_API_KEY`.
+- **`Transcribe` tool** — the same pipeline for the agent, over any audio file
+  it has a path to, with per-call `language` and `model` overrides.
+- Spoken input never runs a bot slash command: a transcript that happens to
+  start with "/" is a sentence Whisper heard, not a command the user typed.
 - **Permission prompts in the chat.** A bot turn that needs a decision now asks
   in the chat that raised it, with allow-once / always / deny buttons, instead
   of being refused on the spot. `permissions.mode` defaults to `ask` and nothing

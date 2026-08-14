@@ -10,6 +10,10 @@
 // with a synthetic context exercises the whole path — allowlist, mode
 // selection, placeholder editing, chunking, attachments — without a network.
 
+import { readFileSync, statSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
@@ -23,6 +27,8 @@ const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
     handler: Handler | null = null;
     /** The approval controller's callback_query listener. */
     callbackHandler: Handler | null = null;
+    /** The voice-message listener. */
+    voiceHandler: Handler | null = null;
     startCalls = 0;
     stopCalls = 0;
     setMyCommandsCalls: unknown[][] = [];
@@ -58,6 +64,7 @@ const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
 
     on(event: string, handler: Handler): void {
       if (event === 'message:text') this.handler = handler;
+      if (event === 'message:voice') this.voiceHandler = handler;
       if (event === 'callback_query:data') this.callbackHandler = handler;
     }
 
@@ -83,7 +90,7 @@ const { GrammyError } = await import('grammy');
 const { createTelegramAdapter } = await import('../src/bots/telegram/index.ts');
 const { createBotManager } = await import('../src/bots/manager.ts');
 const { ConfigSchema } = await import('../src/config/schema.ts');
-import type { Handler, StreamEvent } from '../src/bots/adapter.ts';
+import type { Handler, IncomingMessage, StreamEvent } from '../src/bots/adapter.ts';
 import type { TelegramAdapterOptions } from '../src/bots/telegram/index.ts';
 
 /** A Telegram rejection, shaped the way grammy delivers one. */
@@ -814,6 +821,99 @@ describe('the placeholder spinner', () => {
     await turn;
 
     expect(ctx.texts('editMessageText').filter((t) => t.includes('npm test'))).toHaveLength(1);
+  });
+});
+
+describe('voice messages', () => {
+  /** A context shaped like a voice-note update, with grammy's getFile. */
+  class VoiceCtx extends FakeCtx {
+    override message = { text: '', caption: 'подпись', voice: { duration: 4 } } as never;
+    getFile = async (): Promise<{ file_path: string }> => ({ file_path: 'voice/file_9.oga' });
+  }
+
+  let home: string;
+  let prevHome: string | undefined;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'asterisk-tg-voice-'));
+    prevHome = process.env['ASTERISK_HOME'];
+    process.env['ASTERISK_HOME'] = home;
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    if (prevHome === undefined) delete process.env['ASTERISK_HOME'];
+    else process.env['ASTERISK_HOME'] = prevHome;
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('downloads the audio and hands the file to the core, not a transcript', async () => {
+    // The transport's job ends at the file: what gets transcribed, and what
+    // happens when it fails, is policy that lives in the core.
+    const seen: IncomingMessage[] = [];
+    vi.stubGlobal('fetch', async (url: string) => {
+      expect(url).toContain('/file/bottest-token/voice/file_9.oga');
+      return new Response(new Uint8Array([1, 2, 3]));
+    });
+
+    const adapter = createTelegramAdapter({ token: 'test-token', allowedUserIds: [7] });
+    await adapter.start(async (msg) => {
+      seen.push(msg);
+      return 'ok';
+    });
+
+    const bot = fakeBotInstances.at(-1);
+    const ctx = new VoiceCtx();
+    await bot?.voiceHandler?.(ctx);
+    await adapter.whenIdle();
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.voice?.seconds).toBe(4);
+    expect(seen[0]?.text).toBe('подпись');
+    const saved = seen[0]?.voice?.path ?? '';
+    expect(saved.endsWith('.oga')).toBe(true);
+    expect(readFileSync(saved)).toEqual(Buffer.from([1, 2, 3]));
+    // Owner-only: it is a recording of someone speaking.
+    expect(statSync(saved).mode & 0o077).toBe(0);
+  });
+
+  it('tells the user when the download fails instead of starting a turn', async () => {
+    vi.stubGlobal('fetch', async () => new Response('nope', { status: 404 }));
+    let turns = 0;
+
+    const adapter = createTelegramAdapter({ token: 'test-token', allowedUserIds: [7] });
+    await adapter.start(async () => {
+      turns += 1;
+      return 'ok';
+    });
+
+    const bot = fakeBotInstances.at(-1);
+    const ctx = new VoiceCtx();
+    await bot?.voiceHandler?.(ctx);
+    await adapter.whenIdle();
+
+    expect(turns).toBe(0);
+    expect(ctx.texts('reply')[0]).toContain('404');
+    // The bot token travels in that URL and must never reach the chat.
+    expect(ctx.texts('reply')[0]).not.toContain('test-token');
+  });
+
+  it('refuses a voice message from someone off the allowlist', async () => {
+    let turns = 0;
+    const adapter = createTelegramAdapter({ token: 'test-token', allowedUserIds: [7] });
+    await adapter.start(async () => {
+      turns += 1;
+      return 'ok';
+    });
+
+    const bot = fakeBotInstances.at(-1);
+    const ctx = new VoiceCtx();
+    ctx.from = { id: 999 };
+    await bot?.voiceHandler?.(ctx);
+    await adapter.whenIdle();
+
+    expect(turns).toBe(0);
+    expect(ctx.texts('reply')[0]).toContain('allowlist');
   });
 });
 

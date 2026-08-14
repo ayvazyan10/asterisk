@@ -83,6 +83,7 @@ describe('settings registry', () => {
       'bots',
       'daemon',
       'web',
+      'stt',
       'permissions',
       'sandbox',
       'vision',

@@ -21,6 +21,7 @@ import {
 import { BOT_COMMAND_LIST } from '../commands.ts';
 import { createApprovalController } from './approval.ts';
 import { balanceOpenTags, escapeHtml, markdownToTelegramHtml } from './format.ts';
+import { downloadVoice } from './voice.ts';
 
 const MAX_TELEGRAM_CHARS = 4096;
 // 10-frame braille spinner — same glyphs CLIs like cargo / yarn use. Looks
@@ -76,22 +77,7 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): TelegramAda
     async start(handler: Handler): Promise<void> {
       approvals.register(bot);
 
-      bot.on('message:text', async (ctx: Context) => {
-        const userId = ctx.from?.id;
-        if (userId === undefined || !allowed.has(userId)) {
-          await ctx.reply('This Asterisk bot is restricted. Your user id is not on the allowlist.');
-          return;
-        }
-        const text = ctx.message?.text ?? '';
-        if (!text) return;
-
-        const msg: IncomingMessage = {
-          chatId: String(ctx.chat?.id ?? userId),
-          userId: String(userId),
-          text,
-          timestamp: Date.now(),
-        };
-
+      const startTurn = (ctx: Context, msg: IncomingMessage): void => {
         // Deliberately not awaited. grammy's built-in polling handles updates
         // one at a time — `handleUpdates` in bot.js says "handle updates
         // sequentially (!)" — so awaiting the turn here holds the whole update
@@ -111,6 +97,54 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): TelegramAda
             inFlight.delete(task);
           });
         inFlight.add(task);
+      };
+
+      /** Shared gate: only allowlisted users reach the agent at all. */
+      const authorise = async (ctx: Context): Promise<number | null> => {
+        const userId = ctx.from?.id;
+        if (userId === undefined || !allowed.has(userId)) {
+          await ctx.reply('This Asterisk bot is restricted. Your user id is not on the allowlist.');
+          return null;
+        }
+        return userId;
+      };
+
+      bot.on('message:text', async (ctx: Context) => {
+        const userId = await authorise(ctx);
+        if (userId === null) return;
+
+        const text = ctx.message?.text ?? '';
+        if (!text) return;
+
+        startTurn(ctx, {
+          chatId: String(ctx.chat?.id ?? userId),
+          userId: String(userId),
+          text,
+          timestamp: Date.now(),
+        });
+      });
+
+      // Voice messages. The download happens here because it is transport
+      // work; transcription does not, because which backend runs and what
+      // happens when it fails is policy — see bots/adapter.ts.
+      bot.on('message:voice', async (ctx: Context) => {
+        const userId = await authorise(ctx);
+        if (userId === null) return;
+
+        const downloaded = await downloadVoice(ctx, opts.token);
+        if (!downloaded.ok) {
+          await ctx.reply(`Could not read that voice message: ${downloaded.error}`);
+          return;
+        }
+
+        startTurn(ctx, {
+          chatId: String(ctx.chat?.id ?? userId),
+          userId: String(userId),
+          // A voice note may carry a caption; the transcript joins it later.
+          text: ctx.message?.caption ?? '',
+          timestamp: Date.now(),
+          voice: downloaded.voice,
+        });
       });
 
       // Register slash commands with Telegram so users see autocomplete

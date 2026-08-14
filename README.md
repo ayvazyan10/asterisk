@@ -545,6 +545,64 @@ other's state.
 | `/plan`  | Toggle Plan Mode (read-only research mode)                |
 | `/soul`  | Show / `set` / `edit` / `clear` your personal persona     |
 
+## Voice messages
+
+Send the Telegram bot a voice note and it is transcribed before the agent
+sees it. The transcript is labelled, not passed off as typed text — the agent
+knows it was spoken, which is what makes "I didn't quite catch that" a
+sensible reply to a bad transcript. The recording is deleted as soon as it
+has been read, whether transcription succeeded or not.
+
+Two backends, because the two ways people actually run Whisper are a local
+binary and an HTTP endpoint:
+
+```jsonc
+"stt": {
+  "enabled": true,
+  "provider": "auto",              // auto | command | openai-compatible | off
+  "command": "",                   // local CLI, see below
+  "baseUrl": "",                   // OpenAI-compatible /audio/transcriptions
+  "model": "",                     // sent to whichever backend runs
+  "language": "",                  // ISO code, or empty to auto-detect
+  "timeoutSeconds": 120,
+  "maxFileMb": 25
+}
+```
+
+`auto` prefers the command when one is set — a local binary costs nothing and
+sends nobody's voice anywhere. A pinned backend is never silently swapped for
+the other one: being told `command` and quietly uploading the audio instead
+would be a privacy decision made on your behalf.
+
+**Local command.** The template gets `{input}`, and optionally `{model}`,
+`{language}` and `{output_dir}`. Every value is quoted before substitution, so
+a path with spaces stays one argument. Mention `{output_dir}` and the
+transcript is read from the `.txt` left there; omit it and stdout is the
+transcript.
+
+```bash
+# whisper-ctranslate2 (CUDA, writes a .txt)
+"command": "whisper-ctranslate2 {input} --model {model} --language {language} --output_format txt --output_dir {output_dir}"
+
+# whisper.cpp (prints to stdout)
+"command": "whisper-cli -m ~/models/ggml-large-v3.bin -f {input} --no-timestamps"
+```
+
+**HTTP.** Any endpoint that speaks OpenAI's audio API — Groq's free tier,
+OpenAI, a local `whisper-server`. The key, when the service needs one, is the
+`ASTERISK_STT_API_KEY` secret; a local server usually needs none.
+
+```jsonc
+"stt": { "baseUrl": "https://api.groq.com/openai/v1", "model": "whisper-large-v3-turbo" }
+```
+
+The agent gets the same pipeline as a tool: `Transcribe` takes a path to any
+audio file and returns what was said, with optional per-call `language` and
+`model` overrides.
+
+Leave `language` empty unless auto-detection is getting it wrong — forcing a
+language makes Whisper render other languages into that one.
+
 ## MCP servers
 
 Asterisk speaks the [Model Context Protocol](https://modelcontextprotocol.io)
@@ -659,6 +717,16 @@ the panel's **Download JSON** button produces and **Upload JSON** accepts:
     "port": 4321,
     "authRequired": true,
     "openBrowser": true
+  },
+  "stt": {                                    // voice messages — see "Voice messages"
+    "enabled": true,
+    "provider": "auto",                       // auto | command | openai-compatible | off
+    "command": "",                            // local whisper CLI template
+    "baseUrl": "",                            // or an OpenAI-compatible endpoint
+    "model": "",
+    "language": "",                           // empty = auto-detect
+    "timeoutSeconds": 120,
+    "maxFileMb": 25
   },
   "mcpServers": [],
   "hooks": []

@@ -26,6 +26,9 @@ const READ_ONLY_NAMES = new Set([
   'ExitPlanMode',
   'Agent',
   'Attach',
+  // Reading an audio file is research like any other read. The command
+  // backend does run a process, but one the user configured for this purpose.
+  'Transcribe',
 ]);
 
 export function isPlanMode(): boolean {
