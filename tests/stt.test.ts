@@ -14,7 +14,7 @@ import { type AsteriskConfig, ConfigSchema } from '../src/config/schema.ts';
 import { closeDb } from '../src/db/index.ts';
 import { buildCommand, shellQuote } from '../src/stt/command.ts';
 import { chooseBackend, transcribeAudio } from '../src/stt/index.ts';
-import { extractTranscript } from '../src/stt/openai-compatible.ts';
+import { extractTranscript, wireFilename } from '../src/stt/openai-compatible.ts';
 import type { SttSettings } from '../src/stt/types.ts';
 
 let home: string;
@@ -245,6 +245,28 @@ describe('openai-compatible backend', () => {
       ok: false,
       error: expect.stringContaining('ECONNREFUSED'),
     });
+  });
+
+  it('renames .oga to .ogg on the wire, which is what hosted services accept', async () => {
+    // Telegram names voice notes .oga; Groq's format list has ogg and not oga,
+    // so every voice message would come back as a format error.
+    const voice = join(home, 'voice-note.oga');
+    await writeFile(voice, 'audio bytes');
+    withStt({ baseUrl: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3' });
+
+    const calls = stubFetch(() => new Response('привет', { status: 200 }));
+    expect(await transcribeAudio(voice)).toMatchObject({ ok: true });
+
+    const body = (calls[0] as { init: { body: FormData } }).init.body;
+    const sent = body.get('file') as File;
+    expect(sent.name).toBe('voice-note.ogg');
+  });
+
+  it('leaves a filename alone when the service already accepts it', () => {
+    expect(wireFilename('/tmp/a.ogg')).toBe('a.ogg');
+    expect(wireFilename('/tmp/a.mp3')).toBe('a.mp3');
+    expect(wireFilename('/tmp/voice.OGA')).toBe('voice.ogg');
+    expect(wireFilename('/tmp/note.opus')).toBe('note.ogg');
   });
 
   it('accepts a JSON body as well as plain text', () => {

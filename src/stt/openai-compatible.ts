@@ -8,9 +8,31 @@
 // implementation agrees on; a server that answers with JSON anyway is still
 // handled, since the difference is not worth a failed transcription.
 
-import { basename } from 'node:path';
+import { basename, extname } from 'node:path';
 
 import { type SttResult, type SttSettings, sttFail, sttOk } from './types.ts';
+
+/**
+ * Extensions a hosted endpoint is likely to reject, and the equivalent it
+ * accepts. Same container, different spelling.
+ *
+ * Telegram names voice notes `.oga`, and Groq's accepted-format list has
+ * `ogg` but not `.oga` — so every voice message would come back as a format
+ * error. Only the filename in the multipart part changes; the bytes are sent
+ * untouched, and the decoder reads the container, not the name.
+ */
+const WIRE_EXTENSION: Record<string, string> = {
+  '.oga': '.ogg',
+  '.opus': '.ogg',
+};
+
+/** The filename to declare in the upload, normalised for picky services. */
+export function wireFilename(audioPath: string): string {
+  const name = basename(audioPath);
+  const replacement = WIRE_EXTENSION[extname(name).toLowerCase()];
+  if (!replacement) return name;
+  return name.slice(0, name.length - extname(name).length) + replacement;
+}
 
 /** Pulls the transcript out of either a bare string or an OpenAI-shaped body. */
 export function extractTranscript(body: string): string | null {
@@ -44,7 +66,7 @@ export async function transcribeOverHttp(
   const form = new FormData();
   // The filename matters: hosted services decide the decoder from its
   // extension, and an unnamed part is rejected outright.
-  form.append('file', new Blob([bytes as unknown as BlobPart]), basename(audioPath));
+  form.append('file', new Blob([bytes as unknown as BlobPart]), wireFilename(audioPath));
   if (settings.model) form.append('model', settings.model);
   if (settings.language) form.append('language', settings.language);
   form.append('response_format', 'text');

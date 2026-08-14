@@ -80,6 +80,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Voice notes reach a hosted transcriber under a name it accepts.** Telegram
+  names voice messages `.oga`; Groq's accepted-format list has `ogg` and not
+  `oga`, so every voice message would have come back as a format error the
+  moment the HTTP backend pointed at a hosted service. Only the filename in the
+  multipart part is normalised (`.oga`/`.opus` → `.ogg`) — the bytes are sent
+  untouched, and the decoder reads the container, not the name.
 - **A Telegram turn no longer blocks the update it is waiting for.** grammy's
   built-in polling processes updates one at a time (`handleUpdates` in bot.js:
   "handle updates sequentially (!)"), and the message handler awaited the whole
