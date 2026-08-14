@@ -42,6 +42,7 @@ const state = {
   // logOrder applies to both records: the file arrives oldest-first and the
   // audit query newest-first, and disagreeing with each other was the bug.
   logsTab: 'daemon',
+  credentialsTab: 'secrets',
   logOrder: localStorage.getItem('asterisk-log-order') === 'oldest' ? 'oldest' : 'newest',
   logLevel: 'all',
   logQuery: '',
@@ -302,7 +303,6 @@ const TABS = [
   ]},
   { group: 'Configure', items: [
     { id: 'settings', label: 'Settings', icon: 'settings' },
-    { id: 'secrets', label: 'Secrets', icon: 'secrets' },
     { id: 'connectors', label: 'Connectors', icon: 'connectors',
       count: () => state.loaded.has('connectors') ? state.connectors.filter((c) => c.connected).length : null },
     { id: 'mcp', label: 'MCP servers', icon: 'mcp', count: () => state.status && state.status.counts.mcpServers },
@@ -315,8 +315,9 @@ const TABS = [
     count: () => kindCount(k.id),
   })) },
   { group: 'Access', items: [
-    { id: 'tokens', label: 'Tokens', icon: 'tokens',
-      count: () => state.loaded.has('tokens') ? state.tokens.length : null },
+    // No count: the page holds two unlike things, and a single number beside
+    // it would be read as whichever one the reader had in mind.
+    { id: 'credentials', label: 'Credentials', icon: 'secrets' },
   ]},
 ];
 

@@ -158,21 +158,49 @@ describe('the client script', () => {
     expect(idsIn('CONTENT_KINDS').sort()).toEqual([...CONTENT_KINDS].sort());
   });
 
-  it('renders a panel for each record the Logs tab offers', () => {
-    // The log sub-tabs are not router tabs — they switch a panel inside one
-    // view, so they need entries in LOG_PANELS rather than in VIEWS.
-    const ids = idsIn('LOG_TABS');
-    expect(ids).toEqual(['daemon', 'audit', 'doctor']);
+  /** ids from every `*_TABS` record table on the page — TABS itself excepted. */
+  function recordIds(): Set<string> {
+    const tables = [...CLIENT.matchAll(/const (\w+_TABS) = \[/g)].map((m) => m[1] as string);
+    return new Set(tables.filter((t) => t !== 'TABS').flatMap(idsIn));
+  }
 
-    const table = CLIENT.slice(CLIENT.indexOf('const LOG_PANELS = {'));
-    const panels = new Map(
-      [...table.slice(0, table.indexOf('\n};')).matchAll(/(\w+): \(\) => (\w+)\(\)/g)].map((m) => [
-        m[1] as string,
-        m[2] as string,
-      ]),
+  /** `{ secrets: () => secretsPanel(), … }` from a named panel table. */
+  function panelTable(name: string): Map<string, string> {
+    const at = CLIENT.indexOf(`const ${name} = {`);
+    if (at === -1) throw new Error(`no ${name} in the client`);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\n};', at));
+    return new Map(
+      [...body.matchAll(/(\w+): \(\) => (\w+)\(\)/g)].map((m) => [m[1] as string, m[2] as string]),
     );
-    expect([...panels.keys()]).toEqual(ids);
-    for (const fn of panels.values()) expect(CLIENT).toContain(`function ${fn}(`);
+  }
+
+  it('renders a panel for each record a multi-record page offers', () => {
+    // Record sub-tabs are not router tabs — they switch a panel inside one
+    // view, so they need an entry in a *_PANELS table rather than in VIEWS.
+    // A record added without one falls back to the first panel in silence.
+    for (const [tabs, panels] of [
+      ['LOG_TABS', 'LOG_PANELS'],
+      ['CREDENTIAL_TABS', 'CREDENTIAL_PANELS'],
+    ]) {
+      const table = panelTable(panels as string);
+      expect([...table.keys()]).toEqual(idsIn(tabs as string));
+      for (const fn of table.values()) expect(CLIENT).toContain(`function ${fn}(`);
+    }
+    expect(idsIn('LOG_TABS')).toEqual(['daemon', 'audit', 'doctor']);
+    expect(idsIn('CREDENTIAL_TABS')).toEqual(['secrets', 'tokens']);
+  });
+
+  it('gives every multi-record page somewhere to keep the choice', () => {
+    // The segmented controls share one handler, which finds the state field
+    // through RECORD_STATE. A page missing from it renders a control that does
+    // nothing when clicked.
+    const body = CLIENT.slice(CLIENT.indexOf('const RECORD_STATE = {'));
+    const pages = [...body.slice(0, body.indexOf('};')).matchAll(/(\w+): '(\w+)'/g)];
+    expect(pages.map((m) => m[1]).sort()).toEqual(['credentials', 'logs']);
+    for (const [, page, field] of pages) {
+      expect(idsIn('TABS')).toContain(page);
+      expect(CLIENT).toContain(`${field}:`);
+    }
   });
 
   it('redirects a tab that moved instead of dropping it on the overview', () => {
@@ -182,14 +210,14 @@ describe('the client script', () => {
     const table = CLIENT.slice(CLIENT.indexOf('const MOVED_TABS = {'));
     const moved = [
       ...table
-        .slice(0, table.indexOf('};'))
+        .slice(0, table.indexOf('\n};'))
         .matchAll(/(\w+): \{ tab: '(\w+)', record: '(\w+)' \}/g),
     ];
-    expect(moved.length).toBeGreaterThan(0);
+    expect(moved.length).toBeGreaterThan(2);
     for (const [, from, to, record] of moved) {
       expect(idsIn('TABS')).not.toContain(from);
       expect(idsIn('TABS')).toContain(to);
-      expect(idsIn('LOG_TABS')).toContain(record);
+      expect(recordIds()).toContain(record);
     }
   });
 

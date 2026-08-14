@@ -159,7 +159,7 @@ async function saveHook() {
 
 // --- secrets -------------------------------------------------------------
 
-function viewSecrets() {
+function secretsPanel() {
   // An env var of the same name wins over anything stored here, so a key that
   // is overridden needs to say so where you would otherwise edit it and
   // wonder why nothing changed — not in small print underneath.
@@ -175,7 +175,7 @@ function viewSecrets() {
             'actually uses. Editing this will not take effect until it is unset.</div>'
           : '') +
       '</div>' +
-      '<div class="field-control">' +
+      '<div class="field-control field-control-row">' +
         '<input class="input" type="password" data-secret="' + esc(s.key) +
           '" placeholder="paste to replace" autocomplete="off">' +
         ui.btn('Save', { size: 'sm', attrs: ' data-secret-save="' + esc(s.key) + '"' }) +
@@ -187,10 +187,7 @@ function viewSecrets() {
 
   const shadowed = state.secrets.filter((s) => s.overriddenByEnv).length;
 
-  return ui.pageHeader('Secrets',
-      'Kept in the database, which is <code class="code-inline">chmod 600</code>. Values never come ' +
-      'back to the browser — only a masked fingerprint.') +
-    ui.card('API keys and tokens', rows || ui.empty('No secrets defined.'), {
+  return ui.card('Stored keys', rows || ui.empty('No secrets defined.'), {
       aside: shadowed > 0
         ? ui.badge(shadowed + ' overridden by env', 'destructive', true)
         : ui.badge(state.secrets.filter((s) => s.set).length + ' set', 'secondary'),
@@ -285,7 +282,7 @@ async function saveFile() {
 
 // --- tokens --------------------------------------------------------------
 
-function viewTokens() {
+function tokensPanel() {
   const rows = state.tokens.length === 0
     ? ui.empty('No tokens issued.')
     : state.tokens.map((t) => ui.listRow(
@@ -303,11 +300,39 @@ function viewTokens() {
       '<span class="form-hint">Shown once, at creation — copy it then.</span>' +
     '</div></div>';
 
-  return ui.pageHeader('Access tokens',
-      'Tokens authenticate browser sessions for this panel. Only hashes are stored, so a token is ' +
-      'shown exactly once — at creation. Revoking one ends its sessions.') +
-    addPanel('token-add', 'Issue a token', form) +
+  return addPanel('token-add', 'Issue a token', form) +
     ui.card('Issued', rows, { aside: ui.badge(state.tokens.length, 'secondary') });
+}
+
+// Both directions of credential, behind one segmented control: the keys
+// Asterisk presents to somebody else, and the tokens somebody else presents to
+// Asterisk. They were two rail entries in two different groups, which put the
+// two halves of one question a page apart.
+const CREDENTIAL_TABS = [
+  { id: 'secrets', label: 'Service keys' },
+  { id: 'tokens', label: 'Panel access' },
+];
+
+const CREDENTIAL_DESCRIPTIONS = {
+  secrets: 'Keys Asterisk sends outward — the model providers and the Telegram bot. Kept in the ' +
+    'database, which is chmod 600. Values never come back to the browser, only a masked fingerprint.',
+  tokens: 'Tokens that authenticate a browser session with this panel. Only hashes are stored, so a ' +
+    'token is shown exactly once — at creation. Revoking one ends its sessions.',
+};
+
+const CREDENTIAL_PANELS = {
+  secrets: () => secretsPanel(),
+  tokens: () => tokensPanel(),
+};
+
+function viewCredentials() {
+  const active = state.credentialsTab;
+  const panel = CREDENTIAL_PANELS[active] || CREDENTIAL_PANELS.secrets;
+  return ui.pageHeader('Credentials', CREDENTIAL_DESCRIPTIONS[active] || '') +
+    '<div class="section-actions mb">' +
+      ui.tabs(CREDENTIAL_TABS, active, 'record') +
+    '</div>' +
+    panel();
 }
 
 // --- diagnostics, logs, audit --------------------------------------------
@@ -378,7 +403,7 @@ function viewLogs() {
   const panel = LOG_PANELS[active] || LOG_PANELS.daemon;
   return ui.pageHeader('Logs', LOG_DESCRIPTIONS[active] || '', LOG_SUBJECTS[active]) +
     '<div class="section-actions mb">' +
-      ui.tabs(LOG_TABS, active, 'logs-tab') +
+      ui.tabs(LOG_TABS, active, 'record') +
       ui.btn('Reload', { attrs: ' data-action="logs-refresh"' }) +
     '</div>' +
     panel();
@@ -420,6 +445,9 @@ async function loadDoctor()   { state.doctor = await guard(() => api('/doctor'))
 // right trade against a spinner every time you toggle.
 async function loadLogRecords() { await Promise.all([loadLogs(), loadAudit()]); }
 
+/** Same trade for Credentials: two small queries beats a spinner on every toggle. */
+async function loadCredentials() { await Promise.all([loadSecrets(), loadTokens()]); }
+
 // The system figure reads rule and skill counts alongside everything /status
 // returns, so the landing page fetches both and the figure is complete on
 // first paint rather than filling in a beat later.
@@ -433,14 +461,14 @@ async function loadOverview() {
 const LOADERS = {
   overview: loadOverview, settings: loadSettings, mcp: loadMcp, hooks: loadHooks,
   connectors: loadConnectors,
-  secrets: loadSecrets, tokens: loadTokens,
+  credentials: loadCredentials,
   logs: loadLogRecords,
 };
 
 const VIEWS = {
   overview: viewOverview, settings: viewSettings, mcp: viewMcp, hooks: viewHooks,
   connectors: viewConnectors,
-  secrets: viewSecrets, tokens: viewTokens,
+  credentials: viewCredentials,
   logs: viewLogs,
 };
 
@@ -485,12 +513,23 @@ function render() {
  * saying why, and the browser history of anyone who used the old page is full
  * of them.
  */
-const MOVED_TABS = { doctor: { tab: 'logs', record: 'doctor' } };
+const MOVED_TABS = {
+  doctor: { tab: 'logs', record: 'doctor' },
+  secrets: { tab: 'credentials', record: 'secrets' },
+  tokens: { tab: 'credentials', record: 'tokens' },
+};
+
+/**
+ * Pages that hold more than one record behind a segmented control, and the
+ * state field each keeps its choice in. One table rather than a handler per
+ * page: the two pages differ in what they render, not in how the control works.
+ */
+const RECORD_STATE = { logs: 'logsTab', credentials: 'credentialsTab' };
 
 async function goto(tab) {
   const moved = MOVED_TABS[tab];
   if (moved) {
-    state.logsTab = moved.record;
+    state[RECORD_STATE[moved.tab]] = moved.record;
     return goto(moved.tab);
   }
   state.tab = tab;
@@ -508,7 +547,7 @@ document.addEventListener('click', async (ev) => {
     '[data-connector-connect],[data-connector-token],[data-connector-client],[data-copy],' +
     '[data-connector-remove],[data-connector-filter],' +
     '[data-hook-toggle],[data-hook-delete],' +
-    '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-logs-tab],' +
+    '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-record],' +
     '[data-skill-open],[data-agent-open],[data-jump],[data-settings-filter],[data-log-level],' +
     '[data-expand]');
   if (!t) return;
@@ -546,12 +585,17 @@ document.addEventListener('click', async (ev) => {
     return;
   }
   // Both records are already loaded; switching is a re-render, not a fetch.
-  if (d.logsTab) {
-    state.logsTab = d.logsTab;
+  if (d.record) {
+    const key = RECORD_STATE[state.tab];
+    if (!key) return;
+    state[key] = d.record;
     render();
     // The checks make real network calls, so they run when the record is
     // asked for rather than every time the Logs page is opened.
-    if (d.logsTab === 'doctor' && !state.doctor) { await loadDoctor(); render(); }
+    if (state.tab === 'logs' && d.record === 'doctor' && !state.doctor) {
+      await loadDoctor();
+      render();
+    }
     return;
   }
   if (d.open) { const [kind, ...rest] = d.open.split('|'); return openFile(kind, rest.join('|')); }

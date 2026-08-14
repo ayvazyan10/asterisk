@@ -240,6 +240,10 @@ export const COMPONENTS = String.raw`
 }
 .field-control .input, .field-control .select { width: 100%; min-width: 0; }
 .field-control .btn { justify-self: start; }
+/* Rows that carry more than one action — Save beside Clear — cannot use the
+   two-cell grid, which puts the third control on a line of its own. */
+.field-control-row { display: flex; justify-content: flex-end; }
+.field-control-row .input { flex: 1 1 auto; }
 .switch-cell { display: flex; align-items: center; gap: 0.5rem; }
 .switch-state {
   font-family: var(--font-machine); font-size: var(--t-2xs);
