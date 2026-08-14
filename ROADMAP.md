@@ -313,3 +313,142 @@ ordering reflects current judgement, not a contract.
 
 If you want something not on this list: open an issue with the use case
 (not just the feature name).
+
+---
+
+## Plugins: from three methods to a real contract
+
+Requested work, not speculation, so it sits outside the tiers above.
+
+### The problem, stated once
+
+A plugin is **trusted by construction**. That is the entire reason MCP exists
+beside it: code you did not write becomes an MCP server, where the isolation is
+that it is a separate process, and code you did write becomes a plugin, where
+there is no isolation at all. `src/plugins/types.ts` argues that position and it
+is right.
+
+But the contract does not follow from it. The process offers a plugin
+everything — the SQLite store with the keys, the tool registry, the permission
+gate. The API offers three methods: `registerTool`, `on`, `log`. So the moment a
+plugin wants to do anything real it reaches around the contract into Asterisk's
+own modules, and becomes a private fork that breaks on the next refactor.
+
+The work is to make the *contract* as capable as the *process* already is, and
+to make it something a plugin can depend on across versions. Not to make plugins
+safer — they cannot be made safer in-process, and pretending otherwise is how
+you end up with a sandbox that does not sandbox.
+
+### Tier A — the contract
+
+Everything else depends on this, and it is a breaking change to the plugin
+shape. Do it now, while the number of third-party plugins is zero.
+
+**A1. Manifest and version compatibility.** A plugin declares `apiVersion` and
+the Asterisk range it was written against. A mismatch is refused by name at load
+time rather than misbehaving at run time. Today a plugin written for `0.4`
+silently does the wrong thing on `0.6`.
+
+**A2. A real `PluginApi`.** Replace the three methods with a surface that covers
+what a plugin actually needs:
+
+| Method | Why it is not optional |
+|---|---|
+| `config()` | Read the resolved config. Plugins currently import `loadConfig` themselves. |
+| `settings` | Namespaced key/value in the DB, scoped to the plugin. Today a plugin needing state invents a file. |
+| `secret(name)` | Gated on a manifest declaration, so the panel can say what a plugin asked for. |
+| `invokeTool(name, input)` | Compose with the built-ins instead of reimplementing them. Goes through the same registry, so every gate still fires. |
+| `registerCommand(cmd)` | See B1. |
+| `log` / `logger` | Structured, into the daemon log, not just the transcript. |
+
+**A3. `activate` / `deactivate`.** Loading is currently one-way. Reload, per-plugin
+disable and clean shutdown all need a plugin to be able to give its resources
+back.
+
+**A4. Declared capabilities.** The manifest lists what the plugin registers and
+what it wants — tools, commands, events, secrets. This is **disclosure, not
+enforcement**: nothing can stop in-process code, but the panel can show what a
+plugin claims it will do *before* you turn it on, which is the decision that
+actually matters.
+
+### Tier B — reach
+
+**B1. Slash commands.** The REPL is command-driven and plugins cannot add one.
+`COMMANDS` is already an array in `commands/registry.ts`; the visual `FormSpec`
+/ `ListSpec` contract is already the return type. This is the cheapest large win
+on the list.
+
+**B2. System-prompt contribution.** Rules, skills and souls are all composed at
+prompt time. A plugin should be able to contribute a fragment — that is what
+"dynamic souls" in Tier 3 above actually wants, and it needs no sandbox because
+plugins are already trusted.
+
+**B3. Provider middleware.** Wrap the model call: response caching, prompt
+redaction, routing a class of turn to a different model. `providers/factory.ts`
+is already the single place a provider is built, so the seam exists.
+
+**B4. Scheduled work.** The daemon has a scheduler. A plugin should be able to
+ask for a periodic callback without spawning its own timer that nothing can see
+or stop.
+
+**B5. Transport and context hooks.** Bot message in/out, and a hook on context
+compaction — the summariser is the place a plugin could keep its own state
+across a compaction rather than losing it.
+
+### Tier C — operations
+
+**C1. The runtime report reaches the panel.** The Plugins page reads
+configuration and says plainly that it cannot know what is loaded, because the
+panel is not the process that loads plugins. Fix: the daemon writes its load
+report — loaded, failed, tools, handlers — to the database at startup, and the
+page reads it with the timestamp attached. Small, and it removes the one honest
+gap on that page.
+
+**C2. Hot reload.** `initialisePlugins()` already replaces the set rather than
+appending, so the hard half is done. Needs A3 to be real, or reload leaks
+whatever the old set held.
+
+**C3. Per-plugin enable.** One global switch means testing one plugin costs you
+all of them.
+
+**C4. Ordering and collisions.** Handlers run in load order and the first
+`block` wins; two plugins registering the same tool name resolve by "last one
+shadows", silently. Both should be declared and both should be visible.
+
+**C5. Error budget.** A handler that throws is currently reported and ignored —
+every single turn. A plugin that fails repeatedly should be disabled for the
+session with one line saying so.
+
+### Tier D — authoring
+
+**D1. A typed entry point.** One `asterisk/plugin` export so a plugin imports
+its types from a stable path instead of reaching into `src/`.
+
+**D2. Scaffold and test harness.** `asterisk plugin new`, plus an in-repo helper
+that runs a plugin against a fake agent loop. Without this, testing a plugin
+means booting the whole product.
+
+**D3. Reference plugins.** Two or three in-repo, tested, that exercise the API
+end to end — the honest check on whether A2 is actually sufficient.
+
+**D4. Distribution.** Last, deliberately. Nothing should be shareable until the
+API has survived D3, and the answer is probably "an npm package named by path",
+not a registry.
+
+### Not doing
+
+- **Sandboxing plugins.** Already argued in `types.ts`: bubblewrap confines
+  child processes, and a plugin is a function call. The isolated mechanism is
+  MCP, and Asterisk already speaks it.
+- **A directory scan.** Dropping a file into a folder must never be enough to
+  get code into this process.
+- **Auto-update of plugins.** Code that updates itself with your keys in reach
+  is not a feature.
+- **A marketplace before D3.** A published API that turns out to be wrong is
+  worse than no API.
+
+### Sequence
+
+A → C1 → B1 → the rest by demand. A is breaking and must land first. C1 is a
+day's work and closes the gap the Plugins page currently has to apologise for.
+B1 is the largest capability increase per line of code on the list.
