@@ -31,6 +31,7 @@ import {
   browserCommands,
   disconnectConnector,
   openInBrowser,
+  tryCommands,
 } from '../src/mcp/oauth/connect.ts';
 import { ConsentRequiredError, createConnectorAuthProvider } from '../src/mcp/oauth/provider.ts';
 import { defined } from './helpers.ts';
@@ -586,21 +587,36 @@ describe('handing the consent URL to a browser', () => {
     expect(browserCommands(URL_, 'win32')).toEqual([['cmd', ['/c', 'start', '', URL_]]]);
   });
 
-  it('falls through to the next opener and reports whether any took it', async () => {
+  it('falls through to the next opener and stops at the first that takes it', async () => {
     const tried: string[] = [];
-    const failFirst = async (command: string): Promise<void> => {
+    const failing = new Set(['wslview']);
+    const run = async (command: string): Promise<void> => {
       tried.push(command);
-      if (tried.length === 1) throw new Error('not installed');
+      if (failing.has(command)) throw new Error('not installed');
     };
-    expect(await openInBrowser(URL_, failFirst)).toBe(true);
-    expect(tried.length).toBeGreaterThan(0);
 
-    const alwaysFails = async (command: string): Promise<void> => {
-      tried.push(command);
-      throw new Error('nope');
-    };
+    const candidates = browserCommands(URL_, 'linux', true);
+    expect(await tryCommands(candidates, run)).toBe(true);
+    // Stopped at explorer.exe: xdg-open must not also have been fired.
+    expect(tried).toEqual(['wslview', 'explorer.exe']);
+
+    tried.length = 0;
+    for (const [command] of candidates) failing.add(command);
     // Not an error: the caller shows the URL either way, which is the whole
     // reason this returns a boolean instead of throwing.
-    expect(await openInBrowser(URL_, alwaysFails)).toBe(false);
+    expect(await tryCommands(candidates, run)).toBe(false);
+    expect(tried).toEqual(['wslview', 'explorer.exe', 'xdg-open']);
+  });
+
+  it('reports success without shelling out, whatever the host offers', async () => {
+    // openInBrowser reads process.platform, so this asserts only what holds on
+    // every host: something is always tried, and a runner that accepts wins.
+    let calls = 0;
+    expect(
+      await openInBrowser(URL_, async () => {
+        calls++;
+      }),
+    ).toBe(true);
+    expect(calls).toBe(1);
   });
 });

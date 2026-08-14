@@ -84,16 +84,18 @@ const runCommand: CommandRunner = (command, args) =>
   execa(command, args, { timeout: 5000, stdio: 'ignore' });
 
 /**
- * Hands a URL to the desktop, returning whether anything accepted it.
+ * Runs candidates until one does not throw.
  *
- * Never throws and never blocks the flow: the URL is surfaced regardless, so a
- * failure here costs the user a copy-paste, not the connection.
+ * Takes the list rather than deriving it, so what happens on a failure is
+ * separable from which commands the host offers — the list is one candidate
+ * long on plain Linux and three under WSL, and a test of the fall-through that
+ * read `process.platform` would pass on one machine and fail on the other.
  */
-export async function openInBrowser(
-  url: string,
-  run: CommandRunner = runCommand,
+export async function tryCommands(
+  candidates: ReadonlyArray<[string, string[]]>,
+  run: CommandRunner,
 ): Promise<boolean> {
-  for (const [command, args] of browserCommands(url, process.platform, isWsl())) {
+  for (const [command, args] of candidates) {
     try {
       await run(command, args);
       return true;
@@ -104,6 +106,19 @@ export async function openInBrowser(
     }
   }
   return false;
+}
+
+/**
+ * Hands a URL to the desktop, returning whether anything accepted it.
+ *
+ * Never throws and never blocks the flow: the URL is surfaced regardless, so a
+ * failure here costs the user a copy-paste, not the connection.
+ */
+export async function openInBrowser(
+  url: string,
+  run: CommandRunner = runCommand,
+): Promise<boolean> {
+  return tryCommands(browserCommands(url, process.platform, isWsl()), run);
 }
 
 function isWsl(): boolean {
