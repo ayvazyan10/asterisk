@@ -53,31 +53,49 @@ export interface PendingConnectorFlow {
 }
 
 /**
+ * What to try, in order, to put a URL in front of the user.
+ *
+ * Pure and exported so the ordering is testable: it is a per-platform
+ * judgement, not a detail, and the one that matters most cannot be exercised
+ * on the machine that runs CI.
+ */
+export function browserCommands(
+  url: string,
+  platform: NodeJS.Platform,
+  wsl = false,
+): Array<[string, string[]]> {
+  if (platform === 'darwin') return [['open', [url]]];
+  if (platform === 'win32') return [['cmd', ['/c', 'start', '', url]]];
+  // Linux — but under WSL the browser lives on the Windows side, so
+  // wslview/explorer.exe come before xdg-open, which usually has no handler
+  // registered inside the distro.
+  if (!wsl) return [['xdg-open', [url]]];
+  return [
+    ['wslview', [url]],
+    ['explorer.exe', [url]],
+    ['xdg-open', [url]],
+  ];
+}
+
+/** Runs one candidate. Injected so tests never shell out. */
+export type CommandRunner = (command: string, args: string[]) => Promise<unknown>;
+
+const runCommand: CommandRunner = (command, args) =>
+  execa(command, args, { timeout: 5000, stdio: 'ignore' });
+
+/**
  * Hands a URL to the desktop, returning whether anything accepted it.
  *
  * Never throws and never blocks the flow: the URL is surfaced regardless, so a
  * failure here costs the user a copy-paste, not the connection.
  */
-export async function openInBrowser(url: string): Promise<boolean> {
-  const candidates: Array<[string, string[]]> =
-    process.platform === 'darwin'
-      ? [['open', [url]]]
-      : process.platform === 'win32'
-        ? [['cmd', ['/c', 'start', '', url]]]
-        : // Linux — but under WSL the browser lives on the Windows side, so
-          // wslview/explorer.exe come before xdg-open, which usually has no
-          // handler registered inside the distro.
-          isWsl()
-          ? [
-              ['wslview', [url]],
-              ['explorer.exe', [url]],
-              ['xdg-open', [url]],
-            ]
-          : [['xdg-open', [url]]];
-
-  for (const [command, args] of candidates) {
+export async function openInBrowser(
+  url: string,
+  run: CommandRunner = runCommand,
+): Promise<boolean> {
+  for (const [command, args] of browserCommands(url, process.platform, isWsl())) {
     try {
-      await execa(command, args, { timeout: 5000, stdio: 'ignore' });
+      await run(command, args);
       return true;
     } catch {
       // Try the next one. explorer.exe in particular exits non-zero even when

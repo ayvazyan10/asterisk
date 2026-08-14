@@ -41,8 +41,7 @@ export const mcpCommand: SlashCommand = {
     }
     if (verb === 'client') {
       const name = rest[0];
-      if (!name) return 'usage: /mcp client <name>';
-      return mcpClientForm(name);
+      return name ? mcpClientForm(name) : mcpConnectorPicker(ctx, 'client');
     }
     if (verb === 'resources') return formatMcpResources(ctx, rest[0]);
     if (verb === 'read') return readMcpResource(ctx, rest[0], rest.slice(1).join(' '));

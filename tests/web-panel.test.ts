@@ -281,6 +281,124 @@ describe('collections API', () => {
     expect(custom).toMatchObject({ source: 'custom', installed: true, connected: false });
   });
 
+  it('carries a hand-added connector’s own auth mode, URL and scopes onto its row', async () => {
+    await call(
+      '/api/mcp',
+      send('PUT', {
+        server: {
+          name: 'in-house',
+          transport: 'http',
+          url: 'https://mcp.example/mcp',
+          auth: 'token',
+          scopes: ['read'],
+        },
+      }),
+    );
+    const custom = (await call('/api/connectors')).body.connectors.find(
+      (c: { id: string }) => c.id === 'in-house',
+    );
+    // A custom row is described from itself, not from a catalog entry it has
+    // none of — including the assumption that its server registers clients.
+    expect(custom).toMatchObject({
+      source: 'custom',
+      auth: 'token',
+      url: 'https://mcp.example/mcp',
+      scopes: ['read'],
+      clientRegistration: 'dynamic',
+      hasClient: false,
+    });
+  });
+
+  it('shows a catalog entry at the URL the user overrode it with', async () => {
+    await call(
+      '/api/mcp',
+      send('PUT', {
+        server: {
+          name: 'linear',
+          transport: 'http',
+          url: 'https://linear.internal/mcp',
+          auth: 'oauth',
+        },
+      }),
+    );
+    const linear = (await call('/api/connectors')).body.connectors.find(
+      (c: { id: string }) => c.id === 'linear',
+    );
+    // Still their Linear connector, still named Linear — but pointing where
+    // they pointed it.
+    expect(linear).toMatchObject({ source: 'catalog', installed: true });
+    expect(linear.url).toBe('https://linear.internal/mcp');
+  });
+
+  it('keeps an existing row’s headers and scopes when a credential is added', async () => {
+    await call(
+      '/api/mcp',
+      send('PUT', {
+        server: {
+          name: 'github',
+          transport: 'http',
+          url: 'https://api.githubcopilot.com/mcp/',
+          headers: { 'X-Tenant': 'acme' },
+          auth: 'token',
+          scopes: ['repo'],
+        },
+      }),
+    );
+    expect(
+      (await call('/api/connectors/github/token', send('PUT', { token: 'ghp-1' }))).status,
+    ).toBe(200);
+
+    const server = (await call('/api/mcp')).body.servers[0];
+    // Adding a token is not an edit of the server: what the user configured by
+    // hand has to survive it.
+    expect(server).toMatchObject({
+      headers: { 'X-Tenant': 'acme' },
+      scopes: ['repo'],
+      url: 'https://api.githubcopilot.com/mcp/',
+    });
+  });
+
+  it('refuses a credential for a name that is not a connector at all', async () => {
+    expect((await call('/api/connectors/ghost/token', send('PUT', { token: 'x' }))).status).toBe(
+      404,
+    );
+    expect(
+      (await call('/api/connectors/ghost/client', send('PUT', { clientId: 'x' }))).status,
+    ).toBe(404);
+
+    await call(
+      '/api/mcp',
+      send('PUT', { server: { name: 'notion', transport: 'stdio', command: 'notion-cli' } }),
+    );
+    expect((await call('/api/connectors/notion/token', send('PUT', { token: 'x' }))).status).toBe(
+      409,
+    );
+    expect(
+      (await call('/api/connectors/notion/client', send('PUT', { clientId: 'x' }))).status,
+    ).toBe(409);
+  });
+
+  it('rejects a credential body of the wrong shape', async () => {
+    expect((await call('/api/connectors/github/token', send('PUT', { token: 42 }))).status).toBe(
+      400,
+    );
+    expect(
+      (await call('/api/connectors/google-drive/client', send('PUT', { clientId: null }))).status,
+    ).toBe(400);
+  });
+
+  it('refuses the browser flow for a connector the user set to auth: none', async () => {
+    await call(
+      '/api/mcp',
+      send('PUT', {
+        server: { name: 'linear', transport: 'http', url: 'https://mcp.linear.app/mcp' },
+      }),
+    );
+    const { status, body } = await call('/api/connectors/linear/connect', { method: 'POST' });
+    expect(status).toBe(409);
+    expect(body.error).toMatch(/auth: none/);
+  });
+
   it('sends a token connector down the token path instead of the browser flow', async () => {
     const { status, body } = await call('/api/connectors/github/connect', { method: 'POST' });
     expect(status).toBe(409);

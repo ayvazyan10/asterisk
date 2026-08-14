@@ -26,7 +26,12 @@ import {
   writeMcpOAuthClient,
 } from '../src/db/mcp-credentials.ts';
 import { CallbackPortBusyError, startCallbackServer } from '../src/mcp/oauth/callback.ts';
-import { beginConnectorFlow, disconnectConnector } from '../src/mcp/oauth/connect.ts';
+import {
+  beginConnectorFlow,
+  browserCommands,
+  disconnectConnector,
+  openInBrowser,
+} from '../src/mcp/oauth/connect.ts';
 import { ConsentRequiredError, createConnectorAuthProvider } from '../src/mcp/oauth/provider.ts';
 import { defined } from './helpers.ts';
 
@@ -561,5 +566,41 @@ describe('connector consent flow, end to end', () => {
       await resource.close();
       await authServer.close();
     }
+  });
+});
+
+describe('handing the consent URL to a browser', () => {
+  const URL_ = 'https://auth.example.com/authorize?x=1';
+
+  it('puts the Windows-side openers first under WSL', () => {
+    // The distro usually has no xdg-open handler at all, so trying it first
+    // would mean every WSL user copy-pastes the URL by hand.
+    expect(browserCommands(URL_, 'linux', true).map(([c]) => c)).toEqual([
+      'wslview',
+      'explorer.exe',
+      'xdg-open',
+    ]);
+    expect(browserCommands(URL_, 'linux', false)).toEqual([['xdg-open', [URL_]]]);
+    expect(browserCommands(URL_, 'darwin')).toEqual([['open', [URL_]]]);
+    // The empty argument is the title `start` would otherwise take the URL for.
+    expect(browserCommands(URL_, 'win32')).toEqual([['cmd', ['/c', 'start', '', URL_]]]);
+  });
+
+  it('falls through to the next opener and reports whether any took it', async () => {
+    const tried: string[] = [];
+    const failFirst = async (command: string): Promise<void> => {
+      tried.push(command);
+      if (tried.length === 1) throw new Error('not installed');
+    };
+    expect(await openInBrowser(URL_, failFirst)).toBe(true);
+    expect(tried.length).toBeGreaterThan(0);
+
+    const alwaysFails = async (command: string): Promise<void> => {
+      tried.push(command);
+      throw new Error('nope');
+    };
+    // Not an error: the caller shows the URL either way, which is the whole
+    // reason this returns a boolean instead of throwing.
+    expect(await openInBrowser(URL_, alwaysFails)).toBe(false);
   });
 });

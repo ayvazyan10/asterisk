@@ -10,6 +10,12 @@ import { describe, expect, it } from 'vitest';
 
 import { loadConfig, saveConfig } from '../src/config/load.ts';
 import type { McpServerConfig } from '../src/config/schema.ts';
+import { getDb } from '../src/db/index.ts';
+import {
+  writeMcpCredentials,
+  writeMcpOAuthClient,
+  writeMcpUserToken,
+} from '../src/db/mcp-credentials.ts';
 import { listTools } from '../src/tools/registry.ts';
 import {
   asForm,
@@ -135,7 +141,7 @@ describe('/mcp routing', () => {
     seed(http('plain'));
     expect(await runText(ctx, '/mcp', 'client plain')).toMatch(/not an OAuth connector/);
     expect(await runText(ctx, '/mcp', 'client nowhere')).toBe('no MCP server named "nowhere"');
-    expect(await runText(ctx, '/mcp', 'client')).toBe('usage: /mcp client <name>');
+    expect(asList(await run(ctx, '/mcp', 'client')).title).toMatch(/OAuth client for which/);
   });
 
   it('the transport picker opens the matching add form', async () => {
@@ -629,5 +635,102 @@ describe('/mcp list, reload and resources', () => {
     expect(await runText(ctx, '/mcp', 'read docs file:///missing')).toBe(
       'MCP resource read failed: no such resource',
     );
+  });
+});
+
+describe('/mcp list — what a connector row says about its credentials', () => {
+  withTempHome('mcp-auth-suffix');
+
+  const oauth = (name: string, url = 'https://mcp.example.com/mcp'): McpServerConfig => ({
+    name,
+    transport: 'http',
+    url,
+    headers: {},
+    auth: 'oauth',
+    scopes: [],
+    enabled: true,
+  });
+
+  /** Minutes from now, as the absolute expiry the store holds. */
+  const inMinutes = (m: number): number => Date.now() + m * 60_000;
+
+  async function listing(server: McpServerConfig): Promise<string> {
+    seed(server);
+    return runText(makeContext({ mcp: fakeMcp() }), '/mcp', 'list');
+  }
+
+  it('distinguishes a token that is set from one that is missing', async () => {
+    const url = 'https://api.githubcopilot.com/mcp/';
+    const github: McpServerConfig = {
+      name: 'github',
+      transport: 'http',
+      url,
+      headers: {},
+      auth: 'token',
+      scopes: [],
+      enabled: true,
+    };
+    expect(await listing(github)).toContain('token: missing');
+
+    writeMcpUserToken(getDb(), 'github', url, 'ghp-1');
+    expect(await listing(github)).toContain('token: set');
+  });
+
+  it('asks for a client before it asks for consent, where the service needs one', async () => {
+    // google-drive is a catalog entry whose authorization server registers
+    // nothing, so "not connected" would be the wrong thing to tell the user.
+    const drive = oauth('google-drive', 'https://drivemcp.googleapis.com/mcp/v1');
+    expect(await listing(drive)).toContain('oauth: needs a client');
+
+    writeMcpOAuthClient(getDb(), 'google-drive', 'https://drivemcp.googleapis.com/mcp/v1', 'id-1');
+    expect(await listing(drive)).toContain('oauth: not connected');
+  });
+
+  it('says plainly that a dynamic-registration connector is simply not connected', async () => {
+    expect(await listing(oauth('linear', 'https://mcp.linear.app/mcp'))).toContain(
+      'oauth: not connected',
+    );
+  });
+
+  it('reports the remaining life of a token in the unit that reads best', async () => {
+    const server = oauth('demo');
+    const url = 'https://mcp.example.com/mcp';
+    const db = getDb();
+
+    writeMcpCredentials(db, 'demo', url, { tokens: { access_token: 'a' } });
+    expect(await listing(server)).toContain('oauth: connected');
+
+    writeMcpCredentials(db, 'demo', url, { expiresAt: inMinutes(42) });
+    expect(await listing(server)).toContain('expires in 42m');
+
+    writeMcpCredentials(db, 'demo', url, { expiresAt: inMinutes(10 * 60) });
+    expect(await listing(server)).toContain('expires in 10h');
+
+    writeMcpCredentials(db, 'demo', url, { expiresAt: inMinutes(5 * 24 * 60) });
+    expect(await listing(server)).toContain('expires in 5d');
+  });
+
+  it('separates an expired token that renews itself from one that cannot', async () => {
+    const server = oauth('demo');
+    const url = 'https://mcp.example.com/mcp';
+    const db = getDb();
+
+    writeMcpCredentials(db, 'demo', url, {
+      tokens: { access_token: 'a', refresh_token: 'r' },
+      expiresAt: inMinutes(-5),
+    });
+    expect(await listing(server)).toContain('refreshes on use');
+
+    writeMcpCredentials(db, 'demo', url, { tokens: { access_token: 'a' } });
+    writeMcpCredentials(db, 'demo', url, { expiresAt: inMinutes(-5) });
+    expect(await listing(server)).toContain('expired — reconnect needed');
+  });
+
+  it('opens a picker when connect, disconnect or client is given no name', async () => {
+    seed(oauth('linear', 'https://mcp.linear.app/mcp'));
+    const ctx = makeContext({ mcp: fakeMcp() });
+    expect(asList(await run(ctx, '/mcp', 'connect')).title).toMatch(/Authorize which/);
+    expect(asList(await run(ctx, '/mcp', 'disconnect')).title).toMatch(/Disconnect which/);
+    expect(asList(await run(ctx, '/mcp', 'client')).items.map((i) => i.value)).toEqual(['linear']);
   });
 });
