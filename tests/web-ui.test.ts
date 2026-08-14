@@ -22,6 +22,7 @@ import { APP_AUTHORED } from '../src/web/ui/app-authored.ts';
 import { APP_CONNECTORS } from '../src/web/ui/app-connectors.ts';
 import { APP_CORE } from '../src/web/ui/app-core.ts';
 import { APP_LOGS } from '../src/web/ui/app-logs.ts';
+import { APP_PLUGINS } from '../src/web/ui/app-plugins.ts';
 import { APP_SETTINGS } from '../src/web/ui/app-settings.ts';
 import { APP_SKILLS } from '../src/web/ui/app-skills.ts';
 import { APP_STAR } from '../src/web/ui/app-star.ts';
@@ -42,6 +43,7 @@ const CLIENT = [
   APP_SKILLS,
   APP_AUTHORED,
   APP_CONNECTORS,
+  APP_PLUGINS,
   APP_VIEWS,
 ].join('\n');
 
@@ -87,6 +89,7 @@ describe('the client script', () => {
         'APP_SKILLS',
         'APP_AUTHORED',
         'APP_CONNECTORS',
+        'APP_PLUGINS',
         'APP_VIEWS',
       ]),
     );
@@ -113,17 +116,28 @@ describe('the client script', () => {
     expect(calls).not.toMatch(/(?<![.\w])prompt\s*\(/);
   });
 
-  it('opens every link it renders in a new tab without handing over the opener', () => {
+  it('opens an outbound link in a new tab, and an in-page one in place', () => {
     // The tag is built by concatenation, so the attributes are spread across
     // string literals — look at the window after the tag rather than at one
-    // literal. Every href here points at somebody else's site.
+    // literal. A `#tab` href is this page's own router and must navigate in
+    // place; anything else points at somebody else's site.
     const anchors = [...CLIENT.matchAll(/<a\b/g)];
     expect(anchors.length).toBeGreaterThan(0);
+    let outbound = 0;
+    let inPage = 0;
     for (const m of anchors) {
       const tag = CLIENT.slice(m.index, m.index + 200);
-      expect(tag).toContain('target="_blank"');
-      expect(tag).toContain('rel="noopener noreferrer"');
+      if (/href="#/.test(tag)) {
+        inPage++;
+        expect(tag).not.toContain('target="_blank"');
+      } else {
+        outbound++;
+        expect(tag).toContain('target="_blank"');
+        expect(tag).toContain('rel="noopener noreferrer"');
+      }
     }
+    expect(outbound).toBeGreaterThan(0);
+    expect(inPage).toBeGreaterThan(0);
   });
 
   it('parses as JavaScript', () => {

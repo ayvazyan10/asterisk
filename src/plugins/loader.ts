@@ -68,11 +68,17 @@ export async function loadPlugins(
     const trimmed = raw.trim();
     if (!trimmed) continue;
 
-    const path = resolve(expandHome(trimmed));
-    if (!isAbsolute(path)) {
-      result.errors.push(`${trimmed}: plugin paths must resolve to an absolute path`);
+    // Tested before resolve(), not after: resolve() *makes* a path absolute, so
+    // `isAbsolute(resolve(x))` is true for every x and the check that used to
+    // be written that way could never fire. What it was there to stop is a
+    // relative path silently resolving against whatever directory the daemon
+    // happened to be started in.
+    const expanded = expandHome(trimmed);
+    if (!isAbsolute(expanded)) {
+      result.errors.push(`${trimmed}: plugin paths must be absolute (or start with ~/)`);
       continue;
     }
+    const path = resolve(expanded);
     // Loading the same module twice would register its tools twice, and the
     // second copy would shadow the first in getTool().
     if (seen.has(path)) {

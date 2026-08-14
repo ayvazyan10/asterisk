@@ -236,3 +236,23 @@ describe('runPluginHandlers', () => {
     expect(errors).toHaveLength(0);
   });
 });
+
+describe('plugin paths', () => {
+  it('refuses a relative path instead of resolving it against the cwd', async () => {
+    // The guard used to read isAbsolute(resolve(x)), which resolve() makes
+    // true for every x — so a relative entry was silently imported from
+    // whatever directory the daemon happened to be started in.
+    const result = await loadPlugins(['./somewhere/plugin.ts'], true);
+    expect(result.plugins).toEqual([]);
+    expect(result.errors).toEqual([
+      './somewhere/plugin.ts: plugin paths must be absolute (or start with ~/)',
+    ]);
+  });
+
+  it('still accepts a ~ path, which expands to an absolute one', async () => {
+    const result = await loadPlugins(['~/definitely-not-here.ts'], true);
+    // Absolute after expansion, so it gets as far as the import and fails there.
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).not.toMatch(/must be absolute/);
+  });
+});

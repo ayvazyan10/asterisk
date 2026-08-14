@@ -11,18 +11,30 @@ import { allSecrets, deleteSecret, maskSecret, setSecret } from '../../db/settin
 import { getPath, setPath } from '../../utils/object-path.ts';
 import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
 
+/**
+ * Groups the panel gives a page of their own.
+ *
+ * They stay in the registry — it is the complete list of what the schema
+ * understands, and `validateField` still writes them — but the Settings page
+ * does not render them, because a surface with its own security story does not
+ * belong as two rows inside a collapsed group.
+ */
+const OWN_PAGE_GROUPS = new Set(['plugins']);
+
 /** Registry plus current values — everything the settings UI needs in one call. */
 export const getSettings: Handler = ({ db }) => {
   const config = readConfig(db) as unknown as Record<string, unknown>;
   return json({
-    groups: settingsByGroup().map((group) => ({
-      group: group.group,
-      label: group.label,
-      fields: group.fields.map((field) => ({
-        ...field,
-        value: getPath(config, field.path),
+    groups: settingsByGroup()
+      .filter((group) => !OWN_PAGE_GROUPS.has(group.group))
+      .map((group) => ({
+        group: group.group,
+        label: group.label,
+        fields: group.fields.map((field) => ({
+          ...field,
+          value: getPath(config, field.path),
+        })),
       })),
-    })),
   });
 };
 
