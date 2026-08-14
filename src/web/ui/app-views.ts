@@ -18,12 +18,30 @@ function addPanel(id, label, form) {
 
 // --- mcp servers ---------------------------------------------------------
 
+function mcpDetail(s) {
+  if (s.transport === 'stdio') return s.command + ' ' + (s.args || []).join(' ');
+  if (!s.oauth) return s.url;
+  return s.url + ' · oauth: ' + (s.oauth.connected ? 'connected' : 'not connected');
+}
+
+/** Connect/Disconnect only exist for connectors — everything else has no token to hold. */
+function mcpAuthButtons(s) {
+  if (!s.oauth) return '';
+  const name = esc(s.name);
+  return ui.btn(s.oauth.connected ? 'Reconnect' : 'Connect',
+      { size: 'sm', attrs: ' data-mcp-connect="' + name + '"' }) +
+    (s.oauth.connected
+      ? ui.btn('Disconnect', { size: 'sm', variant: 'destructive-ghost', attrs: ' data-mcp-disconnect="' + name + '"' })
+      : '');
+}
+
 function viewMcp() {
   const rows = state.mcp.length === 0
     ? ui.empty('No MCP servers configured.')
     : state.mcp.map((s) => ui.listRow(
         esc(s.name),
-        s.transport === 'stdio' ? s.command + ' ' + (s.args || []).join(' ') : s.url,
+        mcpDetail(s),
+        mcpAuthButtons(s) +
         ui.btn(s.enabled ? 'Disable' : 'Enable', { size: 'sm', attrs: ' data-mcp-toggle="' + esc(s.name) + '"' }) +
         ui.btn('Delete', { size: 'sm', variant: 'destructive-ghost', attrs: ' data-mcp-delete="' + esc(s.name) + '"' }),
         ui.stateBadge(s.enabled)
@@ -38,6 +56,9 @@ function viewMcp() {
     '<label class="label" for="mcp-command">Command / URL</label>' +
     '<input class="input" type="text" id="mcp-command" ' +
       'placeholder="npx -y @modelcontextprotocol/server-filesystem /tmp">' +
+    '<label class="label" for="mcp-auth">Authentication (http)</label>' +
+    '<select class="select" id="mcp-auth"><option value="none">none</option>' +
+      '<option value="oauth">oauth (connector)</option></select>' +
     '<label class="label" for="mcp-env">Env / headers</label>' +
     '<input class="input" type="text" id="mcp-env" placeholder="KEY=value, OTHER=value">' +
     '<div class="form-span section-actions">' +
@@ -47,7 +68,8 @@ function viewMcp() {
 
   return ui.pageHeader('MCP servers',
       'Model Context Protocol servers loaded at startup. stdio servers run as subprocesses; ' +
-      'http servers are reached over Streamable HTTP.') +
+      'http servers are reached over Streamable HTTP. An http server set to oauth is a ' +
+      'connector: press Connect to authorize it once, and the token refreshes itself after that.') +
     addPanel('mcp-add', 'Add a server', form) +
     ui.card('Configured', rows, { aside: ui.badge(state.mcp.length, 'secondary') });
 }
@@ -75,7 +97,7 @@ async function saveMcp() {
         const parts = target.split(/\s+/);
         return { name, transport, command: parts[0], args: parts.slice(1), env: pairs, enabled: true };
       })()
-    : { name, transport, url: target, headers: pairs, enabled: true };
+    : { name, transport, url: target, headers: pairs, auth: $('#mcp-auth').value, scopes: [], enabled: true };
 
   const ok = await guard(() => api('/mcp', { method: 'PUT', body: JSON.stringify({ server }) }), 'Server saved');
   if (ok) { await loadMcp(); await loadStatus(); render(); }
@@ -449,7 +471,8 @@ async function goto(tab) {
 
 document.addEventListener('click', async (ev) => {
   const t = ev.target.closest('[data-tab],[data-action],[data-daemon],[data-toggle],[data-reset],' +
-    '[data-revert],[data-mcp-toggle],[data-mcp-delete],[data-hook-toggle],[data-hook-delete],' +
+    '[data-revert],[data-mcp-toggle],[data-mcp-delete],[data-mcp-connect],[data-mcp-disconnect],' +
+    '[data-hook-toggle],[data-hook-delete],' +
     '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-logs-tab],' +
     '[data-skill-open],[data-agent-open],[data-group],[data-settings-filter],[data-log-level],' +
     '[data-expand]');
@@ -514,6 +537,23 @@ document.addEventListener('click', async (ev) => {
     if (!confirm('Delete MCP server "' + d.mcpDelete + '"?')) return;
     const ok = await guard(() => api('/mcp/' + encodeURIComponent(d.mcpDelete), { method: 'DELETE' }), 'Deleted');
     if (ok) { await loadMcp(); await loadStatus(); render(); }
+    return;
+  }
+  if (d.mcpConnect) {
+    const res = await guard(() => api('/mcp/' + encodeURIComponent(d.mcpConnect) + '/connect', { method: 'POST' }));
+    if (!res) return;
+    if (res.status === 'refreshed') { toast('Already authorized', 'good'); await loadMcp(); return render(); }
+    // Opened rather than navigated: losing the panel's state to an external
+    // consent screen would be a strange thing to do to someone mid-edit.
+    window.open(res.authorizationUrl, '_blank', 'noopener');
+    toast('Finish authorizing in the new tab, then refresh', 'good');
+    return;
+  }
+  if (d.mcpDisconnect) {
+    if (!confirm('Forget stored credentials for "' + d.mcpDisconnect + '"?\n\n' +
+      'The grant stays live upstream until you revoke it in that service.')) return;
+    const ok = await guard(() => api('/mcp/' + encodeURIComponent(d.mcpDisconnect) + '/disconnect', { method: 'POST' }), 'Disconnected');
+    if (ok) { await loadMcp(); render(); }
     return;
   }
   if (d.hookToggle) {

@@ -3,12 +3,14 @@
 //
 // Reference: https://github.com/modelcontextprotocol/typescript-sdk
 
+import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 import type { McpServerConfig } from '../config/schema.ts';
 import { type Tool, err, ok } from '../tools/types.ts';
+import { ConsentRequiredError, createConnectorAuthProvider } from './oauth/provider.ts';
 
 interface RemoteToolDefinition {
   name: string;
@@ -70,6 +72,22 @@ export function stdioEnv(configured: Record<string, string>): Record<string, str
   return { ...env, ...configured };
 }
 
+/**
+ * Rewrites an authorization failure into the sentence that fixes it.
+ *
+ * The SDK throws a bare `UnauthorizedError` whether the token expired, the
+ * refresh was rejected, or there was never a token at all. All three end in
+ * the same place for the user, and "HTTP 401" in a startup log does not say
+ * so.
+ */
+function authFailure(name: string, e: unknown): Error {
+  if (e instanceof ConsentRequiredError) return e;
+  if (e instanceof UnauthorizedError) {
+    return new Error(`authorization expired or rejected — run: /mcp connect ${name}`);
+  }
+  return e instanceof Error ? e : new Error(String(e));
+}
+
 export async function connectMcpServer(config: McpServerConfig): Promise<ConnectedMcpServer> {
   const client = new Client({ name: 'asterisk', version: '0.1.0' }, { capabilities: {} });
 
@@ -81,14 +99,34 @@ export async function connectMcpServer(config: McpServerConfig): Promise<Connect
     });
     await client.connect(transport);
   } else {
+    // A connector (auth: 'oauth') gets a provider that reads the stored token
+    // and lets the SDK refresh it when the endpoint answers 401. It is
+    // deliberately non-interactive: this function runs at startup, inside the
+    // daemon, and from a bot turn, where opening a browser and waiting five
+    // minutes on a consent screen is not an option. A server that needs fresh
+    // consent surfaces as a connect failure naming the command that fixes it.
+    const authProvider =
+      config.auth === 'oauth'
+        ? createConnectorAuthProvider({
+            serverName: config.name,
+            serverUrl: config.url,
+            scopes: config.scopes,
+          })
+        : undefined;
+
     // The SDK's StreamableHTTPClientTransport types `sessionId` as `string |
     // undefined` while the Transport interface declares it `string`. Under
     // exactOptionalPropertyTypes that's an incompatibility we resolve at the
     // boundary; the SDK accepts it at runtime.
     const transport = new StreamableHTTPClientTransport(new URL(config.url), {
       requestInit: { headers: config.headers },
+      ...(authProvider ? { authProvider } : {}),
     }) as unknown as Parameters<Client['connect']>[0];
-    await client.connect(transport);
+    try {
+      await client.connect(transport);
+    } catch (e) {
+      throw authFailure(config.name, e);
+    }
   }
 
   const listed = await client.listTools();

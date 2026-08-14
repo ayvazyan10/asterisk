@@ -7,6 +7,8 @@
 
 import { getAgentDetail, getAgentsReport, getRulesReport, getSoulsReport } from './api/authored.ts';
 import {
+  beginMcpAuth,
+  clearMcpAuth,
   getHooks,
   getMcpServers,
   putHook,
@@ -58,6 +60,8 @@ export const ROUTES: readonly Route[] = [
 
   { method: 'GET', pattern: '/api/mcp', handler: getMcpServers },
   { method: 'PUT', pattern: '/api/mcp', handler: putMcpServer },
+  { method: 'POST', pattern: '/api/mcp/:name/connect', handler: beginMcpAuth },
+  { method: 'POST', pattern: '/api/mcp/:name/disconnect', handler: clearMcpAuth },
   { method: 'DELETE', pattern: '/api/mcp/:name', handler: removeMcpServer },
 
   { method: 'GET', pattern: '/api/hooks', handler: getHooks },

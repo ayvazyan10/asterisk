@@ -253,6 +253,40 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 7,
+    name: 'mcp-oauth-connectors',
+    sql: `
+      -- Connectors: an http MCP server that authenticates through the OAuth
+      -- 2.1 flow in the MCP spec instead of a header the user pasted by hand.
+      -- 'none' keeps the existing behaviour (send \`headers\` and nothing else),
+      -- so every row that already exists stays exactly as it was.
+      ALTER TABLE mcp_servers ADD COLUMN auth   TEXT NOT NULL DEFAULT 'none';
+      ALTER TABLE mcp_servers ADD COLUMN scopes TEXT NOT NULL DEFAULT '[]';
+
+      -- Credentials live here rather than in \`secrets\` because they are not
+      -- one opaque string keyed by a name from SECRET_KEYS: a connector holds
+      -- a dynamic client registration, a PKCE verifier that exists only while
+      -- a flow is open, an access token and a refresh token, and each has its
+      -- own lifetime. They inherit every handling rule \`secrets\` has —
+      -- excluded from config export, never rendered in the panel, never
+      -- logged.
+      --
+      -- \`resource\` records the URL the tokens were issued for. It is checked
+      -- before a token is used: editing a server's URL must not silently send
+      -- one service's access token to another host, so a changed URL drops
+      -- the row instead.
+      CREATE TABLE mcp_credentials (
+        server_name   TEXT PRIMARY KEY,
+        resource      TEXT NOT NULL,
+        client_info   TEXT,
+        tokens        TEXT,
+        code_verifier TEXT,
+        expires_at    INTEGER,
+        updated_at    INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 /**

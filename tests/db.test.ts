@@ -228,6 +228,8 @@ describe('collections', () => {
       transport: 'http',
       url: 'https://example.com/mcp',
       headers: { Authorization: 'Bearer x' },
+      auth: 'none',
+      scopes: [],
       enabled: true,
     });
     upsertMcpServer(db, {
@@ -235,6 +237,8 @@ describe('collections', () => {
       transport: 'http',
       url: 'https://example.com/mcp2',
       headers: {},
+      auth: 'none',
+      scopes: [],
       enabled: false,
     });
 

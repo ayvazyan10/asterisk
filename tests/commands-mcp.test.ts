@@ -52,6 +52,8 @@ const http = (name: string, url = 'https://example.com/mcp', enabled = true): Mc
   transport: 'http',
   url,
   headers: {},
+  auth: 'none',
+  scopes: [],
   enabled,
 });
 
@@ -72,13 +74,24 @@ describe('/mcp routing', () => {
     const ctx = makeContext({ mcp: fakeMcp([fakeServer('live')]) });
     seed(stdio('live'));
     const picker = await runList(ctx, '/mcp');
-    expect(values(picker)).toEqual(['list', 'resources', 'add', 'edit', 'remove', 'reload']);
+    expect(values(picker)).toEqual([
+      'list',
+      'resources',
+      'add',
+      'edit',
+      'remove',
+      'connect',
+      'disconnect',
+      'reload',
+    ]);
 
     expect(asText(await picker.onPick('list'))).toContain('MCP servers:');
     expect(asText(await picker.onPick('resources'))).toContain('MCP resources:');
     expect(asList(await picker.onPick('add')).title).toMatch(/pick a transport/);
     expect(asList(await picker.onPick('edit')).title).toMatch(/Edit which/);
     expect(asList(await picker.onPick('remove')).title).toMatch(/Remove which/);
+    expect(asList(await picker.onPick('connect')).title).toMatch(/Authorize which connector/);
+    expect(asList(await picker.onPick('disconnect')).title).toMatch(/Disconnect which connector/);
     expect(asText(await picker.onPick('reload'))).toMatch(/reloaded/);
     expect(await picker.onPick('nonsense')).toBeNull();
     expect(picker.onCancel?.()).toBeNull();
@@ -93,7 +106,7 @@ describe('/mcp routing', () => {
       'args',
       'enabled',
     ]);
-    expect(keys(asForm(await picker.onPick('http')))).toEqual(['name', 'url', 'enabled']);
+    expect(keys(asForm(await picker.onPick('http')))).toEqual(['name', 'url', 'auth', 'enabled']);
     expect(picker.onCancel?.()).toBeNull();
   });
 });
@@ -138,6 +151,8 @@ describe('/mcp add', () => {
         transport: 'http',
         url: 'https://mcp.example/api',
         headers: {},
+        auth: 'none',
+        scopes: [],
         enabled: false,
       },
     ]);
@@ -308,6 +323,8 @@ describe('/mcp edit', () => {
         transport: 'http',
         url: 'https://new.example/mcp',
         headers: {},
+        auth: 'none',
+        scopes: [],
         enabled: false,
       },
     ]);

@@ -32,6 +32,7 @@ const ISOLATED_ENV = [
   'ASTERISK_INSTALL_DIR',
   'ASTERISK_BRANCH',
   'ASTERISK_LANG',
+  'ASTERISK_OAUTH_PORT',
 ] as const;
 
 /**

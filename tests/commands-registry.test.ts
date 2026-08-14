@@ -293,7 +293,15 @@ describe('/status', () => {
     const cfg = config();
     cfg.mcpServers = [
       { name: 'a', transport: 'stdio', command: 'x', args: [], env: {}, enabled: true },
-      { name: 'b', transport: 'http', url: 'https://e/mcp', headers: {}, enabled: true },
+      {
+        name: 'b',
+        transport: 'http',
+        url: 'https://e/mcp',
+        headers: {},
+        auth: 'none',
+        scopes: [],
+        enabled: true,
+      },
     ];
     saveConfig(cfg);
 

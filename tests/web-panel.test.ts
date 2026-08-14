@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ConfigSchema } from '../src/config/schema.ts';
 import { readConfig, writeConfig } from '../src/config/store.ts';
 import { type SqliteDriver, openDriver } from '../src/db/driver.ts';
+import { writeMcpCredentials } from '../src/db/mcp-credentials.ts';
 import { migrate } from '../src/db/migrations.ts';
 import { getSecret } from '../src/db/settings.ts';
 import { issueToken, verifyToken } from '../src/web/auth.ts';
@@ -222,6 +223,58 @@ describe('collections API', () => {
 
   it('404s when deleting something that is not there', async () => {
     expect((await call('/api/mcp/ghost', { method: 'DELETE' })).status).toBe(404);
+  });
+
+  it('reports connector status without leaking the credential', async () => {
+    await call(
+      '/api/mcp',
+      send('PUT', {
+        server: {
+          name: 'linear',
+          transport: 'http',
+          url: 'https://mcp.linear.app/mcp',
+          auth: 'oauth',
+        },
+      }),
+    );
+    writeMcpCredentials(db, 'linear', 'https://mcp.linear.app/mcp', {
+      tokens: { access_token: 'super-secret', refresh_token: 'also-secret' },
+    });
+
+    const listed = await call('/api/mcp');
+    expect(listed.body.servers[0].oauth).toMatchObject({ connected: true, hasRefreshToken: true });
+    expect(JSON.stringify(listed.body)).not.toContain('super-secret');
+  });
+
+  it('refuses to start a consent flow for a server that is not a connector', async () => {
+    await call(
+      '/api/mcp',
+      send('PUT', { server: { name: 'plain', transport: 'http', url: 'https://example.com/mcp' } }),
+    );
+    expect((await call('/api/mcp/plain/connect', { method: 'POST' })).status).toBe(409);
+    expect((await call('/api/mcp/ghost/connect', { method: 'POST' })).status).toBe(404);
+  });
+
+  it('forgets stored credentials on disconnect', async () => {
+    await call(
+      '/api/mcp',
+      send('PUT', {
+        server: {
+          name: 'linear',
+          transport: 'http',
+          url: 'https://mcp.linear.app/mcp',
+          auth: 'oauth',
+        },
+      }),
+    );
+    writeMcpCredentials(db, 'linear', 'https://mcp.linear.app/mcp', {
+      tokens: { access_token: 'tok' },
+    });
+
+    expect((await call('/api/mcp/linear/disconnect', { method: 'POST' })).body).toMatchObject({
+      removed: true,
+    });
+    expect((await call('/api/mcp')).body.servers[0].oauth.connected).toBe(false);
   });
 
   it('rejects an invalid MCP definition', async () => {
