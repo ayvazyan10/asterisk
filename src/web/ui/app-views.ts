@@ -381,7 +381,9 @@ function auditPanel() {
     ? ui.empty('Nothing recorded yet. Changes you make here will show up.')
     : state.audit.map((a) => ui.listRow(
         esc(a.action) + ' ' + ui.badge(a.target, 'outline'),
-        when(a.at) + ' · ' + a.actor
+        // Both clocks: the absolute one to line an entry up against the daemon
+        // log, the relative one because "17m ago" is what you actually asked.
+        stamp(a.at) + ' · ' + when(a.at) + ' · ' + a.actor
       )).join('');
 
   return ui.card('Recent', rows, { aside: ui.badge(state.audit.length, 'secondary') });

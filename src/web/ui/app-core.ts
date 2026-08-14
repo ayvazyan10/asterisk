@@ -89,7 +89,37 @@ function when(ms) {
   if (diff < 60000) return 'just now';
   if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
   if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
-  return new Date(ms).toLocaleDateString();
+  return stamp(ms).slice(0, 10);
+}
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+/**
+ * A wall-clock timestamp split into its parts, in local time.
+ *
+ * ISO order for the date rather than toLocaleDateString: a log is read for
+ * ordering, and 08/09 means two different days depending on where the reader
+ * is. The time is local because that is the clock the reader was watching when
+ * the thing happened — the daemon writes UTC, and converting is the point.
+ *
+ * Takes epoch milliseconds or an ISO string; returns null for anything that is
+ * neither, so callers can fall back rather than print "Invalid Date".
+ */
+function stampParts(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return {
+    date: d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()),
+    time: pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()),
+    millis: String(d.getMilliseconds()).padStart(3, '0'),
+  };
+}
+
+/** 2026-08-14 12:34:56, or an empty string when the value is not a time. */
+function stamp(value) {
+  const p = stampParts(value);
+  return p ? p.date + ' ' + p.time : '';
 }
 
 /**

@@ -312,11 +312,14 @@ export const COMPONENTS = String.raw`
 .log { font-family: var(--font-machine); font-size: var(--t-xs); line-height: 1.6; }
 
 .log-line {
-  display: grid; grid-template-columns: 4.5rem 3.2rem 1fr; gap: 0.75rem;
+  display: grid; grid-template-columns: 8.9rem 3.2rem 1fr; gap: 0.75rem;
   padding: 0.2rem 0.75rem;
 }
 .log-line:hover { background: var(--surface-high); }
-.log-time { color: var(--ink-faint); }
+.log-time { color: var(--ink-faint); white-space: nowrap; }
+/* Repeated on every line, so it recedes: the times are what you scan, the date
+   is what you check. */
+.log-date { opacity: 0.6; }
 .log-level { text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-faint); }
 .log-msg { color: var(--ink); overflow-wrap: anywhere; }
 .log-extra { color: var(--ink-faint); }

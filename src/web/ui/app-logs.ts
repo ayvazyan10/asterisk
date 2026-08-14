@@ -66,11 +66,26 @@ function visibleLogRecords() {
   });
 }
 
-function logTime(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return String(iso).slice(11, 19);
-  return d.toTimeString().slice(0, 8);
+/**
+ * The stamp column: date then time, both local.
+ *
+ * The date is on every line rather than on a separator when the day changes.
+ * A separator is only visible if you can see it, and this pane is a scrolling
+ * tail — the reader is usually somewhere in the middle of it. It is dimmed
+ * instead, so the eye can run down the times and still know the day without
+ * scrolling anywhere.
+ *
+ * An unparsable time still shows whatever the record carried, sliced at the
+ * ISO offsets, because a wrong-looking timestamp is more use than none.
+ */
+function logStampHtml(iso) {
+  const p = stampParts(iso);
+  if (!p) {
+    const fallback = String(iso || '');
+    return '<span class="log-time">' + esc(fallback.slice(11, 19)) + '</span>';
+  }
+  return '<span class="log-time" title="' + esc(p.date + ' ' + p.time + '.' + p.millis) + '">' +
+    '<span class="log-date">' + esc(p.date) + '</span> ' + esc(p.time) + '</span>';
 }
 
 function logLineHtml(r) {
@@ -87,7 +102,7 @@ function logLineHtml(r) {
     .join('  ');
 
   return '<div class="log-line' + tone + '">' +
-    '<span class="log-time">' + esc(logTime(r.time)) + '</span>' +
+    logStampHtml(r.time) +
     '<span class="log-level log-' + esc(name) + '">' + esc(name) + '</span>' +
     '<span class="log-msg">' + esc(r.msg) +
       (extra ? ' <span class="log-extra">' + esc(extra) + '</span>' : '') +
