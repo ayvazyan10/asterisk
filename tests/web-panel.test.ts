@@ -4,7 +4,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ConfigSchema } from '../src/config/schema.ts';
 import { readConfig, writeConfig } from '../src/config/store.ts';
@@ -12,6 +12,7 @@ import { type SqliteDriver, openDriver } from '../src/db/driver.ts';
 import { writeMcpCredentials } from '../src/db/mcp-credentials.ts';
 import { migrate } from '../src/db/migrations.ts';
 import { getSecret } from '../src/db/settings.ts';
+import { clearDetectedModels } from '../src/providers/model-detect.ts';
 import { issueToken, verifyToken } from '../src/web/auth.ts';
 import { matchRoute } from '../src/web/router.ts';
 import { createRequestHandler } from '../src/web/server.ts';
@@ -37,6 +38,10 @@ beforeEach(async () => {
   db = openDriver(':memory:');
   migrate(db);
   writeConfig(db, ConfigSchema.parse({}));
+  // /api/status detects the live model (see resolveStatusModel in
+  // src/web/api/system.ts), cached 60s by baseUrl — clear it so an earlier
+  // test's detection (real or stubbed) can never leak into this one.
+  clearDetectedModels();
 
   const handler = createRequestHandler({ db, host: '127.0.0.1', port: 0, authRequired: false });
   call = async (path, init) => {
@@ -684,6 +689,111 @@ describe('status and system', () => {
   it('clamps the log line count', async () => {
     expect((await call('/api/logs?lines=999999')).body.lines).toBe(2000);
     expect((await call('/api/logs?lines=abc')).body.lines).toBe(200);
+  });
+
+  describe('reported model', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('reports the model the server is actually serving, not the blank config pin', async () => {
+      vi.stubGlobal(
+        'fetch',
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'qwen3.8-27b-abliterated' }] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+      );
+      const { body } = await call('/api/status');
+      expect(body.model).toEqual({ id: 'qwen3.8-27b-abliterated', source: 'detected' });
+    });
+
+    it('falls back to the configured pin when the server cannot be reached', async () => {
+      vi.stubGlobal('fetch', async () => {
+        throw new Error('connect ECONNREFUSED');
+      });
+      await call(
+        '/api/settings',
+        send('PATCH', { updates: { 'openaiCompatible.model': 'pinned-model' } }),
+      );
+      const { body } = await call('/api/status');
+      expect(body.model).toEqual({ id: 'pinned-model', source: 'configured' });
+    });
+
+    it('reports null rather than a placeholder string when there is nothing to report', async () => {
+      vi.stubGlobal('fetch', async () => {
+        throw new Error('connect ECONNREFUSED');
+      });
+      const { body } = await call('/api/status');
+      expect(body.model).toBeNull();
+    });
+
+    it('never calls detection for the anthropic provider, which has none', async () => {
+      const fetchSpy = vi.fn(async () => new Response('{}'));
+      vi.stubGlobal('fetch', fetchSpy);
+      await call('/api/settings', send('PATCH', { updates: { provider: 'anthropic' } }));
+      const { body } = await call('/api/status');
+      expect(body.model).toEqual({ id: readConfig(db).anthropic.model, source: 'configured' });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('connected connectors count', () => {
+    it('is reported in the initial payload, like its neighbours, not just after the tab loads', async () => {
+      expect((await call('/api/status')).body.counts.connectedConnectors).toBe(0);
+
+      await call(
+        '/api/mcp',
+        send('PUT', {
+          server: {
+            name: 'github',
+            transport: 'http',
+            url: 'https://api.githubcopilot.com/mcp/',
+            auth: 'token',
+          },
+        }),
+      );
+      // Installed but not yet authorized: still not connected.
+      expect((await call('/api/status')).body.counts.connectedConnectors).toBe(0);
+
+      await call('/api/connectors/github/token', send('PUT', { token: 'ghp-1' }));
+      expect((await call('/api/status')).body.counts.connectedConnectors).toBe(1);
+    });
+
+    it('agrees with /api/connectors on who is connected — one rule, read from both endpoints', async () => {
+      // listConnectors() in src/web/api/connectors.ts is the single source of
+      // "connected"; /api/status and /api/connectors both call it rather than
+      // each carrying its own copy. This proves it by checking them against
+      // each other, not just against a hand-counted expectation, in both the
+      // credentials-absent and credentials-present states.
+      const connectedIds = (connectors: Array<{ id: string; connected: boolean }>) =>
+        connectors.filter((c) => c.connected).map((c) => c.id);
+
+      const before = await call('/api/connectors');
+      expect((await call('/api/status')).body.counts.connectedConnectors).toBe(
+        connectedIds(before.body.connectors).length,
+      );
+      expect(connectedIds(before.body.connectors)).toEqual([]);
+
+      await call(
+        '/api/mcp',
+        send('PUT', {
+          server: {
+            name: 'github',
+            transport: 'http',
+            url: 'https://api.githubcopilot.com/mcp/',
+            auth: 'token',
+          },
+        }),
+      );
+      await call('/api/connectors/github/token', send('PUT', { token: 'ghp-1' }));
+
+      const after = await call('/api/connectors');
+      const statusCount = (await call('/api/status')).body.counts.connectedConnectors;
+      expect(connectedIds(after.body.connectors)).toEqual(['github']);
+      expect(statusCount).toBe(connectedIds(after.body.connectors).length);
+    });
   });
 });
 

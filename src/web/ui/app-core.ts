@@ -303,8 +303,11 @@ const TABS = [
   ]},
   { group: 'Configure', items: [
     { id: 'settings', label: 'Settings', icon: 'settings' },
+    // Same shape as its neighbours: read from the /status payload so the
+    // badge exists on first paint, rather than only after the tab has been
+    // opened once and populated state.connectors.
     { id: 'connectors', label: 'Connectors', icon: 'connectors',
-      count: () => state.loaded.has('connectors') ? state.connectors.filter((c) => c.connected).length : null },
+      count: () => state.status && state.status.counts.connectedConnectors },
     { id: 'mcp', label: 'MCP servers', icon: 'mcp', count: () => state.status && state.status.counts.mcpServers },
     { id: 'hooks', label: 'Hooks', icon: 'hooks', count: () => state.status && state.status.counts.hooks },
   ]},
@@ -366,11 +369,28 @@ function healthOf(s) {
   return { state: 'bad', label: 'Daemon stopped' };
 }
 
+/**
+ * The header chip's three honest states — see resolveStatusModel() in
+ * src/web/api/system.ts. 'detected' is what the server just reported;
+ * 'configured' is a pin the server has not confirmed (always true for
+ * Anthropic, which has no detection endpoint); null is neither.
+ */
+function modelChip(model) {
+  if (!model) {
+    return { label: 'no model detected', title: 'No model detected — the server may be unreachable, and none is pinned in Settings.' };
+  }
+  if (model.source === 'detected') {
+    return { label: model.id, title: 'Detected from the running server: ' + model.id };
+  }
+  return { label: model.id + ' (pinned)', title: 'Configured in Settings, not confirmed by a live server: ' + model.id };
+}
+
 function renderHeader() {
   const s = state.status;
   if (!s) return;
   const tab = findTab(state.tab);
   const health = healthOf(s);
+  const chip = modelChip(s.model);
   $('.header').innerHTML =
     '<nav class="crumbs" aria-label="Breadcrumb">' +
       '<span class="crumb-root">Asterisk</span>' +
@@ -380,7 +400,7 @@ function renderHeader() {
     '<div class="header-spacer"></div>' +
     '<div class="status-pill" data-state="' + health.state + '" title="' + esc(health.label) + '">' +
       '<span class="status-dot"></span>' +
-      '<span class="status-value">' + esc(s.model) + '</span>' +
+      '<span class="status-value" title="' + esc(chip.title) + '">' + esc(chip.label) + '</span>' +
     '</div>' +
     '<div class="header-actions">' +
       ui.btn('', { variant: 'outline', size: 'sm', square: true,

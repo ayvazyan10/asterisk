@@ -793,6 +793,21 @@ document.addEventListener('click', async (ev) => {
   }
 });
 
+// Keyboard parity for the system figure's spokes (role="button" — see
+// app-star.ts). A real <button> already turns Enter/Space into a click, which
+// the listener above already handles; an SVG <g> does not, so it needs this.
+// Scoped to [role="button"] rather than [data-tab] generally so it never
+// double-fires goto() for a data-tab control that is a real button — those
+// keep getting there through the native click the browser already gives them.
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Enter' && ev.key !== ' ') return;
+  const t = ev.target.closest('[role="button"][data-tab]');
+  if (!t) return;
+  // Space's default is scrolling the page; Enter has none worth keeping here.
+  ev.preventDefault();
+  goto(t.dataset.tab);
+});
+
 document.addEventListener('change', (ev) => {
   const input = ev.target.closest('[data-input]');
   if (input) {

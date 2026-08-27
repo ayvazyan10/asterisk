@@ -49,8 +49,12 @@ export const COMPONENTS = String.raw`
 }
 .btn:disabled { pointer-events: none; opacity: 0.38; }
 
+/* --signal-strong, not --signal: as a *fill* under white --signal-ink text the
+   token needs to be darker than it does as text on the page, and in dark theme
+   no single lightness serves both (--signal as fill measured 3.83:1 against the
+   4.5:1 floor). See the --signal-strong comment in theme.ts. */
 .btn-default {
-  background: var(--signal); border-color: var(--signal); color: var(--signal-ink);
+  background: var(--signal-strong); border-color: var(--signal-strong); color: var(--signal-ink);
   font-weight: 600;
 }
 .btn-default:hover { filter: brightness(1.07); }
@@ -188,13 +192,18 @@ export const COMPONENTS = String.raw`
 /* --- list rows ----------------------------------------------------------- */
 
 .list-row {
-  display: flex; align-items: center; gap: 0.875rem;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem 0.875rem;
   padding: 0.75rem 1rem; border-top: 1px solid var(--border);
   transition: background-color var(--dur) var(--ease);
 }
 .list-row:first-child { border-top: 0; }
 .list-row:hover { background: var(--surface-high); }
 .list-row-grow { flex: 1; min-width: 0; }
+/* A row with four actions (a connected OAuth server can Reconnect,
+   Disconnect, Disable and Delete) has nothing left to give .list-row-grow
+   at 375px — flex-wrap lets .section-actions drop to its own line instead
+   of the detail text collapsing to a 0-width column of single characters. */
+.list-row > .section-actions { flex: 0 0 auto; justify-content: flex-end; }
 .list-row-title { font-size: var(--t-sm); font-weight: 500; }
 /* anywhere, not break-all: this line carries a path in one row and a sentence
    in the next, and break-all split "included" across two lines. */
@@ -441,5 +450,30 @@ export const COMPONENTS = String.raw`
 .link:hover { text-decoration-thickness: 2px; }
 .link:focus-visible {
   outline: none; box-shadow: 0 0 0 3px var(--signal-wash);
+}
+
+/* --- touch targets ---------------------------------------------------------
+   Every .btn, field and tab here is 28-32px tall — right for the 1440px
+   density this vocabulary is built around, and a miss for a finger. Gate on
+   the pointer or the viewport, never both unconditionally, so a mouse on a
+   wide screen never sees a bigger button than it asked for. */
+@media (pointer: coarse), (max-width: 768px) {
+  .btn { min-height: 2.75rem; }
+  .btn-icon { width: 2.75rem; }
+  .btn-icon.btn-sm { width: 2.75rem; }
+  .input, .select { min-height: 2.75rem; }
+  /* A short label like "All" pads out to only ~36px wide even at the taller
+     height — width needs its own floor, not just height. */
+  .tabs-trigger { min-height: 2.75rem; min-width: 2.75rem; }
+
+  /* A rocker can't grow to 44px and stay a rocker, so the hit area grows
+     instead of the control: an invisible square centred on it, the usual
+     trick for a control that cannot grow visually without losing what makes
+     it legible as itself. */
+  .switch { position: relative; }
+  .switch::before {
+    content: ""; position: absolute; top: 50%; left: 50%;
+    width: 2.75rem; height: 2.75rem; transform: translate(-50%, -50%);
+  }
 }
 `;

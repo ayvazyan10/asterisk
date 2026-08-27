@@ -3,6 +3,7 @@
 
 import { existsSync, statSync } from 'node:fs';
 
+import type { AsteriskConfig } from '../../config/schema.ts';
 import { readConfig } from '../../config/store.ts';
 import { logs, restart, start, status, stop } from '../../daemon/lifecycle.ts';
 import { asteriskPaths } from '../../daemon/paths.ts';
@@ -11,9 +12,39 @@ import { detectActiveModel } from '../../providers/model-detect.ts';
 import { getVersion } from '../../version.ts';
 import { issueToken, listTokens, revokeToken } from '../auth.ts';
 import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
+import { listConnectors } from './connectors.ts';
+
+/** What the header chip renders — see `resolveStatusModel` below. */
+export interface StatusModel {
+  id: string;
+  /** 'detected' from the server itself; 'configured' from a pin in settings. */
+  source: 'detected' | 'configured';
+}
+
+/**
+ * The model that will actually answer, for the header chip.
+ *
+ * The Anthropic provider has no detection endpoint, so its pin is always
+ * "configured" — `anthropic.model` is never blank (see the schema default).
+ * The openai-compatible provider is asked what it is serving; that call is
+ * cached 60s by `detectActiveModel`, so this is cheap, and a short timeout
+ * keeps the status endpoint responsive when the server is unreachable. A
+ * pinned `openaiCompatible.model` is the fallback when detection fails, and
+ * `null` — never a placeholder string — means there is nothing to report.
+ */
+async function resolveStatusModel(config: AsteriskConfig): Promise<StatusModel | null> {
+  if (config.provider === 'anthropic') {
+    return { id: config.anthropic.model, source: 'configured' };
+  }
+  const base = config.openaiCompatible.baseUrl.replace(/\/$/, '');
+  const detected = await detectActiveModel(base, '', { timeoutMs: 1500 });
+  if (detected) return { id: detected.id, source: 'detected' };
+  const pinned = config.openaiCompatible.model;
+  return pinned ? { id: pinned, source: 'configured' } : null;
+}
 
 /** Snapshot for the dashboard header. */
-export const getStatus: Handler = ({ db }) => {
+export const getStatus: Handler = async ({ db }) => {
   const paths = asteriskPaths();
   const config = readConfig(db);
   const daemon = status();
@@ -32,6 +63,8 @@ export const getStatus: Handler = ({ db }) => {
     // Same.
   }
 
+  const model = await resolveStatusModel(config);
+
   return json({
     version: getVersion(),
     runtime: process.versions.bun ? `bun ${process.versions.bun}` : `node ${process.versions.node}`,
@@ -39,16 +72,17 @@ export const getStatus: Handler = ({ db }) => {
     database: { path: paths.dbFile, bytes: dbBytes },
     daemon: { running: daemon.message.startsWith('running'), message: daemon.message },
     provider: config.provider,
-    model:
-      config.provider === 'anthropic'
-        ? config.anthropic.model
-        : config.openaiCompatible.model || '(auto-detected)',
+    model,
     outputStyle: config.outputStyle,
     counts: {
       mcpServers: listMcpServers(db).length,
       hooks: listHooks(db).length,
       enabledMcpServers: listMcpServers(db).filter((s) => s.enabled).length,
       enabledHooks: listHooks(db).filter((h) => h.enabled).length,
+      // listConnectors() is the single source of "connected" — see the
+      // comment on it in ./connectors.ts. The Connectors page filters the
+      // same array for the same field; this just counts it.
+      connectedConnectors: listConnectors(db).filter((c) => c.connected).length,
     },
     bots: {
       telegram: config.bots.telegram.enabled,

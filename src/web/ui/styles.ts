@@ -35,6 +35,15 @@ const LAYOUT = String.raw`
 
 .shell {
   display: grid; grid-template-columns: var(--rail) 1fr; min-height: 100vh;
+  /* Without this, a grid whose rows are shorter than its own min-height
+     stretches every auto-sized row to fill the rest — invisible while .rail
+     was a fixed 100vh column, but below 900px it drops to a single static
+     row sized by its own content, and a short page (Hooks, nothing
+     configured) let that row's leftover height inflate the rail: each nav
+     chip in the strip below rendered 177px tall on real content that needed
+     about 50. align-content: start leaves the extra height where a short
+     page already puts it — after the content — instead of stretching into it. */
+  align-content: start;
   transition: grid-template-columns var(--dur) var(--ease);
 }
 .shell[data-rail="tight"] { grid-template-columns: var(--rail-tight) 1fr; }
@@ -321,6 +330,10 @@ const LAYOUT = String.raw`
 /* --- editor ---------------------------------------------------------------- */
 
 .editor-grid { display: grid; grid-template-columns: 16rem 1fr; gap: 0.875rem; align-items: start; }
+/* Without this a nowrap description inside (.skill-item-desc, below) hands its
+   min-content width up through the grid item to the track itself — the same
+   failure mode .overview-grid > * already guards against. */
+.editor-grid > * { min-width: 0; }
 .file-list { max-height: 55vh; overflow-y: auto; padding: 0.3rem; }
 .file-item {
   display: block; width: 100%; padding: 0.35rem 0.5rem;
@@ -415,7 +428,13 @@ const LAYOUT = String.raw`
 }
 
 @media (max-width: 900px) {
-  .shell, .shell[data-rail="tight"] { grid-template-columns: 1fr; }
+  /* minmax(0, 1fr), not 1fr: a plain 1fr track still floors itself at the
+     item's automatic minimum size, which is its subtree's min-content — and
+     the strip .nav becomes below 640px (further down) is a non-wrapping row
+     whose min-content is all eleven destinations laid out in one line. The
+     0 floor is what lets .nav's own overflow-x:auto actually take effect
+     instead of the rail (and the whole shell with it) growing to fit. */
+  .shell, .shell[data-rail="tight"] { grid-template-columns: minmax(0, 1fr); }
   .rail {
     position: static; height: auto; overflow: visible;
     border-right: 0; border-bottom: 1px solid var(--rail-border);
@@ -437,6 +456,42 @@ const LAYOUT = String.raw`
 
 @media (max-width: 640px) {
   .form-grid { grid-template-columns: 1fr; gap: 0.4rem; }
+
+  /* The 900px fallback above still wraps the rail into rows of chips — three
+     of them at 768px, 260px of the screen. On a phone that becomes 342px,
+     42% of the viewport, before any content. Below 640 the rail stops
+     wrapping and becomes one strip you swipe instead: every destination is
+     still one tap away, the current one still carries its underline, and
+     the scroll lives inside .nav, never the page. */
+  .nav {
+    flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity;
+    padding: 0.4rem 0.6rem;
+  }
+  .nav-group { display: none; }
+  .nav-item { flex: none; scroll-snap-align: start; padding: 0.5rem 0.7rem; }
+
+  /* .log-line's 8.9rem + 3.2rem time/level columns are ~194px of a 343px
+     phone content width — over half the line for the two fields read least.
+     The message becomes its own row so it gets what is left of the width
+     instead of what is left after two fixed columns. */
+  .log-line {
+    grid-template-columns: auto 1fr; grid-template-rows: auto auto;
+    row-gap: 0.1rem; column-gap: 0.5rem;
+  }
+  .log-time { grid-column: 1; grid-row: 1; }
+  .log-level { grid-column: 2; grid-row: 1; justify-self: start; }
+  .log-msg { grid-column: 1 / -1; grid-row: 2; }
+}
+
+/* --- touch targets -----------------------------------------------------
+   44x44 is the floor a coarse pointer needs; 1440px density is not built for
+   it and should not have to be. Gate on the pointer or the viewport so a
+   mouse on a wide screen never sees this. */
+@media (pointer: coarse), (max-width: 768px) {
+  .nav-item, .toc-item, .file-item { min-height: 2.75rem; }
+  .file-item { display: flex; align-items: center; }
+  .skill-item { min-height: 2.75rem; justify-content: center; }
 }
 
 @media (prefers-reduced-motion: reduce) {

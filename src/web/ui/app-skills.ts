@@ -145,7 +145,7 @@ function skillGroups(data) {
 
 function skillListCard(data) {
   const search = '<div class="skill-search">' +
-    '<input class="input" type="search" id="skill-filter" placeholder="Filter by name or description" ' +
+    '<input class="input" type="search" id="skill-filter" placeholder="Name or description" ' +
       'value="' + esc(state.skillFilter || '') + '" aria-label="Filter skills"></div>';
 
   return ui.card('Resolved',

@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The control panel says which model is answering.** The header chip read
+  `(auto-detected)` on every page: it took the model from the config field that
+  0.4.2 deliberately left blank, while the endpoint next door already asked the
+  server. It now reports the detected model, a pinned one as pinned, or plainly
+  that nothing could be detected — never a placeholder that looks like a name.
+  The Overview figure's provider spoke stopped truncating mid-word, and the
+  Connectors count appears on first paint instead of after the tab is first
+  opened. "Connected" is now one rule, read by both the sidebar and the
+  Connectors page, rather than two encodings that could disagree.
+- **The Overview figure is operable from the keyboard.** Its spokes were
+  focusable but nothing activated them: an SVG `<g>` synthesises no click from
+  Enter, and the client had no `keydown` handler at all. Above 820px that figure
+  *is* the navigation, so a keyboard user could not reach Settings, MCP, Hooks,
+  Rules or Skills through it. Enter and Space now work, and the spokes carry the
+  role that earns both.
+- **Muted text meets WCAG AA.** Log timestamps and levels, the hint under every
+  setting, list descriptions, breadcrumbs and sidebar counts sat between 2.6:1
+  and 3.4:1 against a 4.5:1 floor, in both themes; form-control borders sat near
+  1.4:1 against a 3:1 floor. Measured in the browser, not from the tokens.
+  The primary button's fill needed a token of its own — as a fill under white it
+  must be darker than it is as text on the page, and in dark theme no single
+  value cleared both roles.
+- **The panel fits a phone.** Skills and Agents overflowed the viewport by ~200px
+  at 375px, cutting text mid-word into a dead gutter, because a grid item's
+  automatic minimum was its unbroken min-content width. The rail, which ate 42%
+  of a phone screen with no way to collapse it, is a scrolling strip below 640px.
+  Touch targets reach 44px on coarse pointers and narrow viewports without
+  loosening desktop density, and a log line gives its message the full width
+  instead of spending half of it on fixed time and level columns.
+
 - **A tool schema no longer takes the whole turn down on llama.cpp.** With
   `--jinja`, llama-server compiles every tool's JSON Schema into a GBNF grammar
   for constrained decoding, and two keywords in that path each fail the entire

@@ -34,7 +34,15 @@ const SPOKE_GEOMETRY = {
 
 function clip(value, max) {
   const s = String(value == null ? '—' : value);
-  return s.length <= max ? s : s.slice(0, max - 1) + '…';
+  if (s.length <= max) return s;
+  // Prefer breaking at a word boundary over cutting mid-word, but only when
+  // that boundary keeps at least half the budget — one near the start would
+  // throw away more than it saves ("openai…" instead of "openai-compat…").
+  // Either way the untruncated value is still on the element as a hover
+  // title and an aria-label, so this is legibility, not the only way to read it.
+  const truncated = s.slice(0, max - 1);
+  const boundary = Math.max(truncated.lastIndexOf(' '), truncated.lastIndexOf('-'));
+  return (boundary >= max / 2 ? s.slice(0, boundary) : truncated) + '…';
 }
 
 /**
@@ -51,7 +59,12 @@ function systemSpokes() {
   const fileTone = (n) => (n === null ? 'off' : n > 0 ? 'rest' : 'off');
 
   return [
-    { angle: 90, label: 'provider', value: clip(s.provider, 16),
+    // 20 rather than the old 16: the longer of the two provider ids,
+    // "openai-compatible" (18 chars), was truncating mid-word — measured
+    // against the spoke's own hit box, 20 monospace chars still sits inside
+    // it. Anything longer still clips, but the full value is always on the
+    // element as a hover title and an aria-label regardless.
+    { angle: 90, label: 'provider', value: clip(s.provider, 20),
       tone: running ? 'live' : 'rest', tab: 'settings',
       title: 'Provider: ' + s.provider },
     { angle: 30, label: 'mcp', value: c.enabledMcpServers + '/' + c.mcpServers,
@@ -79,8 +92,16 @@ function systemSpokes() {
 
 function spokeSvg(spoke) {
   const g = SPOKE_GEOMETRY[spoke.angle];
+  // role="button", not "link": a spoke does not open a resource of its own —
+  // there is nothing to open in a new tab, no distinct URL to follow — it
+  // flips the app's own hash route in place, the same thing the
+  // <button class="system-tile"> fallback below 820px does. Enter and Space
+  // both activate a button; only Enter activates a link, which is why Space
+  // did nothing here before. Wired by the delegated keydown listener in
+  // app-views.ts, matching the delegated click listener.
   return '<g class="spoke is-' + spoke.tone + '" data-tab="' + esc(spoke.tab) +
-    '" role="link" tabindex="0" aria-label="' + esc(spoke.title) + '">' +
+    '" role="button" tabindex="0" aria-label="' + esc(spoke.title) + '">' +
+    '<title>' + esc(spoke.title) + '</title>' +
     '<line class="spoke-line" x1="' + g.x1 + '" y1="' + g.y1 + '" x2="' + g.x2 + '" y2="' + g.y2 + '"/>' +
     '<circle class="spoke-node" cx="' + g.x2 + '" cy="' + g.y2 + '" r="4"/>' +
     '<line class="spoke-hit" x1="' + g.x1 + '" y1="' + g.y1 + '" x2="' + g.x2 + '" y2="' + g.y2 + '"/>' +

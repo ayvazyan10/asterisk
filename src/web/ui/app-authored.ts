@@ -159,7 +159,7 @@ function viewAgents() {
 
   const list = ui.card('Available',
     '<div class="skill-search"><input class="input" type="search" id="agent-filter" ' +
-      'placeholder="Filter by name or description" value="' + esc(state.agentFilter || '') +
+      'placeholder="Name or description" value="' + esc(state.agentFilter || '') +
       '" aria-label="Filter agents"></div>' +
     '<div class="agent-list-body">' + agentGroups(d) + '</div>',
     { aside: ui.badge(matches.length + ' of ' + d.agents.length, 'secondary') });

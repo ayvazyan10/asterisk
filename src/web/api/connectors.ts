@@ -18,7 +18,7 @@ import { CallbackPortBusyError, callbackRedirectUrl } from '../../mcp/oauth/call
 import { beginConnectorFlow } from '../../mcp/oauth/connect.ts';
 import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
 
-interface ConnectorView {
+export interface ConnectorView {
   id: string;
   name: string;
   description: string;
@@ -49,14 +49,21 @@ interface ConnectorView {
 
 /**
  * Catalog entries first, then any configured connector the catalog does not
- * know about.
+ * know about — each carrying its own `connected`.
+ *
+ * This is the single source of truth for what "connected" means (installed,
+ * http, with credentials on file per `mcpAuthStatus`). Anything elsewhere
+ * that needs to know how many connectors are connected — the status
+ * endpoint's sidebar-badge count included — calls this rather than
+ * re-deriving the rule; two encodings of "connected" would eventually
+ * disagree with each other.
  *
  * Matching is by name only, deliberately. A row named `linear` pointing
  * somewhere else is still that user's Linear connector — retitling it "custom"
  * because a URL differs would be a confusing way to tell them their own
  * override took effect, and the URL is shown on the row either way.
  */
-export const getConnectors: Handler = ({ db }) => {
+export function listConnectors(db: SqliteDriver): ConnectorView[] {
   const servers = listMcpServers(db);
   const byName = new Map(servers.map((s) => [s.name, s]));
   const redirectUri = callbackRedirectUrl();
@@ -129,8 +136,10 @@ export const getConnectors: Handler = ({ db }) => {
       };
     });
 
-  return json({ connectors: [...fromCatalog, ...fromConfig] });
-};
+  return [...fromCatalog, ...fromConfig];
+}
+
+export const getConnectors: Handler = ({ db }) => json({ connectors: listConnectors(db) });
 
 /**
  * Begins a flow, turning a busy callback port into an answer the panel can
