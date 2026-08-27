@@ -63,10 +63,30 @@ async function deleteSkillEntry() {
   render();
 }
 
+/** Sets/clears the message beside one of the New skill form's two required
+ * fields, and aria-invalid with it — the same shape as Settings'
+ * showFieldError/clearFieldError in app-settings.ts, sized down for a form
+ * with two fixed fields rather than a generated one. */
+function setSkillFormError(field, message) {
+  const input = $('#skill-' + field);
+  if (input) input.setAttribute('aria-invalid', message ? 'true' : 'false');
+  const node = $('#skill-' + field + '-error');
+  if (node) node.textContent = message || '';
+}
+
 async function createSkill() {
   const name = $('#skill-name').value.trim();
   const description = $('#skill-description').value.trim();
-  if (!name || !description) { toast('A name and a description are both required', 'bad'); return; }
+
+  setSkillFormError('name', name ? '' : 'A name is required.');
+  setSkillFormError('description', description ? '' : 'A description is required.');
+  if (!name || !description) {
+    toast('A name and a description are both required', 'bad');
+    // Focus the first offending field rather than leaving it on the Create
+    // button — same reasoning as Settings' applySettings() in app-settings.ts.
+    $('#skill-' + (name ? 'description' : 'name')).focus();
+    return;
+  }
 
   const ok = await guard(() => api('/skills/' + encodeURIComponent(name), {
     method: 'PUT',
@@ -92,9 +112,12 @@ function relativeTo(text, root) {
   return String(text).split(root + '/').join('');
 }
 
+// A row in the Problems list — role="listitem" directly on it (a bare <div>
+// has no implicit role of its own to clash with), paired with ui.list()
+// wrapping the concatenated rows in skillIssuesCard below.
 function skillIssueRow(issue, root) {
   const error = issue.severity === 'error';
-  return '<div class="list-row">' +
+  return '<div class="list-row" role="listitem">' +
     ui.badge(error ? 'not loaded' : 'warning', error ? 'destructive' : 'outline', true) +
     '<div class="list-row-grow">' +
       '<div class="list-row-title">' + esc(issue.skill) +
@@ -111,7 +134,7 @@ function skillIssuesCard(data) {
     (a, b) => (a.severity === 'error' ? 0 : 1) - (b.severity === 'error' ? 0 : 1));
 
   return ui.card('Problems',
-    ordered.map((i) => skillIssueRow(i, data.root)).join(''),
+    ui.list(ordered.map((i) => skillIssueRow(i, data.root)).join(''), 'Skill problems'),
     { aside: ui.badge(data.counts.errors + ' / ' + data.counts.warnings,
         data.counts.errors > 0 ? 'destructive' : 'outline') });
 }
@@ -123,7 +146,17 @@ function matchingSkills(data) {
     s.name.toLowerCase().includes(filter) || s.description.toLowerCase().includes(filter));
 }
 
-/** Just the grouped list, so filtering can redraw it without losing focus. */
+/**
+ * Just the grouped list, so filtering can redraw it without losing focus.
+ *
+ * Each scope is its own list: role="list" around the scope's items, with the
+ * "user"/"project"/"bundled" header line kept outside it as a heading-ish
+ * label rather than a member. Each item is a <button> — giving the button
+ * itself role="listitem" would replace its implicit role="button" outright,
+ * so it is wrapped in a plain <div role="listitem"> instead, which costs
+ * nothing visually (an unclassed div has no box of its own to change the
+ * layout) and keeps "button" as what a screen reader calls it.
+ */
 function skillGroups(data) {
   const matches = matchingSkills(data);
   // Yours first: the bundled 29 are the ones you are least likely to want.
@@ -132,12 +165,20 @@ function skillGroups(data) {
     if (inScope.length === 0) return '';
     return '<div class="skill-group"><span class="silk">' + scope + '</span>' +
       '<span class="nav-count">' + inScope.length + '</span></div>' +
-      inScope.map((s) =>
-        '<button class="skill-item" data-skill-open="' + esc(s.name) + '" aria-current="' +
-          (state.skill && state.skill.name === s.name) + '">' +
+      ui.list(inScope.map((s) => {
+        // "page" is the correct ARIA token for the current item in a
+        // nav-like list, omitted (not written "false") on every other row —
+        // styles.ts's .skill-item rule already matches both "true" and
+        // "page" (added alongside app-authored.ts's agent rows, which use
+        // the same class), so this can use the right token directly rather
+        // than the .nav-item/.toc-item compromise elsewhere in this pass.
+        const current = state.skill && state.skill.name === s.name;
+        return '<div role="listitem"><button class="skill-item" data-skill-open="' + esc(s.name) + '"' +
+          (current ? ' aria-current="page"' : '') + '>' +
           '<span class="skill-item-name">' + esc(s.name) + '</span>' +
           '<span class="skill-item-desc">' + esc(s.description || 'no description') + '</span>' +
-        '</button>').join('');
+        '</button></div>';
+      }).join(''), scope + ' skills');
   }).join('');
 
   return groups || ui.empty(state.skillFilter ? 'Nothing matches that.' : 'No skills resolved.');
@@ -189,13 +230,27 @@ function skillDetailCard() {
     { aside: ui.badge(dirty ? 'unsaved' : s.scope, dirty ? 'destructive' : SCOPE_BADGE[s.scope], dirty) });
 }
 
+// Both fields are genuinely required — createSkill() above refuses to submit
+// without them — so both carry required/aria-required, and each gets its own
+// empty (until there is something to say) role="alert" node wired in by
+// aria-describedby, the same pattern as Settings' fields in app-settings.ts.
+// Each input is wrapped in a bare div rather than sitting beside its error as
+// a third sibling: .form-grid places children two per row (label, control),
+// and a third child per field would throw that alternation off. A div with
+// no class of its own does not change what .form-grid sees — it is still one
+// grid item occupying the control column, sized to its content exactly like
+// the bare input was.
 function skillCreateCard() {
   return ui.card('New skill',
     '<div class="card-content"><div class="form-grid">' +
       '<label class="label" for="skill-name">Name</label>' +
-      '<input class="input" type="text" id="skill-name" placeholder="deploy">' +
+      '<div><input class="input" type="text" id="skill-name" placeholder="deploy" ' +
+        'required aria-required="true" aria-describedby="skill-name-error">' +
+        '<div id="skill-name-error" role="alert"></div></div>' +
       '<label class="label" for="skill-description">Description</label>' +
-      '<input class="input" type="text" id="skill-description" placeholder="When to reach for it">' +
+      '<div><input class="input" type="text" id="skill-description" placeholder="When to reach for it" ' +
+        'required aria-required="true" aria-describedby="skill-description-error">' +
+        '<div id="skill-description-error" role="alert"></div></div>' +
       '<div class="form-span section-actions">' +
         ui.btn('Create', { variant: 'default', attrs: ' data-action="skill-create"' }) +
         '<span class="form-hint">Written to its own directory as SKILL.md.</span>' +

@@ -71,7 +71,20 @@ function connectorActions(c) {
     ui.btn('Remove', { size: 'sm', variant: 'destructive-ghost', attrs: ' data-connector-remove="' + id + '"' });
 }
 
-/** Cards for the popular-and-not-yet-added ones; once added they belong in the table. */
+/**
+ * Cards for the popular-and-not-yet-added ones; once added they belong in the
+ * table below (connectorRows(), which does carry role="list").
+ *
+ * Deliberately NOT wrapped in ui.list(): '.connector-cards' is a CSS grid
+ * (repeat(auto-fit, minmax(...))) whose reflow depends on '.connector-card'
+ * being its DIRECT children. ui.list() always inserts one more div around the
+ * rows it is given, which here would leave '.connector-cards' with a single
+ * child and collapse the responsive grid into one column — the "the rows
+ * inside keep their existing classes and spacing untouched" promise on
+ * ui.list() in app-core.ts holds for a flow of list-rows, not for a grid.
+ * Every one of these connectors is also reachable, fully row-marked, in the
+ * table underneath, so nothing here goes unannounced to a screen reader.
+ */
 function connectorCards() {
   const popular = state.connectors.filter((c) => c.popular && !c.installed);
   if (popular.length === 0) return '';
@@ -88,6 +101,20 @@ function connectorCards() {
   }).join('') + '</div>';
 }
 
+/**
+ * Sets/clears one field's error message and aria-invalid, by the input's own
+ * id — the same shape as Skills' setSkillFormError in app-skills.ts and MCP's
+ * / Hooks' setAddFormError in app-views.ts, sized to a bare id because this
+ * file's two forms (the custom-add form, the setup panel) do not share one
+ * id prefix.
+ */
+function setConnectorFormError(id, message) {
+  const input = $('#' + id);
+  if (input) input.setAttribute('aria-invalid', message ? 'true' : 'false');
+  const node = $('#' + id + '-error');
+  if (node) node.textContent = message || '';
+}
+
 /** The redirect URI has to be registered by hand, so it is on the row to copy. */
 function connectorDetail(c) {
   return c.auth === 'oauth' && c.clientRegistration === 'manual' && !c.hasClient
@@ -99,14 +126,15 @@ function connectorDetail(c) {
 function connectorRows() {
   const shown = state.connectors.filter(connectorMatches);
   if (shown.length === 0) return ui.empty('Nothing matches that filter.');
-  return shown.map((c) => ui.listRow(
+  return ui.list(shown.map((c) => ui.listRow(
     esc(c.name) +
       (c.source === 'custom' ? ' ' + ui.badge('custom', 'outline') : '') +
       ' ' + connectorStatus(c),
     connectorDetail(c),
     connectorActions(c),
-    '<div class="connector-mark">' + esc(c.name.slice(0, 1)) + '</div>'
-  )).join('');
+    '<div class="connector-mark">' + esc(c.name.slice(0, 1)) + '</div>',
+    true
+  )).join(''), 'Connectors');
 }
 
 /** A value the user has to carry to another site: selectable, whole, copyable. */
@@ -139,16 +167,26 @@ function connectorSetupPanel() {
     : (c.clientHelp || 'Register an OAuth client with this service and paste its ID.');
   const where = isToken ? c.tokenUrl : c.clientUrl;
 
+  // Both required fields are wrapped with their error node in a bare div, one
+  // grid item per field, for the same reason as Skills' New skill form
+  // (app-skills.ts): .form-grid alternates label/control per row, and a third
+  // sibling per field would throw that off. The client secret stays
+  // unwrapped and unmarked — it is genuinely optional, see the form hint
+  // below and saveConnectorSetup()'s own comment.
   const fields = isToken
     ? '<label class="label" for="setup-token">Access token</label>' +
-      '<input class="input" type="password" id="setup-token" autocomplete="off" spellcheck="false">'
+      '<div><input class="input" type="password" id="setup-token" autocomplete="off" spellcheck="false" ' +
+        'required aria-required="true" aria-describedby="setup-token-error">' +
+        '<div id="setup-token-error" role="alert"></div></div>'
     : copyField('setup-redirect', 'Redirect URI to allow', c.redirectUri) +
       (c.scopes && c.scopes.length
         ? copyField('setup-scopes', 'Scopes to grant', c.scopes.join(' '))
         : '') +
       '<label class="label" for="setup-client-id">Client ID</label>' +
-      '<input class="input" type="text" id="setup-client-id" autocomplete="off" spellcheck="false" ' +
-        'placeholder="000000-abc.apps.googleusercontent.com">' +
+      '<div><input class="input" type="text" id="setup-client-id" autocomplete="off" spellcheck="false" ' +
+        'placeholder="000000-abc.apps.googleusercontent.com" ' +
+        'required aria-required="true" aria-describedby="setup-client-id-error">' +
+        '<div id="setup-client-id-error" role="alert"></div></div>' +
       '<label class="label" for="setup-client-secret">Client secret</label>' +
       '<input class="input" type="password" id="setup-client-secret" autocomplete="off" spellcheck="false">';
 
@@ -185,11 +223,19 @@ function viewConnectors() {
       'value="' + esc(state.connectorQuery) + '">' +
     '</div>';
 
+  // Both fields are genuinely required — McpHttpServerSchema (config/schema.ts)
+  // takes name: z.string().min(1) and url: z.string().url() — so both carry
+  // required/aria-required and an error node, each wrapped for the same
+  // .form-grid alternation reason as the setup panel above.
   const custom = '<div class="form-grid">' +
     '<label class="label" for="connector-name">Name</label>' +
-    '<input class="input" type="text" id="connector-name" placeholder="my-service">' +
+    '<div><input class="input" type="text" id="connector-name" placeholder="my-service" ' +
+      'required aria-required="true" aria-describedby="connector-name-error">' +
+      '<div id="connector-name-error" role="alert"></div></div>' +
     '<label class="label" for="connector-url">MCP endpoint URL</label>' +
-    '<input class="input" type="text" id="connector-url" placeholder="https://mcp.example.com/mcp">' +
+    '<div><input class="input" type="text" id="connector-url" placeholder="https://mcp.example.com/mcp" ' +
+      'required aria-required="true" aria-describedby="connector-url-error">' +
+      '<div id="connector-url-error" role="alert"></div></div>' +
     '<div class="form-span section-actions">' +
       ui.btn('Add and connect', { variant: 'default', attrs: ' data-action="connector-add"' }) +
       '<span class="form-hint">Streamable HTTP endpoints that authenticate with OAuth.</span>' +
@@ -269,7 +315,8 @@ async function saveConnectorSetup() {
 
   if (setup.kind === 'token') {
     const token = $('#setup-token').value.trim();
-    if (!token) { toast('A token is required', 'bad'); return; }
+    setConnectorFormError('setup-token', token ? '' : 'An access token is required.');
+    if (!token) { toast('A token is required', 'bad'); $('#setup-token').focus(); return; }
     const ok = await guard(() => api('/connectors/' + encodeURIComponent(id) + '/token', {
       method: 'PUT', body: JSON.stringify({ token }),
     }), 'Token saved');
@@ -282,7 +329,8 @@ async function saveConnectorSetup() {
   }
 
   const clientId = $('#setup-client-id').value.trim();
-  if (!clientId) { toast('A client ID is required', 'bad'); return; }
+  setConnectorFormError('setup-client-id', clientId ? '' : 'A client ID is required.');
+  if (!clientId) { toast('A client ID is required', 'bad'); $('#setup-client-id').focus(); return; }
   const clientSecret = $('#setup-client-secret').value.trim();
 
   const ok = await guard(() => api('/connectors/' + encodeURIComponent(id) + '/client', {
@@ -297,8 +345,17 @@ async function saveConnectorSetup() {
 async function addCustomConnector() {
   const name = $('#connector-name').value.trim();
   const url = $('#connector-url').value.trim();
-  if (!name || !url) { toast('Name and URL are required', 'bad'); return; }
-  if (!/^https?:\/\//i.test(url)) { toast('URL must start with http:// or https://', 'bad'); return; }
+  const badUrl = Boolean(url) && !/^https?:\/\//i.test(url);
+
+  setConnectorFormError('connector-name', name ? '' : 'A name is required.');
+  setConnectorFormError('connector-url',
+    !url ? 'A URL is required.' : badUrl ? 'URL must start with http:// or https://.' : '');
+
+  if (!name || !url || badUrl) {
+    toast(badUrl ? 'URL must start with http:// or https://' : 'Name and URL are required', 'bad');
+    $('#connector-' + (name ? 'url' : 'name')).focus();
+    return;
+  }
 
   const server = { name, transport: 'http', url, headers: {}, auth: 'oauth', scopes: [], enabled: true };
   const ok = await guard(() => api('/mcp', { method: 'PUT', body: JSON.stringify({ server }) }), 'Connector added');

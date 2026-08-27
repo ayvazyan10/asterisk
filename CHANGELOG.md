@@ -31,6 +31,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The primary button's fill needed a token of its own — as a fill under white it
   must be darker than it is as text on the page, and in dark theme no single
   value cleared both roles.
+- **The Rules page stopped crying wolf.** It opened with 55 files under a red
+  mark on a red-tinted row — the treatment a genuine misconfiguration gets — and
+  the 22 rules actually in effect sat below them, under the fold. Those 55 are
+  rules for other languages, inert *by design* in a TypeScript project. What is
+  in effect now comes first; what is dormant collapses into one line naming the
+  count and the reason. The distinction travels as data from the API rather than
+  being recovered by matching the wording of a human-readable sentence, so
+  rephrasing that sentence cannot silently turn 55 non-events back into errors.
+- **The panel has a document structure.** There was no `<h1>` anywhere in the
+  authenticated app and no list markup at all: every collection was a stack of
+  `div`s, so nothing announced "list of 27". Page titles are `h1`, cards `h2`,
+  and the collections that are collections say so — while Overview's four unlike
+  facts deliberately stay unwrapped. `aria-current` carries `page`, WAI-ARIA's
+  token for the current entry in a navigation, and is omitted rather than
+  written as the string `"false"` on every other row. The stylesheet now keys
+  those highlights off the attribute's presence, so the correct token can never
+  again cost the active row its styling.
+- **A form that rejects your input says so, and keeps saying so.** Settings and
+  the MCP, Hooks, Skills and Connector add-forms marked nothing and moved focus
+  nowhere; the only feedback was a toast that erased itself after eight seconds.
+  Each field now carries a message tied to it by `aria-describedby` that
+  survives the toast and clears when the value becomes valid, a failed submit
+  moves focus to the first offending field, and an error toast interrupts
+  (`role="alert"`) where a success toast does not.
 - **The panel fits a phone.** Skills and Agents overflowed the viewport by ~200px
   at 375px, cutting text mid-word into a dead gutter, because a grid item's
   automatic minimum was its unbroken min-content width. The rail, which ate 42%

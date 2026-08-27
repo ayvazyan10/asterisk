@@ -83,10 +83,33 @@ describe('GET /api/rules', () => {
     const rules = body['rules'] as unknown as { name: string; layer: string }[];
     expect(rules.map((r) => r.name)).toEqual(['style.md']);
 
-    const inert = body['inert'] as unknown as { rel: string; reason: string }[];
+    const inert = body['inert'] as unknown as { rel: string; reason: string; category: string }[];
     expect(inert).toHaveLength(1);
     expect(inert[0]?.rel).toMatch(/lint\.md$/);
     expect(inert[0]?.reason).toMatch(/written for python.*reads as typescript/);
+    expect(inert[0]?.category).toBe('other-language');
+  });
+
+  it('sends the inert category as data — a UI has no reason string to re-derive it from', async () => {
+    // The regression this guards against: a UI that classified inert rules
+    // by pattern-matching `reason` would silently misclassify every one of
+    // these the moment the prose changed. category is set once, in
+    // ruleSkipReason(), at the same time as reason — never after the fact.
+    process.env['ASTERISK_LANG'] = 'typescript';
+    write('rules/python/lint.md', '# Py\nUse ruff.\n'); // by design: other language
+    write('rules/common/blank.md', ''); // genuine misconfiguration: empty
+
+    const body = await payload(getRulesReport(ctx()));
+    const inert = body['inert'] as unknown as { rel: string; category: string }[];
+    const byRel = (suffix: string) => inert.find((i) => i.rel.endsWith(suffix));
+
+    expect(byRel('lint.md')?.category).toBe('other-language');
+    expect(byRel('blank.md')?.category).toBe('misconfigured');
+    // Every emitted item must carry one of the two known categories — nothing
+    // falls through as undefined for the UI to mis-bucket.
+    for (const item of inert) {
+      expect(['other-language', 'misconfigured']).toContain(item.category);
+    }
   });
 
   it('loads the language layer when it does match', async () => {
@@ -107,12 +130,14 @@ describe('GET /api/rules', () => {
     write('rules/notes/deep/x.md', '# Deep\nx\n');
 
     const body = await payload(getRulesReport(ctx()));
-    const reasons = (body['inert'] as unknown as { rel: string; reason: string }[]).map(
-      (i) => i.reason,
-    );
+    const inert = body['inert'] as unknown as { rel: string; reason: string; category: string }[];
+    const reasons = inert.map((i) => i.reason);
     expect(reasons.some((r) => /whitespace only/.test(r))).toBe(true);
     expect(reasons.some((r) => /is not a layer/.test(r))).toBe(true);
     expect(reasons.some((r) => /nested too deep/.test(r))).toBe(true);
+    // None of these is the other-language case — every one is a genuine
+    // misconfiguration, and category says so regardless of which sentence.
+    expect(inert.every((i) => i.category === 'misconfigured')).toBe(true);
   });
 });
 
@@ -141,9 +166,13 @@ describe('GET /api/agents', () => {
     write('agents/hollow.md', '---\nname: hollow\ndescription: No body.\n---\n');
 
     const body = await payload(getAgentsReport(ctx()));
-    const inert = body['inert'] as unknown as { rel: string; reason: string }[];
+    const inert = body['inert'] as unknown as { rel: string; reason: string; category: string }[];
     expect(inert).toHaveLength(1);
     expect(inert[0]?.reason).toMatch(/no prompt body/);
+    // Agents have no "written for another language" concept — the one
+    // reason loadAgents can report is always a genuine misconfiguration,
+    // stated as data rather than left for a reader to infer from the prose.
+    expect(inert[0]?.category).toBe('misconfigured');
   });
 
   it('serves a bundled agent in full, since there is no file to open', async () => {

@@ -16,6 +16,36 @@ function addPanel(id, label, form) {
   '</div>' + (open ? ui.card(label, '<div class="card-content">' + form + '</div>') : '');
 }
 
+/**
+ * A blank page is not proof there is nothing to say. ui.empty() is the quiet
+ * one-liner for a list that is merely between items — a search with no
+ * matches, a kind with no active layer. A page that is blank because nothing
+ * has been added yet is a different case: it needs to say what the thing is,
+ * and hand over the action that fills it — where the reader's eye already
+ * lands, not as a button stranded above an otherwise empty card.
+ */
+function emptyState(title, body, action) {
+  return '<div class="empty-state">' +
+    '<h3 class="empty-state-title">' + esc(title) + '</h3>' +
+    '<p class="empty-state-body">' + esc(body) + '</p>' +
+    (action ? '<div class="empty-state-action">' + action + '</div>' : '') +
+  '</div>';
+}
+
+/**
+ * Sets/clears one field's error message and aria-invalid, by the input's own
+ * id — the same shape as Skills' setSkillFormError in app-skills.ts and
+ * Settings' showFieldError/clearFieldError in app-settings.ts, generalised to
+ * a bare id (rather than a fixed prefix) because this file has two unrelated
+ * add-forms (MCP, Hooks) sharing the one helper.
+ */
+function setAddFormError(id, message) {
+  const input = $('#' + id);
+  if (input) input.setAttribute('aria-invalid', message ? 'true' : 'false');
+  const node = $('#' + id + '-error');
+  if (node) node.textContent = message || '';
+}
+
 // --- mcp servers ---------------------------------------------------------
 
 function mcpDetail(s) {
@@ -38,24 +68,38 @@ function mcpAuthButtons(s) {
 function viewMcp() {
   const rows = state.mcp.length === 0
     ? ui.empty('No MCP servers configured.')
-    : state.mcp.map((s) => ui.listRow(
+    : ui.list(state.mcp.map((s) => ui.listRow(
         esc(s.name),
         mcpDetail(s),
         mcpAuthButtons(s) +
         ui.btn(s.enabled ? 'Disable' : 'Enable', { size: 'sm', attrs: ' data-mcp-toggle="' + esc(s.name) + '"' }) +
         ui.btn('Delete', { size: 'sm', variant: 'destructive-ghost', attrs: ' data-mcp-delete="' + esc(s.name) + '"' }),
-        ui.stateBadge(s.enabled)
-      )).join('');
+        ui.stateBadge(s.enabled),
+        true
+      )).join(''), 'MCP servers');
 
+  // Name and command/URL are the two fields the schema actually rejects an
+  // empty string for (McpStdioServerSchema/McpHttpServerSchema in
+  // config/schema.ts both use z.string().min(1)/url()) — transport, auth and
+  // env all carry usable defaults, so only these two carry
+  // required/aria-required and an error node. Each input is wrapped in a bare
+  // div rather than sitting beside its error as a third sibling: .form-grid
+  // places children two per row (label, control), and a third child per field
+  // would throw that alternation off — same reasoning as Skills' New skill
+  // form in app-skills.ts.
   const form = '<div class="form-grid">' +
     '<label class="label" for="mcp-name">Name</label>' +
-    '<input class="input" type="text" id="mcp-name" placeholder="filesystem">' +
+    '<div><input class="input" type="text" id="mcp-name" placeholder="filesystem" ' +
+      'required aria-required="true" aria-describedby="mcp-name-error">' +
+      '<div id="mcp-name-error" role="alert"></div></div>' +
     '<label class="label" for="mcp-transport">Transport</label>' +
     '<select class="select" id="mcp-transport"><option value="stdio">stdio</option>' +
       '<option value="http">http</option></select>' +
     '<label class="label" for="mcp-command">Command / URL</label>' +
-    '<input class="input" type="text" id="mcp-command" ' +
-      'placeholder="npx -y @modelcontextprotocol/server-filesystem /tmp">' +
+    '<div><input class="input" type="text" id="mcp-command" ' +
+      'placeholder="npx -y @modelcontextprotocol/server-filesystem /tmp" ' +
+      'required aria-required="true" aria-describedby="mcp-command-error">' +
+      '<div id="mcp-command-error" role="alert"></div></div>' +
     '<label class="label" for="mcp-auth">Authentication (http)</label>' +
     '<select class="select" id="mcp-auth"><option value="none">none</option>' +
       '<option value="oauth">oauth (connector)</option></select>' +
@@ -90,7 +134,15 @@ async function saveMcp() {
   const target = $('#mcp-command').value.trim();
   const pairs = parsePairs($('#mcp-env').value);
 
-  if (!name || !target) { toast('Name and command/URL are required', 'bad'); return; }
+  setAddFormError('mcp-name', name ? '' : 'A name is required.');
+  setAddFormError('mcp-command', target ? '' : 'A command or URL is required.');
+  if (!name || !target) {
+    toast('Name and command/URL are required', 'bad');
+    // Focus the first offending field rather than leaving it on the Save
+    // button — same reasoning as Settings' applySettings() in app-settings.ts.
+    $('#mcp-' + (name ? 'command' : 'name')).focus();
+    return;
+  }
 
   const server = transport === 'stdio'
     ? (() => {
@@ -108,26 +160,47 @@ async function saveMcp() {
 const HOOK_EVENTS = ['before_turn', 'after_turn', 'before_tool', 'after_tool', 'on_error'];
 
 function viewHooks() {
-  const rows = state.hooks.length === 0
-    ? ui.empty('No hooks configured.')
-    : state.hooks.map((h) => ui.listRow(
+  const isEmpty = state.hooks.length === 0;
+  // No hooks yet is the common case on a fresh install, not a problem to
+  // report — the empty card gets what the page description already said,
+  // repeated where the eye lands, plus the one action that changes it.
+  const open = state.expanded === 'hook-add';
+
+  const rows = isEmpty
+    ? emptyState('No hooks yet',
+        'A hook runs a shell command at a lifecycle event — before or after a turn, before or ' +
+        'after a tool call, or when a turn errors — with the event as JSON on stdin.',
+        ui.btn(open ? 'Cancel' : 'Add a hook',
+          { variant: open ? 'ghost' : 'default', attrs: ' data-expand="hook-add"' }))
+    : ui.list(state.hooks.map((h) => ui.listRow(
         esc(h.name) + ' ' + ui.badge(h.event + (h.matcher ? ' · ' + h.matcher : ''), 'outline'),
         h.command,
         ui.btn(h.enabled ? 'Disable' : 'Enable', { size: 'sm', attrs: ' data-hook-toggle="' + esc(h.name) + '"' }) +
         ui.btn('Delete', { size: 'sm', variant: 'destructive-ghost', attrs: ' data-hook-delete="' + esc(h.name) + '"' }),
-        ui.stateBadge(h.enabled)
-      )).join('');
+        ui.stateBadge(h.enabled),
+        true
+      )).join(''), 'Hooks');
 
+  // Name and command are the two HookConfigSchema fields with z.string().min(1)
+  // (config/schema.ts) — event always carries a value from the select, matcher
+  // is optional, and timeout defaults to 30 — so only these two carry
+  // required/aria-required and an error node, each wrapped the same way as
+  // Skills' New skill form (app-skills.ts) to keep .form-grid's label/control
+  // alternation intact.
   const form = '<div class="form-grid">' +
     '<label class="label" for="hook-name">Name</label>' +
-    '<input class="input" type="text" id="hook-name" placeholder="format-on-edit">' +
+    '<div><input class="input" type="text" id="hook-name" placeholder="format-on-edit" ' +
+      'required aria-required="true" aria-describedby="hook-name-error">' +
+      '<div id="hook-name-error" role="alert"></div></div>' +
     '<label class="label" for="hook-event">Event</label>' +
     '<select class="select" id="hook-event">' +
       HOOK_EVENTS.map((e) => '<option value="' + e + '">' + e + '</option>').join('') + '</select>' +
     '<label class="label" for="hook-matcher">Matcher</label>' +
     '<input class="input" type="text" id="hook-matcher" placeholder="Edit (optional)">' +
     '<label class="label" for="hook-command">Command</label>' +
-    '<input class="input" type="text" id="hook-command" placeholder="biome check --write">' +
+    '<div><input class="input" type="text" id="hook-command" placeholder="biome check --write" ' +
+      'required aria-required="true" aria-describedby="hook-command-error">' +
+      '<div id="hook-command-error" role="alert"></div></div>' +
     '<label class="label" for="hook-timeout">Timeout (s)</label>' +
     '<input class="input" type="number" id="hook-timeout" value="30" min="1" max="300">' +
     '<div class="form-span section-actions">' +
@@ -137,8 +210,11 @@ function viewHooks() {
   return ui.pageHeader('Hooks',
       'Shell commands fired at agent-loop lifecycle events, with the event payload on stdin as JSON. ' +
       'They run with your full user privileges — treat them like any other shell script.') +
-    addPanel('hook-add', 'Add a hook', form) +
-    ui.card('Configured', rows, { aside: ui.badge(state.hooks.length, 'secondary') });
+    // The top toggle button is redundant once the empty card carries its own
+    // — showing both would put two "Add a hook" controls on a blank page.
+    (isEmpty ? '' : addPanel('hook-add', 'Add a hook', form)) +
+    ui.card('Configured', rows, { aside: ui.badge(state.hooks.length, 'secondary') }) +
+    (isEmpty && open ? ui.card('Add a hook', '<div class="card-content">' + form + '</div>') : '');
 }
 
 async function saveHook() {
@@ -151,7 +227,14 @@ async function saveHook() {
   };
   const matcher = $('#hook-matcher').value.trim();
   if (matcher) hook.matcher = matcher;
-  if (!hook.name || !hook.command) { toast('Name and command are required', 'bad'); return; }
+
+  setAddFormError('hook-name', hook.name ? '' : 'A name is required.');
+  setAddFormError('hook-command', hook.command ? '' : 'A command is required.');
+  if (!hook.name || !hook.command) {
+    toast('Name and command are required', 'bad');
+    $('#hook-' + (hook.name ? 'command' : 'name')).focus();
+    return;
+  }
 
   const ok = await guard(() => api('/hooks', { method: 'PUT', body: JSON.stringify({ hook }) }), 'Hook saved');
   if (ok) { await loadHooks(); await loadStatus(); render(); }
@@ -163,8 +246,13 @@ function secretsPanel() {
   // An env var of the same name wins over anything stored here, so a key that
   // is overridden needs to say so where you would otherwise edit it and
   // wonder why nothing changed — not in small print underneath.
+  //
+  // role="listitem" goes directly on the row (a bare '.field' div has no
+  // implicit role of its own to clash with) — the same placement as
+  // skillIssueRow in app-skills.ts, since these rows are not built through
+  // ui.listRow's own opt-in.
   const rows = state.secrets.map((s) =>
-    '<div class="field' + (s.overriddenByEnv ? ' field-shadowed' : '') + '">' +
+    '<div class="field' + (s.overriddenByEnv ? ' field-shadowed' : '') + '" role="listitem">' +
       '<div><span class="label">' + esc(s.key) + '</span> ' +
         (s.overriddenByEnv
           ? ui.badge('overridden by env', 'destructive', true)
@@ -187,7 +275,7 @@ function secretsPanel() {
 
   const shadowed = state.secrets.filter((s) => s.overriddenByEnv).length;
 
-  return ui.card('Stored keys', rows || ui.empty('No secrets defined.'), {
+  return ui.card('Stored keys', rows ? ui.list(rows, 'Stored keys') : ui.empty('No secrets defined.'), {
       aside: shadowed > 0
         ? ui.badge(shadowed + ' overridden by env', 'destructive', true)
         : ui.badge(state.secrets.filter((s) => s.set).length + ' set', 'secondary'),
@@ -220,14 +308,23 @@ function viewContentBody(kind) {
   const entry = contentEntry(kind);
   if (!entry) return '<section class="card">' + ui.skeletonRows(3) + '</section>';
 
+  // Same shape as Skills' skillGroups() in app-skills.ts: each file is a
+  // <button>, wrapped in a plain role="listitem" div rather than getting the
+  // role directly — that would replace the button's own implicit
+  // role="button" outright — costing nothing visually since an unclassed div
+  // has no box of its own.
+  const label = (CONTENT_KINDS.find((k) => k.id === kind) || {}).label || kind;
   const list = ui.card('Files',
     '<div class="file-list">' +
       (entry.files.length === 0
         ? ui.empty('No files yet.')
-        : entry.files.map((f) =>
-            '<button class="file-item" data-open="' + esc(kind) + '|' + esc(f.path) + '" aria-current="' +
-            (state.editor.kind === kind && state.editor.path === f.path) + '">' +
-            esc(f.path) + '</button>').join('')) +
+        : ui.list(entry.files.map((f) => {
+            // "page" is the ARIA token for the current item; every other row
+            // simply omits the attribute rather than spelling out "false".
+            const current = state.editor.kind === kind && state.editor.path === f.path;
+            return '<div role="listitem"><button class="file-item" data-open="' + esc(kind) + '|' + esc(f.path) + '"' +
+              (current ? ' aria-current="page"' : '') + '>' + esc(f.path) + '</button></div>';
+          }).join(''), label + ' files')) +
     '</div>',
     { aside: ui.badge(entry.files.length, 'secondary') });
 
@@ -285,12 +382,14 @@ async function saveFile() {
 function tokensPanel() {
   const rows = state.tokens.length === 0
     ? ui.empty('No tokens issued.')
-    : state.tokens.map((t) => ui.listRow(
+    : ui.list(state.tokens.map((t) => ui.listRow(
         esc(t.label),
         'created ' + when(t.created_at) + ' · last used ' + when(t.last_used_at),
         ui.btn('Revoke', { size: 'sm', variant: 'destructive-ghost',
-          attrs: ' data-token-revoke="' + t.id + '"' })
-      )).join('');
+          attrs: ' data-token-revoke="' + t.id + '"' }),
+        null,
+        true
+      )).join(''), 'Issued tokens');
 
   const form = '<div class="form-grid">' +
     '<label class="label" for="token-label">Label</label>' +
@@ -415,12 +514,15 @@ function auditPanel() {
   const entries = state.logOrder === 'newest' ? state.audit : state.audit.slice().reverse();
   const rows = entries.length === 0
     ? ui.empty('Nothing recorded yet. Changes you make here will show up.')
-    : entries.map((a) => ui.listRow(
+    : ui.list(entries.map((a) => ui.listRow(
         esc(a.action) + ' ' + ui.badge(a.target, 'outline'),
         // Both clocks: the absolute one to line an entry up against the daemon
         // log, the relative one because "17m ago" is what you actually asked.
-        stamp(a.at) + ' · ' + when(a.at) + ' · ' + a.actor
-      )).join('');
+        stamp(a.at) + ' · ' + when(a.at) + ' · ' + a.actor,
+        null,
+        null,
+        true
+      )).join(''), 'Audit trail');
 
   return ui.card('Recent', rows, {
     aside: logOrderButton() + ui.badge(state.audit.length, 'secondary'),

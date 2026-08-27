@@ -62,26 +62,56 @@ function markdownUnder(root: string, base = root): DiskFile[] {
 }
 
 /**
+ * Why a would-be rule or agent never loaded, as data a UI can branch on
+ * without re-deriving it from the human-readable sentence. `other-language`
+ * is the one case the layered-rules feature produces *on purpose* — a rule
+ * under rules/python/ is perfectly valid and completely inert in a Go
+ * project. Everything else — nested too deep, an unrecognised folder, an
+ * empty file, an agent with no prompt body — is a genuine misconfiguration.
+ */
+export type InertCategory = 'other-language' | 'misconfigured';
+
+interface RuleSkip {
+  reason: string;
+  category: InertCategory;
+}
+
+/**
  * Why a file that is sitting right there did not become a rule. The language
  * layer is the interesting case and the one nothing else reports: a rule under
  * rules/python/ is perfectly valid and completely inert in a Go project.
+ * Returns both the prose and the category from the one place that knows
+ * which case it is, rather than making a caller re-derive the category from
+ * the prose afterwards.
  */
-function ruleSkipReason(file: DiskFile, lang: ProjectLang): string {
+function ruleSkipReason(file: DiskFile, lang: ProjectLang): RuleSkip {
   const parts = file.rel.split(/[\\/]/);
   const dir = parts.length > 1 ? (parts[0] as string) : '';
 
   if (dir && LANG_DIRS.has(dir) && dir !== lang) {
     const reads = lang === 'unknown' ? 'no language it recognises' : lang;
-    return `written for ${dir}, and this project reads as ${reads}`;
+    return {
+      reason: `written for ${dir}, and this project reads as ${reads}`,
+      category: 'other-language',
+    };
   }
   // A layer reads the files directly inside it and does not descend.
   if (parts.length > 2) {
-    return 'nested too deep — a layer reads only the files directly inside it';
+    return {
+      reason: 'nested too deep — a layer reads only the files directly inside it',
+      category: 'misconfigured',
+    };
   }
   if (dir && !LANG_DIRS.has(dir) && dir !== 'common') {
-    return `"${dir}" is not a layer — rules load from common/, a language folder, or the top level`;
+    return {
+      reason: `"${dir}" is not a layer — rules load from common/, a language folder, or the top level`,
+      category: 'misconfigured',
+    };
   }
-  return 'empty, or whitespace only — a rule with no content is skipped';
+  return {
+    reason: 'empty, or whitespace only — a rule with no content is skipped',
+    category: 'misconfigured',
+  };
 }
 
 // The language directory names loadRules knows about. Anything else nested
@@ -131,13 +161,17 @@ export const getRulesReport: Handler = () => {
     })),
     inert: onDisk
       .filter((f) => !inEffect.has(f.path))
-      .map((f) => ({
-        path: f.path,
-        rel: f.rel,
-        scope: f.scope,
-        bytes: f.bytes,
-        reason: ruleSkipReason(f, lang),
-      })),
+      .map((f) => {
+        const skip = ruleSkipReason(f, lang);
+        return {
+          path: f.path,
+          rel: f.rel,
+          scope: f.scope,
+          bytes: f.bytes,
+          reason: skip.reason,
+          category: skip.category,
+        };
+      }),
   });
 };
 
@@ -182,6 +216,10 @@ export const getAgentsReport: Handler = () => {
         bytes: f.bytes,
         // loadAgents drops a definition with no body without saying so.
         reason: 'no prompt body — everything after the frontmatter is the prompt',
+        // Agents have no "written for another language" concept — every
+        // reason loadAgents can report is a genuine misconfiguration. Stated
+        // as data rather than left for the UI to infer from the prose.
+        category: 'misconfigured' satisfies InertCategory,
       })),
     counts: {
       loaded: agents.length,

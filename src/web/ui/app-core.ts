@@ -171,11 +171,14 @@ const ui = {
       '</button>';
   },
 
+  // h2: the page itself carries the h1 (see pageHeader below), so every card
+  // heading nests one level under it. Kept in lock-step with pageHeader's
+  // level — bump one and the other must follow, or the outline gets a gap.
   card(title, body, opts) {
     const o = opts || {};
     const aside = o.aside === undefined || o.aside === null ? '' : o.aside;
     return '<section class="card' + (o.divided === false ? '' : ' card-divided') + '">' +
-      '<header class="card-header"><h3 class="card-title">' + esc(title) + '</h3>' + aside + '</header>' +
+      '<header class="card-header"><h2 class="card-title">' + esc(title) + '</h2>' + aside + '</header>' +
       body + '</section>';
   },
 
@@ -183,12 +186,35 @@ const ui = {
   // the detail is text and is escaped here. The asymmetry is deliberate but
   // easy to get wrong: anything user-supplied in the title must be escaped by
   // the caller, and the detail must not be, or it double-escapes.
-  listRow(title, detail, actions, leading) {
-    return '<div class="list-row">' + (leading || '') +
+  //
+  // Not itself list markup — most callers use this for a handful of unlike
+  // facts about one thing (the Overview cards: "Background process",
+  // "Telegram bridge"), which is not a collection, so the default omits
+  // role="listitem". Pass listItem: true when the row is one member of a
+  // genuine repeated collection — pair it with ui.list() around the
+  // concatenated rows. Off by default rather than always-on: a listitem role
+  // with no list ancestor is exactly the "wrap things that are not a list"
+  // mistake the shared helper should not default into for every one of its
+  // callers, several of which use it for unlike facts, not collections.
+  listRow(title, detail, actions, leading, listItem) {
+    return '<div class="list-row"' + (listItem ? ' role="listitem"' : '') + '>' + (leading || '') +
       '<div class="list-row-grow"><div class="list-row-title">' + title + '</div>' +
       (detail ? '<div class="list-row-detail">' + esc(detail) + '</div>' : '') + '</div>' +
       (actions ? '<div class="section-actions">' + actions + '</div>' : '') +
     '</div>';
+  },
+
+  // Wraps a genuine repeated collection (rows built by listRow, or any other
+  // same-shaped items) so a screen reader announces it as a list with a
+  // count, and offers list navigation, instead of an unannounced stack of
+  // divs. Deliberately not a real <ul>/<li>: that would need a list-style/
+  // margin reset this stylesheet does not carry, and adding one is out of
+  // scope here (see CLAUDE.md on styles.ts ownership) — role="list" gets the
+  // same announcement without touching layout. No wrapping class, so it has
+  // no footprint of its own; the rows inside keep their existing classes and
+  // spacing untouched.
+  list(rowsHtml, label) {
+    return '<div role="list"' + (label ? ' aria-label="' + esc(label) + '"' : '') + '>' + rowsHtml + '</div>';
   },
 
   empty(message) {
@@ -217,21 +243,45 @@ const ui = {
 
   // The human names the thing, the machine names where it lives. The title is
   // escaped; the description is not, because callers pass markup through it.
+  //
+  // h1: this, not the "Asterisk" brand in the rail, is the page's top
+  // heading. The brand is chrome that sits beside every view unchanged; the
+  // page title is the one heading that actually describes what is on screen,
+  // and every view calls pageHeader exactly once, at the top of what it
+  // returns, so this is the only h1 the authenticated app ever renders. A
+  // static "Asterisk" h1 would instead sit there for the life of the page
+  // while the content underneath it changes on every tab switch — the thing
+  // a screen-reader user jumps to first would never describe what they
+  // landed on. The brand stays a plain <div> (index.ts) on purpose. Keep
+  // ui.card's h2 one level under this — see the note there.
   pageHeader(title, description, subject) {
-    return '<header class="page-header"><h2 class="page-title">' + esc(title) +
-      (subject ? '<span class="page-subject">' + esc(subject) + '</span>' : '') + '</h2>' +
+    return '<header class="page-header"><h1 class="page-title">' + esc(title) +
+      (subject ? '<span class="page-subject">' + esc(subject) + '</span>' : '') + '</h1>' +
       '<p class="page-description">' + description + '</p></header>';
   },
 };
 
+// The .toasts host (index.ts) carries role="status"/aria-live="polite" as
+// the container-level default. A failure is not routine status, though —
+// it is the one thing a screen-reader user needs interrupted for, and the
+// 8s the bad case stays on screen (versus 3.5s for good) does nothing for
+// someone who was not already looking at the corner of the screen when it
+// appeared. Marking the individual node role="alert" (implicitly assertive)
+// makes an error interrupt and get announced on its own, nested inside the
+// polite container; success/info nodes keep an explicit role="status" too,
+// so the announcement priority travels with the node that actually knows
+// its own kind rather than relying on the container alone.
 function toast(message, kind, detail) {
   const host = $('.toasts');
   const node = document.createElement('div');
-  node.className = 'toast ' + (kind === 'bad' ? 'toast-error' : kind === 'good' ? 'toast-success' : '');
+  const bad = kind === 'bad';
+  node.className = 'toast ' + (bad ? 'toast-error' : kind === 'good' ? 'toast-success' : '');
+  node.setAttribute('role', bad ? 'alert' : 'status');
+  node.setAttribute('aria-live', bad ? 'assertive' : 'polite');
   node.innerHTML = '<div class="toast-title">' + esc(message) + '</div>' +
     (detail ? '<div class="toast-detail">' + esc(detail) + '</div>' : '');
   host.appendChild(node);
-  setTimeout(() => node.remove(), kind === 'bad' ? 8000 : 3500);
+  setTimeout(() => node.remove(), bad ? 8000 : 3500);
 }
 
 async function api(path, options) {
@@ -343,8 +393,19 @@ function renderSidebar() {
       const current = state.tab === tab.id;
       // The label is the accessible name when it is hidden by the collapsed
       // rail, so title carries it and the icon stays aria-hidden.
-      return '<button class="nav-item" data-tab="' + esc(tab.id) + '" aria-current="' + current +
-        '" title="' + esc(tab.label) + '">' +
+      //
+      // aria-current is only present on the current item, never written as
+      // the string "false" on the other nine — an attribute a screen reader
+      // has to explain the absence of is worse than no attribute at all.
+      // The value is "page", WAI-ARIA's own token for the current page in a
+      // navigation landmark. styles.ts keys every one of these highlights off
+      // the attribute's PRESENCE ([aria-current]) rather than its value, so
+      // the token can be the semantically right one without the active-row
+      // styling depending on which word it is — the arrangement that made an
+      // earlier attempt at this migration risk dropping the highlight.
+      return '<button class="nav-item" data-tab="' + esc(tab.id) + '"' +
+        (current ? ' aria-current="page"' : '') +
+        ' title="' + esc(tab.label) + '">' +
         icon(tab.icon, 15, current ? 2 : 1.5) +
         '<span class="nav-label">' + esc(tab.label) + '</span>' +
         (count === null || count === undefined ? '' : '<span class="nav-count">' + count + '</span>') +

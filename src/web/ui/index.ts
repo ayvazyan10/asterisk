@@ -95,6 +95,11 @@ export function renderIndexHtml(opts: RenderOptions): string {
   <aside class="rail">
     <div class="brand">
       <span class="brand-mark">*</span>
+      <!-- Deliberately a <div>, not an h1: the app's one h1 per view is the
+           page title ui.pageHeader() renders in app-core.ts, which changes
+           with every tab; this brand mark sits beside all of them unchanged
+           and describes the app chrome, not the content on screen. See the
+           comment on pageHeader() for the full reasoning. -->
       <div class="brand-name">Asterisk</div>
       <div class="brand-meta"></div>
     </div>
@@ -106,6 +111,9 @@ export function renderIndexHtml(opts: RenderOptions): string {
     <main class="view"></main>
   </div>
 </div>
+<!-- Container-level default; app-core.ts's toast() marks each node
+     role="alert"/aria-live="assertive" for an error and role="status"/
+     "polite" otherwise, so severity travels with the node that knows it. -->
 <div class="toasts" role="status" aria-live="polite"></div>
 <script nonce="${nonce}">${APP_ICONS}\n${APP_CORE}\n${APP_STAR}\n${APP_SETTINGS}\n${APP_LOGS}\n${APP_SKILLS}\n${APP_AUTHORED}\n${APP_CONNECTORS}\n${APP_VIEWS}</script>
 </body>

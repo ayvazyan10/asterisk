@@ -17,6 +17,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
+import { settingsRegistry } from '../src/config/introspect.ts';
 import { CONTENT_KINDS } from '../src/web/api/content.ts';
 import { APP_AUTHORED } from '../src/web/ui/app-authored.ts';
 import { APP_CONNECTORS } from '../src/web/ui/app-connectors.ts';
@@ -56,6 +57,27 @@ function arrayLiteral(name: string): string {
 
 function idsIn(name: string): string[] {
   return [...arrayLiteral(name).matchAll(/id: '([a-z]+)'/g)].map((m) => m[1] as string);
+}
+
+/**
+ * Source text of a top-level `function name(...) { ... }` in the client,
+ * brace-matched so a nested object literal in the body doesn't truncate it
+ * early. Lets a test actually run a pure helper out of the client script
+ * instead of pattern-matching its source.
+ */
+function functionSource(name: string): string {
+  const marker = `function ${name}(`;
+  const start = CLIENT.indexOf(marker);
+  if (start === -1) throw new Error(`no function ${name} in the client`);
+  const open = CLIENT.indexOf('{', start);
+  let depth = 1;
+  let i = open + 1;
+  while (depth > 0 && i < CLIENT.length) {
+    if (CLIENT[i] === '{') depth++;
+    else if (CLIENT[i] === '}') depth--;
+    i++;
+  }
+  return CLIENT.slice(start, i);
 }
 
 /** Body of a top-level CSS rule, by selector. */
@@ -407,6 +429,124 @@ describe('the system figure', () => {
   });
 });
 
+describe('inert content: told apart by why, not painted red on sight', () => {
+  it('branches on the category field the API sends, not on the wording of the reason sentence', () => {
+    // Behavioural, not textual: this actually runs splitInert() extracted
+    // from the client source against fixture data, the way authored.ts
+    // actually shapes it — category alongside reason, from one place. A
+    // reason that reads like the old "written for " string match would have
+    // caught it, but whose category is 'misconfigured', must NOT land in the
+    // dormant bucket: that is the trap this change removes, proven by
+    // actually running the code rather than restating its source.
+    interface InertItem {
+      rel: string;
+      reason: string;
+      category: string;
+    }
+    type SplitInert = (items: InertItem[]) => { design: InertItem[]; broken: InertItem[] };
+    const splitInert = new Function(
+      `${functionSource('splitInert')}; return splitInert;`,
+    )() as SplitInert;
+
+    const items: InertItem[] = [
+      { rel: 'python/lint.md', reason: 'entirely reworded prose', category: 'other-language' },
+      { rel: 'notes/deep/x.md', reason: 'nested too deep', category: 'misconfigured' },
+      { rel: 'hollow.md', reason: 'no prompt body', category: 'misconfigured' },
+      // Reads exactly like the retired string match would have caught, but
+      // is not category: 'other-language'.
+      { rel: 'trap.md', reason: 'written for nobody in particular', category: 'misconfigured' },
+    ];
+
+    const { design, broken } = splitInert(items);
+    expect(design.map((i) => i.rel)).toEqual(['python/lint.md']);
+    expect(broken.map((i) => i.rel)).toEqual(['notes/deep/x.md', 'hollow.md', 'trap.md']);
+  });
+
+  it('leads Rules with what is in effect, and Agents with what is available, before either inert list', () => {
+    const rulesAt = CLIENT.indexOf('function viewRules()');
+    expect(rulesAt).toBeGreaterThan(-1);
+    const rulesBody = CLIENT.slice(rulesAt, CLIENT.indexOf('\n// --- agents', rulesAt));
+    const inEffect = rulesBody.indexOf("'In effect, in load order'");
+    const rulesInert = rulesBody.indexOf('inertCard(d.inert)');
+    expect(inEffect).toBeGreaterThan(-1);
+    expect(rulesInert).toBeGreaterThan(inEffect);
+
+    const agentsAt = CLIENT.indexOf('function viewAgents()');
+    expect(agentsAt).toBeGreaterThan(-1);
+    const agentsBody = CLIENT.slice(agentsAt, CLIENT.indexOf('\n// --- souls', agentsAt));
+    const grid = agentsBody.indexOf('editor-grid');
+    const agentsInert = agentsBody.indexOf('inertCard(d.inert)');
+    expect(grid).toBeGreaterThan(-1);
+    expect(agentsInert).toBeGreaterThan(grid);
+  });
+
+  it("badges Rules' summary with real counts instead of one destructive badge for every inert file", () => {
+    const at = CLIENT.indexOf('function viewRules()');
+    const body = CLIENT.slice(at, CLIENT.indexOf('\n// --- agents', at));
+    expect(body).toContain('splitInert(d.inert)');
+    expect(body).toContain("' for another language'");
+  });
+
+  it("collapses rules written for a different language behind a native disclosure, and keeps a genuine misconfiguration in the doctor panel's red", () => {
+    expect(CLIENT).toContain('<details class="dormant">');
+    expect(CLIENT).toContain('<summary class="dormant-summary">');
+    // The row helper still reaches for check-bad — Skills' and the doctor
+    // panel's own red — for anything that is not the language-mismatch case.
+    expect(CLIENT).toContain("bad ? ' check-bad' : ' check-dim'");
+    expect(CLIENT).toContain("(bad ? '✗' : '–')");
+  });
+
+  it('marks the current agent row and file row with aria-current="page", not a stringified boolean', () => {
+    const agentGroupsAt = CLIENT.indexOf('function agentGroups(d)');
+    expect(agentGroupsAt).toBeGreaterThan(-1);
+    const agentGroupsBody = CLIENT.slice(
+      agentGroupsAt,
+      CLIENT.indexOf('\nfunction viewAgents', agentGroupsAt),
+    );
+    expect(agentGroupsBody).toContain('aria-current="page"');
+    expect(agentGroupsBody).not.toMatch(/aria-current="'\s*\+/);
+
+    const fileListAt = CLIENT.indexOf('function viewContentBody(kind)');
+    expect(fileListAt).toBeGreaterThan(-1);
+    const fileListBody = CLIENT.slice(
+      fileListAt,
+      CLIENT.indexOf('\nasync function openFile', fileListAt),
+    );
+    expect(fileListBody).toContain('aria-current="page"');
+    expect(fileListBody).not.toMatch(/aria-current="'\s*\+/);
+  });
+
+  it('gives Hooks a real empty state — what a hook is and the action that adds one — instead of a lone sentence above dead space', () => {
+    expect(CLIENT).toContain('function emptyState(title, body, action)');
+    const at = CLIENT.indexOf('function viewHooks()');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nasync function saveHook', at));
+    expect(body).toContain('emptyState(');
+    expect(body).toContain('No hooks yet');
+    expect(body).toContain('data-expand="hook-add"');
+  });
+
+  it('caps the agent list the same way the skill list is capped, so a short detail panel is not stretched by a runaway sibling', () => {
+    // .agent-list-body had no such rule at all — the list grew to fit all 27
+    // bundled agents (1239px measured) and dragged the grid row with it.
+    const rule = ruleBody(STYLES, '.agent-list-body {');
+    expect(rule).toContain('max-height: 46vh');
+    expect(rule).toContain('overflow-y: auto');
+  });
+
+  it("styles the inert-by-design disclosure as neither the doctor panel's red nor its green", () => {
+    expect(ruleBody(STYLES, '.check-dim .check-mark {')).toContain('var(--ink-faint)');
+    expect(STYLES).toContain('.dormant {');
+    expect(STYLES).toContain('.dormant[open] .dormant-summary .icon { transform: rotate(90deg); }');
+  });
+
+  it('defines the informative empty state used by Hooks', () => {
+    expect(STYLES).toContain('.empty-state {');
+    expect(STYLES).toContain('.empty-state-title {');
+    expect(STYLES).toContain('.empty-state-action {');
+  });
+});
+
 describe('the stylesheet', () => {
   it('gives dark every palette token light defines', () => {
     // Type scale, radii, timings, the rail's own colours and layout metrics
@@ -678,5 +818,477 @@ describe('renderIndexHtml', () => {
     // The client restores an explicit choice from localStorage; until then the
     // page must not assert a theme, or a dark-desktop user gets a white flash.
     expect(renderIndexHtml({ nonce, authenticated: true })).toContain('data-theme=""');
+  });
+});
+
+describe('heading levels: one h1 per view, h2 nested under it', () => {
+  it('gives every view a real h1 from pageHeader, not an h2', () => {
+    // Every view calls this exactly once at the top of what it returns
+    // (checked by grep across app-core/app-settings/app-skills/app-authored/
+    // app-views/app-connectors: 15 call sites, one per view render), so this
+    // is the only heading-producing function that needs to change to give
+    // every tab exactly one h1.
+    const at = CLIENT.indexOf('pageHeader(title, description, subject) {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\n  },', at));
+    expect(body).toContain('<h1 class="page-title">');
+    expect(body).toContain('</h1>');
+  });
+
+  it('nests card titles one level under the page h1', () => {
+    const at = CLIENT.indexOf('card(title, body, opts) {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\n  },', at));
+    expect(body).toContain('<h2 class="card-title">');
+  });
+
+  it('never leaves the old h2 page-title or h3 card-title in the shipped script', () => {
+    // Locks the migration in both directions: an h1 that regressed back to h2
+    // would re-create the "no h1 at all" defect, and a stray h3 would open a
+    // level-2 gap under the new h1.
+    expect(CLIENT).not.toContain('<h2 class="page-title">');
+    expect(CLIENT).not.toContain('<h3 class="card-title">');
+  });
+
+  it('keeps the settings section heading at h2, level with card titles rather than the page h1', () => {
+    expect(CLIENT).toContain('<h2 class="settings-section-name">');
+  });
+
+  it('renders the rail brand as a plain div, never a competing h1', () => {
+    // pageHeader's h1 changes with every tab; a static "Asterisk" h1 beside
+    // it would leave two h1s on the page, or one that never describes what
+    // is actually on screen. See the comment on pageHeader() in app-core.ts.
+    const html = renderIndexHtml({ nonce: 'test-nonce-value', authenticated: true });
+    expect(html).toContain('<div class="brand-name">Asterisk</div>');
+    expect(html).not.toMatch(/<h1[^>]*>Asterisk/);
+  });
+});
+
+describe('list semantics for genuine collections', () => {
+  it('offers ui.list() as an opt-in wrapper, not a real <ul> the stylesheet has no reset for', () => {
+    const at = CLIENT.indexOf('list(rowsHtml, label) {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\n  },', at));
+    expect(body).toContain('role="list"');
+    expect(body).not.toContain('<ul');
+  });
+
+  it('keeps listRow\'s role="listitem" opt-in, off by default for the unlike-facts rows it also renders', () => {
+    const at = CLIENT.indexOf('listRow(title, detail, actions, leading, listItem) {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\n  },', at));
+    expect(body).toContain("(listItem ? ' role=\"listitem\"' : '')");
+  });
+
+  it('wraps the Problems list in role="list", with each row as a listitem', () => {
+    const rowAt = CLIENT.indexOf('function skillIssueRow(issue, root) {');
+    expect(rowAt).toBeGreaterThan(-1);
+    const rowBody = CLIENT.slice(rowAt, CLIENT.indexOf('\nfunction skillIssuesCard', rowAt));
+    expect(rowBody).toContain('<div class="list-row" role="listitem">');
+
+    const cardAt = CLIENT.indexOf('function skillIssuesCard(data) {');
+    const cardBody = CLIENT.slice(cardAt, CLIENT.indexOf('\nfunction matchingSkills', cardAt));
+    expect(cardBody).toContain('ui.list(');
+  });
+
+  it('wraps each scope of the Skills list in its own role="list", with buttons kept inside a listitem wrapper rather than losing role="button"', () => {
+    const at = CLIENT.indexOf('function skillGroups(data) {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nfunction skillListCard', at));
+    expect(body).toContain('ui.list(');
+    expect(body).toContain('<div role="listitem"><button class="skill-item"');
+  });
+});
+
+describe('aria-current: never the literal string "false"', () => {
+  it('omits aria-current from an inactive nav item instead of stringifying the boolean', () => {
+    const at = CLIENT.indexOf('function renderSidebar()');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nfunction healthOf', at));
+    // The old bug: `'aria-current="' + current + '"'` wrote the literal
+    // string "false" on every one of the other tabs.
+    expect(body).not.toMatch(/aria-current="'\s*\+\s*current\s*\+/);
+    expect(body).toContain('aria-current="page"');
+  });
+
+  it('omits aria-current from an inactive settings TOC item, at render time and when the scroll observer moves it', () => {
+    const indexAt = CLIENT.indexOf('function settingsIndex(groups)');
+    expect(indexAt).toBeGreaterThan(-1);
+    const indexBody = CLIENT.slice(indexAt, CLIENT.indexOf('\nfunction settingsSections', indexAt));
+    expect(indexBody).not.toMatch(/aria-current="'\s*\+\s*\(state\.settingsSection/);
+    expect(indexBody).toContain('aria-current="page"');
+
+    const watchAt = CLIENT.indexOf('function watchSettingsSections()');
+    expect(watchAt).toBeGreaterThan(-1);
+    const watchBody = CLIENT.slice(
+      watchAt,
+      CLIENT.indexOf('\nfunction fieldErrorsFromDetail', watchAt),
+    );
+    expect(watchBody).not.toContain("item.setAttribute('aria-current', String(");
+    expect(watchBody).toContain("item.removeAttribute('aria-current')");
+  });
+
+  it('marks the current skill row aria-current="page" — styles.ts\'s .skill-item rule already matches it', () => {
+    const at = CLIENT.indexOf('function skillGroups(data) {');
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nfunction skillListCard', at));
+    expect(body).not.toMatch(/aria-current="'\s*\+/);
+    expect(body).toContain('aria-current="page"');
+
+    // Guards the precondition every one of these rows relies on: styles.ts
+    // matches on the attribute's PRESENCE, so the token can be the correct
+    // one without the highlight depending on which word it is. A rule that
+    // pins a value here would make the next correct token a silent
+    // regression — which is how "true" got entrenched in the first place.
+    expect(STYLES).not.toMatch(/\[aria-current="(true|page)"\]/);
+    expect(ruleBody(STYLES, '.skill-item[aria-current] {').length).toBeGreaterThan(0);
+  });
+});
+
+describe('toast severity: an error interrupts, success does not', () => {
+  it('marks an error toast role="alert"/aria-live="assertive", and a success one role="status"/"polite"', () => {
+    const at = CLIENT.indexOf('function toast(message, kind, detail)');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nasync function api', at));
+    expect(body).toContain("setAttribute('role', bad ? 'alert' : 'status')");
+    expect(body).toContain("setAttribute('aria-live', bad ? 'assertive' : 'polite')");
+  });
+
+  it('keeps the toasts host as the container-level default, role="status"/"polite"', () => {
+    const html = renderIndexHtml({ nonce: 'test-nonce-value', authenticated: true });
+    expect(html).toContain('<div class="toasts" role="status" aria-live="polite"></div>');
+  });
+
+  it('wraps every api() call in guard() or an equivalent try/catch that toasts, so a failure always reaches the user rather than only the console', () => {
+    const allApiRefs = (CLIENT.match(/\bapi\(/g) || []).length;
+    const definition = (CLIENT.match(/async function api\(path, options\)/g) || []).length;
+    const guarded = (CLIENT.match(/guard\(\(\) => api\(/g) || []).length;
+    expect(definition).toBe(1);
+    // applySettings() is the one deliberate exception: it calls api()
+    // directly, outside guard(), specifically so it can read the raw error's
+    // per-field detail (see fieldErrorsFromDetail in app-settings.ts) — but
+    // its own try/catch still toasts on failure, so the invariant that
+    // matters (a failure always reaches the user, never only the console)
+    // holds without going through guard() by name.
+    const unguarded = allApiRefs - definition - guarded;
+    expect(unguarded).toBe(1);
+    expect(guarded).toBeGreaterThan(10);
+
+    const at = CLIENT.indexOf('async function applySettings() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nconst LOG_LEVELS', at));
+    expect(body).toContain('try {');
+    expect(body).toContain('await api(');
+    expect(body).toMatch(/catch \(e\) \{[\s\S]*toast\(/);
+  });
+});
+
+describe('Settings: validation is associated with the field, not left only in a toast', () => {
+  it('has no scalar setting that is genuinely required — every field has a schema default or is optional', () => {
+    // Grounds the reasoning in fieldControlId/fieldErrorId's comment in
+    // app-settings.ts: required/aria-required has nothing honest to attach
+    // to on this generated page. If a field is ever added to ConfigSchema
+    // with neither a .default() nor .optional(), this is what notices.
+    const missing = settingsRegistry().filter((f) => f.default === undefined && !f.optional);
+    expect(missing).toEqual([]);
+  });
+
+  it('renders each field\'s control with aria-describedby pointing at an always-present, initially empty role="alert" node', () => {
+    const rowAt = CLIENT.indexOf('function fieldRow(field) {');
+    expect(rowAt).toBeGreaterThan(-1);
+    const rowBody = CLIENT.slice(rowAt, CLIENT.indexOf('\nfunction control', rowAt));
+    expect(rowBody).toContain('<div id="\' + esc(errId) + \'" role="alert"></div>');
+
+    const controlAt = CLIENT.indexOf('function control(field, value, id, errId) {');
+    expect(controlAt).toBeGreaterThan(-1);
+    const controlBody = CLIENT.slice(
+      controlAt,
+      CLIENT.indexOf('\nfunction showFieldError', controlAt),
+    );
+    expect(controlBody).toContain('aria-describedby="\' + esc(errId) + \'"');
+    // Present on all four control kinds (switch, select, number, text/array),
+    // not just the plain text-input fallback.
+    expect((controlBody.match(/describedBy/g) || []).length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('reports a parse failure next to the field before the toast-only path even runs', () => {
+    const uncheckedAt = CLIENT.indexOf('function parseFieldValueUnchecked(field, raw) {');
+    expect(uncheckedAt).toBeGreaterThan(-1);
+
+    const wrapperAt = CLIENT.indexOf('function parseFieldValue(field, raw) {');
+    expect(wrapperAt).toBeGreaterThan(uncheckedAt);
+    const wrapperBody = CLIENT.slice(wrapperAt, CLIENT.indexOf('\nfunction findField', wrapperAt));
+    expect(wrapperBody).toContain('parseFieldValueUnchecked(field, raw)');
+    expect(wrapperBody).toContain('showFieldError(field.path, e.message)');
+    expect(wrapperBody).toContain('throw e');
+  });
+
+  it("clears a field's error the moment a valid edit is staged", () => {
+    const at = CLIENT.indexOf('function stageEdit(path, value) {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nfunction renderSaveBar', at));
+    expect(body).toContain('clearFieldError(path)');
+  });
+
+  it("maps PATCH /settings' per-field 422 detail back onto the fields that failed, and drops the shape it cannot map", () => {
+    const at = CLIENT.indexOf('function fieldErrorsFromDetail(detail) {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nasync function applySettings', at));
+    expect(body).toContain('JSON.parse(detail)');
+    expect(body).toContain("typeof message === 'string' && findField(path)");
+  });
+
+  it('shows every field the server rejected and focuses the first one, instead of leaving focus on Apply', () => {
+    const at = CLIENT.indexOf('async function applySettings() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nconst LOG_LEVELS', at));
+    expect(body).toContain('fieldErrorsFromDetail(e.detail)');
+    expect(body).toContain('showFieldError(path, fieldErrors[path])');
+    expect(body).toContain('focusField(paths[0])');
+    // Still toasts too — the inline message is in addition to, not instead
+    // of, the existing feedback.
+    expect(body).toContain("toast(e.message, 'bad', e.detail)");
+    expect(body).toContain("toast('Settings applied', 'good')");
+  });
+});
+
+describe('Skills: the New skill form marks its two required fields and reports failures accessibly', () => {
+  it('marks name and description required and aria-required, each wired to its own error node', () => {
+    const at = CLIENT.indexOf('function skillCreateCard() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nfunction viewSkills', at));
+    for (const field of ['skill-name', 'skill-description']) {
+      expect(body).toContain(`id="${field}"`);
+      expect(body).toContain('required aria-required="true"');
+      expect(body).toContain(`aria-describedby="${field}-error"`);
+      expect(body).toContain(`<div id="${field}-error" role="alert">`);
+    }
+  });
+
+  it('reports a missing field next to it and moves focus to the first one missing, not just a toast', () => {
+    const at = CLIENT.indexOf('async function createSkill() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nfunction relativeTo', at));
+    expect(body).toContain("setSkillFormError('name', name ? '' : 'A name is required.')");
+    expect(body).toContain(
+      "setSkillFormError('description', description ? '' : 'A description is required.')",
+    );
+    expect(body).toContain("$('#skill-' + (name ? 'description' : 'name')).focus()");
+  });
+});
+
+describe('list semantics: the genuine collections in app-views.ts and app-connectors.ts', () => {
+  it('wraps the MCP servers list in role="list" via ui.list(), with each row a listitem', () => {
+    const at = CLIENT.indexOf('function viewMcp() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nfunction parsePairs', at));
+    expect(body).toContain('ui.list(state.mcp.map((s) => ui.listRow(');
+    expect(body).toContain("'MCP servers'");
+    // listItem is listRow's 5th argument — confirms the opt-in was actually
+    // passed, not just that ui.list() wraps an unmarked stack of divs.
+    expect(body).toMatch(/ui\.stateBadge\(s\.enabled\),\s*\n\s*true\s*\n\s*\)\)\.join/);
+  });
+
+  it('wraps the Hooks list in role="list() via ui.list(), with each row a listitem', () => {
+    const at = CLIENT.indexOf('function viewHooks() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nasync function saveHook', at));
+    expect(body).toContain('ui.list(state.hooks.map((h) => ui.listRow(');
+    expect(body).toContain("'Hooks'");
+    expect(body).toMatch(/ui\.stateBadge\(h\.enabled\),\s*\n\s*true\s*\n\s*\)\)\.join/);
+    // The empty state (no hooks configured yet) is untouched — emptyState()
+    // is not a collection and must not gain role="list".
+    expect(body).toContain('emptyState(');
+  });
+
+  it('wraps the Connectors table in role="list() via ui.list(), with each row a listitem', () => {
+    const at = CLIENT.indexOf('function connectorRows() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nfunction copyField', at));
+    expect(body).toContain('ui.list(shown.map((c) => ui.listRow(');
+    expect(body).toContain("'Connectors'");
+    expect(body).toMatch(/'<div class="connector-mark">.*<\/div>',\s*\n\s*true\s*\n\s*\)\)\.join/);
+  });
+
+  it('leaves the popular-connector cards unwrapped — a CSS grid, not a list-row flow', () => {
+    // Documented judgement call: connectorCards() renders '.connector-cards',
+    // a CSS grid keyed off its DIRECT children (repeat(auto-fit, ...)) in
+    // components.ts. ui.list() always inserts one more wrapping div, which
+    // would leave the grid container with a single child and collapse the
+    // responsive layout. Every one of these connectors is also reachable,
+    // fully row-marked, through connectorRows() above.
+    const at = CLIENT.indexOf('function connectorCards() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nfunction setConnectorFormError', at));
+    expect(body).not.toContain('ui.list(');
+    expect(body).not.toContain('role="listitem"');
+  });
+
+  it('wraps the Stored keys list in role="list", marking each row a listitem directly (not built through listRow)', () => {
+    const at = CLIENT.indexOf('function secretsPanel() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\n// --- content editor', at));
+    expect(body).toContain('role="listitem"');
+    expect(body).toContain("ui.list(rows, 'Stored keys')");
+  });
+
+  it('wraps the Issued tokens list in role="list() via ui.list(), with each row a listitem', () => {
+    const at = CLIENT.indexOf('function tokensPanel() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nfunction viewCredentials', at));
+    expect(body).toContain('ui.list(state.tokens.map((t) => ui.listRow(');
+    expect(body).toContain("'Issued tokens'");
+  });
+
+  it('wraps the Audit trail list in role="list() via ui.list(), with each row a listitem', () => {
+    const at = CLIENT.indexOf('function auditPanel() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\n// --- data loading', at));
+    expect(body).toContain('ui.list(entries.map((a) => ui.listRow(');
+    expect(body).toContain("'Audit trail'");
+  });
+
+  it('wraps each content kind\'s file list in role="list", buttons kept inside a listitem wrapper rather than losing role="button"', () => {
+    const at = CLIENT.indexOf('function viewContentBody(kind) {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nasync function openFile', at));
+    expect(body).toContain('ui.list(entry.files.map((f) => {');
+    expect(body).toContain("label + ' files'");
+    expect(body).toContain('<div role="listitem"><button class="file-item"');
+    // aria-current="page" must survive the wrap — see the aria-current
+    // describe block elsewhere in this file for why the literal string
+    // "false" must never appear here.
+    expect(body).toContain('aria-current="page"');
+  });
+
+  it("does not turn Overview's unlike-facts rows (Daemon / Telegram bridge / Database / Settings backup) into a list", () => {
+    // Overview lives in app-core.ts, which this project is not touching this
+    // round — this guards the invariant from the outside: viewOverview()'s
+    // four ui.listRow() calls must still omit the listItem argument, because
+    // they are four different facts about the install, not four of a kind.
+    const at = CLIENT.indexOf('function viewOverview() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\n\n', CLIENT.indexOf('overview-grid', at)));
+    expect(body).not.toContain('ui.list(');
+    const listRowCalls = body.match(/ui\.listRow\(/g) || [];
+    expect(listRowCalls.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('MCP and Hooks add-forms report empty-submit failures accessibly', () => {
+  it('marks MCP name and command/URL required and aria-required, each wired to its own error node', () => {
+    const at = CLIENT.indexOf('function viewMcp() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nfunction parsePairs', at));
+    for (const field of ['mcp-name', 'mcp-command']) {
+      expect(body).toContain(`id="${field}"`);
+      expect(body).toContain('required aria-required="true"');
+      expect(body).toContain(`aria-describedby="${field}-error"`);
+      expect(body).toContain(`<div id="${field}-error" role="alert"></div>`);
+    }
+    // Transport, auth and env all carry usable defaults server-side and stay
+    // unmarked — only the two fields the schema actually rejects empty.
+    expect(body).not.toContain('id="mcp-transport" required');
+    expect(body).not.toContain('id="mcp-env" required');
+  });
+
+  it('reports a missing MCP field next to it and moves focus to the first one missing, not just a toast', () => {
+    const at = CLIENT.indexOf('async function saveMcp() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\n// --- hooks', at));
+    expect(body).toContain("setAddFormError('mcp-name', name ? '' : 'A name is required.')");
+    expect(body).toContain(
+      "setAddFormError('mcp-command', target ? '' : 'A command or URL is required.')",
+    );
+    expect(body).toContain("$('#mcp-' + (name ? 'command' : 'name')).focus()");
+    // Still toasts too — in addition to, not instead of, the inline message.
+    expect(body).toContain("toast('Name and command/URL are required', 'bad')");
+  });
+
+  it('marks Hook name and command required and aria-required, each wired to its own error node', () => {
+    const at = CLIENT.indexOf('function viewHooks() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nasync function saveHook', at));
+    for (const field of ['hook-name', 'hook-command']) {
+      expect(body).toContain(`id="${field}"`);
+      expect(body).toContain('required aria-required="true"');
+      expect(body).toContain(`aria-describedby="${field}-error"`);
+      expect(body).toContain(`<div id="${field}-error" role="alert"></div>`);
+    }
+    // Event always carries a value from the <select>, matcher is genuinely
+    // optional, and timeout defaults to 30 — none of the three are marked.
+    expect(body).not.toContain('id="hook-event" required');
+    expect(body).not.toContain('id="hook-matcher" required');
+    expect(body).not.toContain('id="hook-timeout" required');
+  });
+
+  it('reports a missing Hook field next to it and moves focus to the first one missing, not just a toast', () => {
+    const at = CLIENT.indexOf('async function saveHook() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\n// --- secrets', at));
+    expect(body).toContain("setAddFormError('hook-name', hook.name ? '' : 'A name is required.')");
+    expect(body).toContain(
+      "setAddFormError('hook-command', hook.command ? '' : 'A command is required.')",
+    );
+    expect(body).toContain("$('#hook-' + (hook.name ? 'command' : 'name')).focus()");
+    expect(body).toContain("toast('Name and command are required', 'bad')");
+  });
+});
+
+describe('Connectors: the setup panel and custom-add form report empty-submit failures accessibly', () => {
+  it('marks the token field required, wired to its own error node', () => {
+    const at = CLIENT.indexOf('function connectorSetupPanel() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nfunction viewConnectors', at));
+    expect(body).toContain('id="setup-token"');
+    expect(body).toContain('required aria-required="true"');
+    expect(body).toContain('aria-describedby="setup-token-error"');
+    expect(body).toContain('<div id="setup-token-error" role="alert"></div>');
+
+    expect(body).toContain('id="setup-client-id"');
+    expect(body).toContain('aria-describedby="setup-client-id-error"');
+    expect(body).toContain('<div id="setup-client-id-error" role="alert"></div>');
+
+    // The client secret stays genuinely optional — an authorization server
+    // taking a public client with PKCE issues none.
+    expect(body).not.toContain('id="setup-client-secret" required');
+  });
+
+  it('reports a missing token or client ID next to the field and moves focus there', () => {
+    const at = CLIENT.indexOf('async function saveConnectorSetup() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nasync function addCustomConnector', at));
+    expect(body).toContain(
+      "setConnectorFormError('setup-token', token ? '' : 'An access token is required.')",
+    );
+    expect(body).toContain("$('#setup-token').focus()");
+    expect(body).toContain(
+      "setConnectorFormError('setup-client-id', clientId ? '' : 'A client ID is required.')",
+    );
+    expect(body).toContain("$('#setup-client-id').focus()");
+  });
+
+  it("marks the custom-add form's name and URL required, each wired to its own error node", () => {
+    const at = CLIENT.indexOf('function viewConnectors() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nasync function loadConnectors', at));
+    for (const field of ['connector-name', 'connector-url']) {
+      expect(body).toContain(`id="${field}"`);
+      expect(body).toContain('required aria-required="true"');
+      expect(body).toContain(`aria-describedby="${field}-error"`);
+      expect(body).toContain(`<div id="${field}-error" role="alert"></div>`);
+    }
+  });
+
+  it('reports a missing name/URL or a malformed URL next to the field and moves focus there', () => {
+    const at = CLIENT.indexOf('async function addCustomConnector() {');
+    expect(at).toBeGreaterThan(-1);
+    const body = CLIENT.slice(at, CLIENT.indexOf('\nfunction addPanel', at));
+    expect(body).toContain(
+      "setConnectorFormError('connector-name', name ? '' : 'A name is required.')",
+    );
+    expect(body).toContain(
+      "!url ? 'A URL is required.' : badUrl ? 'URL must start with http:// or https://.' : ''",
+    );
+    expect(body).toContain("$('#connector-' + (name ? 'url' : 'name')).focus()");
   });
 });

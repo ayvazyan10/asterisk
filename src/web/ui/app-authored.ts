@@ -18,17 +18,71 @@
 export const APP_AUTHORED = String.raw`
 // --- shared ---------------------------------------------------------------
 
-/** The card that names what is sitting there doing nothing, and why. */
-function inertCard(items, noun) {
+// Only one inert category means "this is not a mistake" — see
+// ruleSkipReason() in src/web/api/authored.ts, which returns a structured
+// 'category' alongside the human-readable 'reason' from the one place that
+// knows which case it is. A rule under rules/python/ in a TypeScript project
+// reports category: 'other-language' (reason "written for python, and this
+// project reads as typescript") — the one case the layered-rules feature
+// produces *on purpose*. Nested too deep, an unrecognised folder, an empty
+// file, and an agent's one inert reason — no prompt body — all report
+// category: 'misconfigured'. Branching on that field, rather than the prose,
+// means rewording a reason can never silently change which bucket it lands
+// in.
+function splitInert(items) {
+  const list = items || [];
+  return {
+    design: list.filter((i) => i.category === 'other-language'),
+    broken: list.filter((i) => i.category !== 'other-language'),
+  };
+}
+
+/** One row of something that sat on disk and never loaded. */
+function inertRow(i, bad) {
+  return '<div class="check' + (bad ? ' check-bad' : ' check-dim') + '">' +
+    '<span class="check-mark">' + (bad ? '✗' : '–') + '</span>' +
+    '<div class="list-row-grow">' +
+      '<div class="check-name">' + esc(i.rel) +
+        ' <span class="issue-path">' + esc(i.scope || '') + '</span></div>' +
+      '<div class="check-detail">' + esc(i.reason) + '</div>' +
+    '</div></div>';
+}
+
+/**
+ * What is sitting on disk doing nothing, told apart by why. A genuine
+ * misconfiguration — nested too deep, an unrecognised folder, an empty file,
+ * an agent file with no prompt body — gets the doctor panel's and Skills'
+ * own red: visible, un-collapsed, first, because it is worth acting on. A
+ * rule written for a language this project is not is inert *by design* —
+ * the whole point of layering rules by language, not a failure — so it does
+ * not wear that red. It is named, counted, and collapsed behind a summary
+ * instead: 55 of these should not out-shout the 22 rules actually in effect.
+ */
+function inertCard(items) {
   if (!items || items.length === 0) return '';
-  return ui.card('Not loaded', items.map((i) =>
-    '<div class="check check-bad"><span class="check-mark">✗</span>' +
-      '<div class="list-row-grow">' +
-        '<div class="check-name">' + esc(i.rel) +
-          ' <span class="issue-path">' + esc(i.scope || '') + '</span></div>' +
-        '<div class="check-detail">' + esc(i.reason) + '</div>' +
-      '</div></div>').join(''),
-    { aside: ui.badge(items.length + ' ' + noun, 'destructive', true) });
+  const { design, broken } = splitInert(items);
+
+  const problems = broken.length === 0 ? '' : ui.card('Not loaded',
+    broken.map((i) => inertRow(i, true)).join(''),
+    { aside: ui.badge(broken.length + ' not loaded', 'destructive', true) });
+
+  if (design.length === 0) return problems;
+
+  // Every design-bucket reason ends "…and this project reads as X" — the
+  // same X for all of them — so it is worth saying once, not once per file.
+  const reads = /reads as (.+)$/.exec(design[0].reason);
+  const suffix = reads ? ' — this project reads as ' + reads[1] : '';
+
+  const dormant = '<details class="dormant">' +
+    '<summary class="dormant-summary">' +
+      '<span>' + design.length + (design.length === 1 ? ' file' : ' files') +
+        ' for another language' + suffix + '</span>' +
+      icon('chevronRight', 14) +
+    '</summary>' +
+    '<div class="dormant-body">' + design.map((i) => inertRow(i, false)).join('') + '</div>' +
+  '</details>';
+
+  return problems + dormant;
 }
 
 // --- rules ----------------------------------------------------------------
@@ -44,18 +98,21 @@ function viewRules() {
 
   if (!d) return header + '<section class="card">' + ui.skeletonRows(4) + '</section>';
 
+  const { design, broken } = splitInert(d.inert);
+
   const summary = '<div class="section-actions mb">' +
     ui.badge(d.rules.length + ' in effect', 'secondary') +
     ui.badge('reads as ' + d.lang + (d.langPinned ? ' (pinned)' : ''), 'success', true) +
-    (d.inert.length > 0 ? ui.badge(d.inert.length + ' not loaded', 'destructive', true) : '') +
+    (broken.length > 0 ? ui.badge(broken.length + ' not loaded', 'destructive', true) : '') +
+    (design.length > 0 ? ui.badge(design.length + ' for another language', 'muted') : '') +
   '</div>';
 
   // Load order is override order, so it is the order shown. Sorting these
   // alphabetically would hide the one thing the list is for.
   const rows = d.rules.length === 0
     ? ui.empty('No rules load yet. Add one under common/ to shape every prompt.')
-    : d.rules.map((r, i) =>
-        '<div class="list-row"><span class="order-mark">' + (i + 1) + '</span>' +
+    : ui.list(d.rules.map((r, i) =>
+        '<div class="list-row" role="listitem"><span class="order-mark">' + (i + 1) + '</span>' +
           '<div class="list-row-grow">' +
             '<div class="list-row-title">' + esc(r.name) + '</div>' +
             '<div class="list-row-detail">' + esc(r.path) + '</div>' +
@@ -63,12 +120,14 @@ function viewRules() {
           '<div class="section-actions">' +
             ui.badge(r.scope, r.scope === 'user' ? 'secondary' : 'outline') +
             ui.badge(r.layer, 'muted') +
-          '</div></div>').join('');
+          '</div></div>').join(''), 'Rules in load order');
 
+  // In effect first — that is what the reader came for. What is inert
+  // (broken, or just for a different language) follows, not the reverse.
   return header + summary +
-    inertCard(d.inert, 'inert') +
     ui.card('In effect, in load order', rows,
       { aside: ui.badge(d.rules.length + ' loaded', 'secondary') }) +
+    inertCard(d.inert) +
     viewContentBody('rules');
 }
 
@@ -124,14 +183,22 @@ function agentGroups(d) {
     if (inScope.length === 0) return '';
     return '<div class="skill-group"><span class="silk">' + scope + '</span>' +
       '<span class="nav-count">' + inScope.length + '</span></div>' +
-      inScope.map((a) =>
-        '<button class="skill-item" data-agent-open="' + esc(a.name) + '" aria-current="' +
-          (state.agent && state.agent.name === a.name) + '">' +
+      // Wrapped the way app-skills.ts wraps its own scope lists: the button
+      // keeps role="button" inside a role="listitem" element rather than
+      // losing it, and the group gets announced as the list of N that it is.
+      ui.list(inScope.map((a) => {
+        // "page" is the ARIA token for the current item in a nav-like list;
+        // an explicit "false" on every other row is noise a screen reader
+        // has to sit through ten times to find the one that matters.
+        const current = Boolean(state.agent && state.agent.name === a.name);
+        return '<div role="listitem"><button class="skill-item" data-agent-open="' + esc(a.name) + '"' +
+          (current ? ' aria-current="page"' : '') + '>' +
           '<span class="skill-item-name">' + esc(a.name) +
             (d.shadowed.includes(a.name) ? ' <span class="issue-path">replaces bundled</span>' : '') +
           '</span>' +
           '<span class="skill-item-desc">' + esc(a.description) + '</span>' +
-        '</button>').join('');
+        '</button></div>';
+      }).join(''), scope + ' agents');
   }).join('');
 
   return groups || ui.empty('Nothing matches that.');
@@ -164,8 +231,13 @@ function viewAgents() {
     '<div class="agent-list-body">' + agentGroups(d) + '</div>',
     { aside: ui.badge(matches.length + ' of ' + d.agents.length, 'secondary') });
 
-  return header + summary + inertCard(d.inert, 'inert') +
-    '<div class="editor-grid"><div>' + list + '</div><div>' + agentDetailCard() + '</div></div>';
+  // Available agents first — that is what the reader came for. Agents have
+  // no "different language" bucket (a missing prompt body is always worth
+  // fixing), so inertCard renders the same red "Not loaded" card as before,
+  // just no longer ahead of the thing the page is actually for.
+  return header + summary +
+    '<div class="editor-grid"><div>' + list + '</div><div>' + agentDetailCard() + '</div></div>' +
+    inertCard(d.inert);
 }
 
 // --- souls ----------------------------------------------------------------
