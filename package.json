@@ -1,6 +1,6 @@
 {
   "name": "@ayvazyan101/asterisk",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Asterisk — lightweight, personal AI assistant with local-first model support (llama.cpp and any OpenAI-compatible server), daemon controls, and a Telegram bot bridge.",
   "license": "Apache-2.0",
   "type": "module",

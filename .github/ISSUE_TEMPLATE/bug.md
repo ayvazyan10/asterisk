@@ -22,7 +22,7 @@ labels: bug
 - Asterisk version / commit:
 - Bun version (`bun --version`):
 - OS:
-- Provider in use (ollama / anthropic):
+- Provider in use (openai-compatible / anthropic):
 - Bots enabled (telegram / none):
 
 ## Logs

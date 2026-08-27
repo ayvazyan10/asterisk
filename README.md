@@ -18,7 +18,7 @@ same assistant to Telegram.
   [Model Context Protocol](https://modelcontextprotocol.io), Playwright.
 - **Apache 2.0** licensed.
 
-Status `0.4.1` — early but real. 46 built-in tools, 29 slash commands,
+Status `0.4.2` — early but real. 46 built-in tools, 28 slash commands,
 14 daemon-managed scheduling/lifecycle features, **29 bundled skills**,
 **27 specialised sub-agent types** the agent can dispatch on demand,
 layered multi-language rules, switchable output styles
@@ -222,6 +222,13 @@ authentication is refused outright.
 | `/hooks`           | Manage agent-loop lifecycle hooks (visual)                  |
 | `/permissions`     | Inspect and edit what `Bash` may run without asking         |
 | `/doctor`          | Diagnostics — local model, Anthropic, system tools, MCP     |
+| `/sessions`        | List saved conversations                                    |
+| `/resume`          | Resume a saved conversation                                 |
+| `/forget`          | Delete a saved conversation                                 |
+| `/diff`            | Show a structured git diff summary                          |
+| `/review`          | Review current git changes for risk patterns                |
+| `/code`            | Code intelligence — symbols, definitions, references        |
+| `/update`          | Check for updates or self-update to the latest version      |
 | `/quit`            | Exit the REPL                                               |
 
 ## Built-in tools
