@@ -29,6 +29,7 @@ import {
   createRepetitionGuard,
   findRunawayRepetition,
 } from './repetition.ts';
+import { stripGrammarHostileKeywords } from './schema-sanitize.ts';
 import { parseToolArguments } from './tool-repair.ts';
 
 export interface OpenAiCompatibleConfig {
@@ -191,7 +192,11 @@ export function toOpenAiTools(tools: readonly ToolDefinition[]): unknown[] {
     function: {
       name: t.name,
       description: t.description,
-      parameters: t.input_schema,
+      // See schema-sanitize.ts: llama.cpp's grammar compiler rejects `pattern`
+      // and large length/count bounds on nested properties, and all of them
+      // are validation-only anyway — dropping them changes nothing about
+      // what a correct tool call looks like.
+      parameters: stripGrammarHostileKeywords(t.input_schema),
     },
   }));
 }

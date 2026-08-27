@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A tool schema no longer takes the whole turn down on llama.cpp.** With
+  `--jinja`, llama-server compiles every tool's JSON Schema into a GBNF grammar
+  for constrained decoding, and two keywords in that path each fail the entire
+  request — all 139 tools, not just the one carrying the schema — with
+  `Failed to initialize samplers: failed to parse grammar`. A `pattern` nested
+  under an object property makes the regex→GBNF conversion emit `"\d"` inside a
+  quoted literal, which llama.cpp's own grammar parser then rejects as an
+  unknown escape; a large `maxLength` makes it expand the bound into that many
+  repeated rules and blow its own complexity ceiling. Both were reached in
+  practice through Notion's MCP tools, whose date properties carry leap-year
+  ISO-date regexes. `pattern`, `minLength`, `maxLength`, `minItems` and
+  `maxItems` are now stripped from the schemas sent to an OpenAI-compatible
+  endpoint. All five are validation-only — none of them describes what a
+  *correct* tool call looks like — and `enum`, `const`, `format`, `minimum` and
+  `maximum` are deliberately kept, having been probed against the same server
+  and found blameless. The Anthropic provider is untouched: it compiles no
+  grammar and loses nothing by keeping them.
+
 ## [0.4.2] - 2026-08-27
 
 ### Removed

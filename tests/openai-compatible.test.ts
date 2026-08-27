@@ -120,6 +120,76 @@ describe('message conversion', () => {
       },
     ]);
   });
+
+  it('strips a nested pattern keyword from tool schemas (llama.cpp grammar bug)', () => {
+    const tools = toOpenAiTools([
+      {
+        name: 'notion-search',
+        description: 'search notion',
+        input_schema: {
+          type: 'object',
+          properties: {
+            wrap: {
+              type: 'object',
+              properties: {
+                date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+              },
+            },
+          },
+        },
+      },
+    ]);
+    expect(JSON.stringify(tools)).not.toContain('pattern');
+  });
+
+  it('strips a nested maxLength keyword from tool schemas (llama.cpp grammar bug)', () => {
+    const tools = toOpenAiTools([
+      {
+        name: 'notion-query-meeting-notes',
+        description: 'query notion',
+        input_schema: {
+          type: 'object',
+          properties: {
+            wrap: {
+              type: 'object',
+              properties: {
+                notes: { type: 'string', maxLength: 2000 },
+              },
+            },
+          },
+        },
+      },
+    ]);
+    expect(JSON.stringify(tools)).not.toContain('maxLength');
+  });
+
+  it('keeps a property literally named "pattern" (e.g. Grep) intact', () => {
+    const tools = toOpenAiTools([
+      {
+        name: 'grep',
+        description: 'search',
+        input_schema: {
+          type: 'object',
+          properties: { pattern: { type: 'string', description: 'Regex pattern.' } },
+          required: ['pattern'],
+        },
+      },
+    ]);
+    expect(tools).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: 'grep',
+          description: 'search',
+          parameters: {
+            type: 'object',
+            properties: { pattern: { type: 'string', description: 'Regex pattern.' } },
+            required: ['pattern'],
+          },
+        },
+      },
+    ]);
+  });
 });
 
 describe('non-streaming responses', () => {
