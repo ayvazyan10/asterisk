@@ -92,7 +92,8 @@ export const doctorCommand: SlashCommand = {
       });
       lines.push('  ✓ playwright  installed');
     } catch {
-      lines.push('  · playwright  not found (browser tools will fail)');
+      lines.push('  · playwright  not found — optional; browser tools are disabled until you run');
+      lines.push('                bun add playwright && bunx playwright install chromium');
     }
 
     lines.push('');

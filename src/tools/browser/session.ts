@@ -38,11 +38,44 @@ export function configureBrowser(opts: BrowserSessionOptions): void {
   state.options = { ...state.options, ...opts };
 }
 
+/**
+ * Message for the one failure every user who never wanted a browser will hit.
+ *
+ * Playwright is an *optional* peer dependency — installing Asterisk does not
+ * pull it in, because it drags browser drivers along with it. Without this the
+ * tool reported the raw loader text ("Cannot find package 'playwright'
+ * imported from …/dist/cli.js"), which reads like a broken install rather than
+ * a feature nobody asked for.
+ */
+const PLAYWRIGHT_MISSING =
+  'Browser tools require the optional `playwright` package, which is not installed. ' +
+  'Install it and a browser binary:  bun add playwright && bunx playwright install chromium  ' +
+  '(npm: npm install playwright && npx playwright install chromium). ' +
+  'Every other Asterisk tool works without it.';
+
+function isModuleNotFound(e: unknown): boolean {
+  const code = (e as { code?: unknown } | undefined)?.code;
+  if (code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') return true;
+  return /cannot find (module|package)|failed to resolve/i.test((e as Error)?.message ?? '');
+}
+
+/**
+ * Lazy-import Playwright so cold-start of the REPL stays fast for users who
+ * never touch a browser tool — and so a missing install is a tool error rather
+ * than an unhandled rejection.
+ */
+async function importPlaywright(): Promise<typeof import('playwright')> {
+  try {
+    return await import('playwright');
+  } catch (e) {
+    if (isModuleNotFound(e)) throw new Error(PLAYWRIGHT_MISSING, { cause: e });
+    throw e;
+  }
+}
+
 async function ensureBrowser(): Promise<Browser> {
   if (state.browser) return state.browser;
-  // Lazy-import Playwright so cold-start of the REPL stays fast for users
-  // who never touch a browser tool.
-  const { chromium } = await import('playwright');
+  const { chromium } = await importPlaywright();
   state.browser = await chromium.launch({ headless: state.options.headless ?? true });
   return state.browser;
 }

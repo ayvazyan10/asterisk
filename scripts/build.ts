@@ -2,13 +2,18 @@
 // dist/{cli,daemon,control,configure,update,web,acp,eval,mcp-server}.js.
 // Reference: https://bun.sh/docs/bundler
 
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const outdir = resolve(root, 'dist');
 
+// Wipe before building. The entrypoints have fixed names and would simply be
+// overwritten, but the shared chunks `splitting` emits are content-hashed:
+// without this every rebuild would leave the previous build's chunks behind and
+// `dist/` would grow without bound on any machine that runs `asterisk update`.
+await rm(outdir, { recursive: true, force: true });
 await mkdir(outdir, { recursive: true });
 
 const minify = process.argv.includes('--minify');
@@ -60,6 +65,13 @@ const result = await Bun.build({
   target: 'bun',
   format: 'esm',
   minify,
+  // The nine entrypoints share nearly all of their graph — ink, React, the
+  // tool registry, the MCP SDK — and without splitting each one inlined its
+  // own copy: four bundles of ~5 MB that were mostly the same bytes. Shared
+  // code moves into hashed chunks the entrypoints import, which took the
+  // published `dist/` from 20 MB to 5.5 MB. The entrypoint filenames are
+  // unchanged, so `bin/asterisk` still resolves dist/cli.js and friends.
+  splitting: true,
   sourcemap: minify ? 'none' : 'external',
   // Force the production cjs bundles for react / react-reconciler. The dev
   // bundles touch internals (ReactSharedInternals.ReactCurrentOwner) that

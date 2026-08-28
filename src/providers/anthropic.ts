@@ -56,15 +56,15 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
         const params: Anthropic.Messages.MessageCreateParamsNonStreaming = {
           model,
           max_tokens: req.maxTokens ?? 4096,
-          // cache_control is supported by the API but not yet in the stable SDK
-          // types — cast through unknown to enable prompt caching.
+          // cache_control reached the stable SDK types in the 0.3x → 0.12x
+          // window, so this is a plain TextBlockParam now — no cast.
           system: [
             {
-              type: 'text' as const,
+              type: 'text',
               text: req.system,
-              cache_control: { type: 'ephemeral' as const },
+              cache_control: { type: 'ephemeral' },
             },
-          ] as unknown as Anthropic.Messages.TextBlockParam[],
+          ] satisfies Anthropic.Messages.TextBlockParam[],
           // The SDK's input message shape matches our internal Message shape
           // closely enough; cast through unknown to bridge the structural gap.
           messages: req.messages.map((m) => ({
@@ -129,8 +129,32 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
   };
 }
 
+/**
+ * Reads one header off an APIError.
+ *
+ * The SDK hands us a `Headers`, but `mapAnthropicError` is also reachable with
+ * whatever a proxy or an older client threw, so a plain record is accepted too
+ * rather than throwing on `.get`.
+ */
+function readHeader(headers: Headers | undefined, lowercaseName: string): string | undefined {
+  if (!headers) return undefined;
+  if (typeof headers.get === 'function') return headers.get(lowercaseName) ?? undefined;
+  const record = headers as unknown as Record<string, string | undefined>;
+  for (const [key, value] of Object.entries(record)) {
+    if (key.toLowerCase() === lowercaseName) return value;
+  }
+  return undefined;
+}
+
 export function mapAnthropicError(e: unknown): ProviderError {
   if ((e as Error)?.name === 'AbortError') {
+    return new ProviderError('aborted', 'request aborted', { cause: e });
+  }
+  // What the SDK actually throws when the request signal fires. It carries no
+  // `name` of its own and extends APIError with an undefined status, so both
+  // checks below would otherwise have called a deliberate cancellation a
+  // retryable network error and sent the turn back round the retry loop.
+  if (e instanceof Anthropic.APIUserAbortError) {
     return new ProviderError('aborted', 'request aborted', { cause: e });
   }
   // APIConnectionError extends APIError in the SDK, so this check has to come
@@ -143,8 +167,12 @@ export function mapAnthropicError(e: unknown): ProviderError {
     return new ProviderError('network', e.message ?? 'network error', { cause: e });
   }
   if (e instanceof Anthropic.APIError) {
-    const headers = (e.headers ?? {}) as Record<string, string>;
-    const retryAfterRaw = headers['retry-after'] ?? headers['Retry-After'];
+    // `headers` is a web `Headers` instance now, not the plain object the SDK
+    // used to expose. Indexing it returns undefined for every name, so the
+    // server's Retry-After hint was silently dropped and rate-limit backoff
+    // fell back to the built-in schedule. `.get()` is case-insensitive, which
+    // is also why the second `Retry-After` lookup is gone.
+    const retryAfterRaw = readHeader(e.headers, 'retry-after');
     const retryAfterSeconds = retryAfterRaw ? Number.parseInt(retryAfterRaw, 10) : undefined;
     const body = typeof e.message === 'string' ? e.message : '';
     // A status of 0/undefined means the request never reached the API, so it is

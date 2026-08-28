@@ -37,12 +37,18 @@ describe('Anthropic error mapping', () => {
   });
 
   it('still maps real HTTP statuses through classifyHttpError', () => {
-    const rateLimited = new Anthropic.APIError(429, undefined, 'rate limited', {
-      'retry-after': '12',
-    });
+    // Headers is a web `Headers` instance since the SDK dropped its node-fetch
+    // shims; a plain object here would compile but never yield Retry-After.
+    const rateLimited = new Anthropic.APIError(
+      429,
+      undefined,
+      'rate limited',
+      new Headers({ 'retry-after': '12' }),
+    );
     const err = mapAnthropicError(rateLimited);
     expect(err.kind).toBe('rate-limit');
     expect(isRetryable(err)).toBe(true);
+    expect(err.retryAfterSeconds).toBe(12);
 
     const unauthorised = new Anthropic.APIError(401, undefined, 'bad key', undefined);
     expect(mapAnthropicError(unauthorised).kind).toBe('auth');
@@ -53,6 +59,14 @@ describe('Anthropic error mapping', () => {
     const abort = new Error('aborted');
     abort.name = 'AbortError';
     expect(mapAnthropicError(abort).kind).toBe('aborted');
+  });
+
+  it('maps the SDK abort error to aborted rather than retryable network', () => {
+    // APIUserAbortError extends APIError with an undefined status and carries
+    // no `name`, so without an explicit branch a cancelled turn was retried.
+    const err = mapAnthropicError(new Anthropic.APIUserAbortError());
+    expect(err.kind).toBe('aborted');
+    expect(isRetryable(err)).toBe(false);
   });
 });
 
