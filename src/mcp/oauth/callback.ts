@@ -116,9 +116,33 @@ export async function startCallbackServer(opts: {
     const state = url.searchParams.get('state');
     const expected = opts.expectedState();
 
+    if (expected === undefined) {
+      // The flow has not minted a state value yet — the listener binds
+      // before `auth()` reaches `provider.state()`, so there is a real
+      // window between "listening" and "ready to judge a callback". Nothing
+      // legitimate can arrive this early: Asterisk has not sent anyone to an
+      // authorization server. The old check here was `expected !== undefined
+      // && state !== expected`, which *skipped the comparison entirely* in
+      // this window — a same-origin `fetch(..., {mode:'no-cors'})` fired at
+      // this port before state was minted walked straight through and
+      // resolved `waitForCode` with whatever code it supplied. Refuse
+      // instead, and deliberately without marking `done`: a probe landing
+      // here must not consume the one callback the real redirect is still
+      // waiting to use, unlike a genuine mismatch below, which does end the
+      // flow.
+      res.writeHead(400, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(
+        page(
+          'Authorization failed',
+          'This request arrived before Asterisk was ready for it. Try Connect again.',
+        ),
+      );
+      return;
+    }
+
     // The state check is the CSRF defence: without it, anyone who can reach
     // this port could feed Asterisk a code minted for a different account.
-    if (expected !== undefined && state !== expected) {
+    if (state !== expected) {
       done = true;
       res.writeHead(400, { 'content-type': 'text/html; charset=utf-8' });
       res.end(

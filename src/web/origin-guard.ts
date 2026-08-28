@@ -11,7 +11,10 @@
 //   the standard defence.
 //
 //   CSRF. Any page can issue a cross-site POST to 127.0.0.1 without reading the
-//   response — enough to write state.
+//   response — enough to write state. The same-site case matters too: a page
+//   on some other loopback port (an ordinary dev server) is cross-origin but
+//   not cross-site, so Origin — checked with its port, unlike Host — is what
+//   catches it independently of Sec-Fetch-Site.
 //
 // Both matter here more than in a typical admin panel, because the panel writes
 // the `hooks` table, whose `command` field is later executed verbatim via
@@ -29,7 +32,9 @@ export interface OriginGuardOptions {
 }
 
 /**
- * Hostnames a browser may legitimately use to reach the panel.
+ * Hostnames a browser may legitimately use to reach the panel — for the Host
+ * header only; see `allowedOrigins` for why Origin cannot drop the port the
+ * same way.
  *
  * Names only, not host:port. The port carries no security signal — a rebinding
  * attack has to target our port to reach us at all, so what distinguishes it is
@@ -45,6 +50,42 @@ function allowedHostnames({ host }: OriginGuardOptions): Set<string> {
   const allowed = new Set(['127.0.0.1', 'localhost', '::1']);
   if (host) allowed.add(normaliseHostname(host));
   return allowed;
+}
+
+/**
+ * Origins (scheme + host + port) a browser may legitimately send in an
+ * Origin header when talking to this panel.
+ *
+ * Unlike the Host header, the port here is exactly the signal: Origin
+ * identifies the page that issued the request, and a page on some other
+ * loopback port is a different site as far as the browser's own same-origin
+ * rules are concerned, even though it shares a hostname with the panel.
+ * Comparing bare hostnames (as `allowedHostnames` correctly does for Host)
+ * let a page on any other loopback port — a dev server the user is running
+ * for an unrelated project is the ordinary case — pass the Origin check
+ * purely on hostname, leaving Sec-Fetch-Site as the only thing standing
+ * between that page and a mutating request. Building full origin strings
+ * against the panel's actual port (which reflects `--port`/config, not a
+ * hardcoded default) restores Origin as an independent check.
+ */
+function allowedOrigins(opts: OriginGuardOptions): Set<string> {
+  const hostnames = new Set(['127.0.0.1', 'localhost', '::1']);
+  if (opts.host) hostnames.add(normaliseHostname(opts.host));
+  const origins = new Set<string>();
+  for (const hostname of hostnames) {
+    const bracketed = hostname.includes(':') ? `[${hostname}]` : hostname;
+    origins.add(`http://${bracketed}:${opts.port}`);
+  }
+  return origins;
+}
+
+/** Canonical `scheme://host:port` for an Origin header value, or null when it does not parse as one. */
+function normaliseOrigin(value: string): string | null {
+  try {
+    return new URL(value).origin.toLowerCase();
+  } catch {
+    return null;
+  }
 }
 
 /** Extracts a bare, lowercased hostname from a Host header or an origin. */
@@ -87,7 +128,7 @@ export function checkRequestOrigin(req: Request, opts: OriginGuardOptions): stri
   }
 
   const origin = req.headers.get('origin');
-  if (origin && origin !== 'null' && !allowedHostnames(opts).has(normaliseHostname(origin))) {
+  if (origin && origin !== 'null' && !allowedOrigins(opts).has(normaliseOrigin(origin) ?? '')) {
     return `cross-origin request refused (origin: ${origin})`;
   }
   // Origin: null is what a sandboxed iframe or a data: document sends. It is

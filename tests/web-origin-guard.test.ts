@@ -69,6 +69,39 @@ describe('checkRequestOrigin', () => {
     expect(reason).toContain('cross-site');
   });
 
+  it('refuses a same-hostname Origin on a different loopback port', () => {
+    // 127.0.0.1:3000 is the ordinary shape of "the user has some other dev
+    // server running" — same hostname as the panel, different port. Host
+    // still matches (Host is port-agnostic on purpose, for rebinding), and no
+    // Sec-Fetch-Site header is present here, so Origin alone must catch this.
+    const reason = checkRequestOrigin(
+      req('/api/hooks', { host: '127.0.0.1:4321', origin: 'http://127.0.0.1:3000' }, 'PUT'),
+      OPTS,
+    );
+    expect(reason).toContain('cross-origin');
+  });
+
+  it('accepts the origin matching a reconfigured port', () => {
+    // "The panel is opened at its own address, and the port can be changed
+    // via config" must keep working — the allow-set is built from the actual
+    // bound port, not a hardcoded 4321.
+    const reconfigured = { host: '127.0.0.1', port: 9999 };
+    expect(
+      checkRequestOrigin(
+        req(
+          '/api/hooks',
+          {
+            host: '127.0.0.1:9999',
+            origin: 'http://127.0.0.1:9999',
+            'sec-fetch-site': 'same-origin',
+          },
+          'PUT',
+        ),
+        reconfigured,
+      ),
+    ).toBeNull();
+  });
+
   it('refuses a foreign Origin', () => {
     const reason = checkRequestOrigin(
       req('/api/hooks', { host: '127.0.0.1:4321', origin: 'https://evil.example.com' }, 'POST'),
@@ -166,6 +199,31 @@ describe('the handler enforces the guard ahead of authentication', () => {
           host: '127.0.0.1:4321',
           origin: 'https://evil.example.com',
           'sec-fetch-site': 'cross-site',
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects a request from another loopback port with 403', async () => {
+    // The scenario from the header comment: an agent-spawned dev server on
+    // 127.0.0.1:3000, open in a tab, firing fetch('http://127.0.0.1:4321/...',
+    // {credentials:'include'}). Host matches and there is no Sec-Fetch-Site
+    // header, so this exercises Origin's own port check end to end.
+    const handler = createRequestHandler({
+      db,
+      host: '127.0.0.1',
+      port: 4321,
+      authRequired: false,
+    });
+    const res = await handler(
+      new Request('http://127.0.0.1:4321/api/hooks', {
+        method: 'PUT',
+        headers: {
+          host: '127.0.0.1:4321',
+          origin: 'http://127.0.0.1:3000',
           'content-type': 'application/json',
         },
         body: '{}',

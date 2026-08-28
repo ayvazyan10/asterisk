@@ -22,7 +22,13 @@ import { join } from 'node:path';
 
 import { BUNDLED_SKILLS } from '../../skills/bundled.ts';
 import { type Skill, loadSkillsWithIssues } from '../../skills/loader.ts';
-import { NAME_PATTERN, SKILL_FILE, validateSkill } from '../../skills/schema.ts';
+import {
+  MAX_BODY_BYTES,
+  NAME_PATTERN,
+  SKILL_FILE,
+  byteLength,
+  validateSkill,
+} from '../../skills/schema.ts';
 import { ensureOwnerOnlyDir, resolvesInside, writeOwnerOnly } from '../../utils/fs-safe.ts';
 import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
 
@@ -135,6 +141,17 @@ export const putSkill: Handler = async ({ db, params, req }) => {
   }
   if (description.length > 500) {
     throw new HttpError('"description" must be 500 characters or fewer');
+  }
+  // Same ceiling and the same metric (UTF-8 bytes, not string length) as
+  // validateSkillSource — this write path builds SKILL.md itself and never
+  // runs the prompt through that validator, so it has to enforce the limit
+  // independently rather than let a pasted log or a downloaded "community
+  // skill" reach injectInput unchecked.
+  const promptBytes = byteLength(prompt.trim());
+  if (promptBytes > MAX_BODY_BYTES) {
+    throw new HttpError(
+      `"prompt" is ${promptBytes} bytes — must be ${MAX_BODY_BYTES} bytes (8KB) or fewer`,
+    );
   }
   // A description spanning lines would end the `key: value` line early and
   // leave the rest of it sitting in the frontmatter block as garbage.

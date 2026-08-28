@@ -181,6 +181,38 @@ describe('PUT /api/skills/:name', () => {
     ).rejects.toThrow(/symlink/);
     expect(existsSync(join(outside, 'pwned.md'))).toBe(false);
   });
+
+  // This write path builds SKILL.md itself and never runs the prompt through
+  // validateSkillSource, so the 8KB ceiling has to be enforced here too —
+  // otherwise the panel is a second, unguarded way into the same context
+  // injectInput feeds.
+  it('refuses a prompt over the 8KB body limit and writes nothing to disk', async () => {
+    const huge = 'x'.repeat(8192 + 1);
+    await expect(putSkill(ctx(['huge'], { description: 'Huge.', prompt: huge }))).rejects.toThrow(
+      /8193 bytes.*8192 bytes \(8KB\) or fewer/s,
+    );
+    expect(existsSync(join(home, 'skills', 'huge', 'SKILL.md'))).toBe(false);
+  });
+
+  it('accepts a prompt right at the 8KB limit', async () => {
+    const atLimit = 'x'.repeat(8192);
+    const res = await payload(
+      putSkill(ctx(['atlimit'], { description: 'At limit.', prompt: atLimit })),
+    );
+    expect(res['ok']).toBe(true);
+    expect(existsSync(join(home, 'skills', 'atlimit', 'SKILL.md'))).toBe(true);
+  });
+
+  it('measures the prompt in UTF-8 bytes, not characters', async () => {
+    // Each 'ё' is 2 bytes in UTF-8 but 1 JS string character — a prompt under
+    // the byte limit in characters can still be over it in bytes, and the
+    // panel must catch that the same way the schema does.
+    const body = 'ё'.repeat(4200); // 8400 bytes, 4200 characters
+    await expect(
+      putSkill(ctx(['multibyte'], { description: 'Multibyte.', prompt: body })),
+    ).rejects.toThrow(/8400 bytes/);
+    expect(existsSync(join(home, 'skills', 'multibyte', 'SKILL.md'))).toBe(false);
+  });
 });
 
 // getSkill and deleteSkill are synchronous handlers — the Handler contract

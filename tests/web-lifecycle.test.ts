@@ -7,6 +7,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { asteriskPaths } from '../src/daemon/paths.ts';
 import { statusFromPidFile } from '../src/daemon/pidfile.ts';
+import { type SqliteDriver, openDriver } from '../src/db/driver.ts';
+import { migrate } from '../src/db/migrations.ts';
+import { openBrowserForPanel } from '../src/entrypoints/web.ts';
+import { hasAnyToken, issueToken, verifyToken } from '../src/web/auth.ts';
 import { type WebFlags, childArgv, parseWebArgs } from '../src/web/cli-args.ts';
 import { startWebPanel, stopWebPanel } from '../src/web/lifecycle.ts';
 import { clearWebState, readWebState } from '../src/web/runtime-state.ts';
@@ -172,5 +176,63 @@ describe('control panel lifecycle', () => {
     expect(existsSync(webStateFile)).toBe(false);
     // Clearing a record that is already gone is not an error.
     expect(() => clearWebState()).not.toThrow();
+  });
+});
+
+describe('opening the browser never puts the durable token in argv', () => {
+  let db: SqliteDriver;
+
+  beforeEach(() => {
+    db = openDriver(':memory:');
+    migrate(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  /** Captures what would have been spawned instead of actually spawning it. */
+  function recordingRunner(): {
+    calls: Array<{ command: string; args: string[] }>;
+    run: (c: string, a: string[]) => void;
+  } {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    return { calls, run: (command, args) => calls.push({ command, args }) };
+  }
+
+  it('mints a separate, later-revoked credential instead of reusing the durable one', async () => {
+    // The token a fresh install prints and `--print-token` hands out for
+    // lasting API use — this must never appear in the opener's argv.
+    const durable = issueToken(db, 'first-run');
+    expect(hasAnyToken(db)).toBe(true);
+
+    const { calls, run } = recordingRunner();
+    await openBrowserForPanel(db, 'http://127.0.0.1:4321', true, { run, ttlMs: 5 });
+
+    expect(calls).toHaveLength(1);
+    const opened = calls[0]?.args[0] ?? '';
+    expect(opened).not.toContain(durable);
+    expect(opened).toMatch(/^http:\/\/127\.0\.0\.1:4321\/\?token=/);
+
+    // A different, working credential was used instead...
+    const handoffToken = new URL(opened).searchParams.get('token') ?? '';
+    expect(handoffToken).not.toBe('');
+    expect(handoffToken).not.toBe(durable);
+
+    // ...but it does not outlive the handoff window: a /proc/<pid>/cmdline
+    // read recovered after this point is a dead credential, not a standing
+    // one. The durable token, meanwhile, is completely untouched.
+    expect(verifyToken(db, handoffToken)).toBe(false);
+    expect(verifyToken(db, durable)).toBe(true);
+  });
+
+  it('opens the bare URL, with no credential and no delay, when no token was minted', async () => {
+    const { calls, run } = recordingRunner();
+    const start = Date.now();
+    await openBrowserForPanel(db, 'http://127.0.0.1:4321', false, { run, ttlMs: 60_000 });
+
+    expect(Date.now() - start).toBeLessThan(1000);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.args).toEqual(['http://127.0.0.1:4321']);
   });
 });

@@ -37,6 +37,19 @@ const MAX_NAME = 64;
 // Descriptions render as a single line in the `/skill` picker; the longest
 // bundled one is ~110 chars, so this is a guard rail, not a target.
 const MAX_DESCRIPTION = 500;
+// `registry.ts` feeds a skill's body straight into `injectInput`, the same
+// context the user's own message occupies — there was no ceiling on it at
+// all, so a multi-megabyte pasted log or a downloaded "community skill"
+// loaded as valid and then blew the context window in one turn. Tool results
+// over `OUTPUT_THRESHOLD` (agent/output-store.ts) are persisted to disk
+// instead of kept in context for exactly this reason; a skill prompt earns
+// the same order-of-magnitude ceiling. The largest of the 29 bundled skills
+// is under 2KB, so 8KB leaves real skills several times over their actual
+// size while still catching the accidental case. Exported: the panel's
+// PUT /api/skills/:name writes SKILL.md directly, bypassing
+// validateSkillSource entirely, so it must enforce this exact ceiling itself
+// rather than inventing a second constant that could drift from this one.
+export const MAX_BODY_BYTES = 8192;
 
 export const SkillFrontmatterSchema = z.object({
   // Optional here, not absent from the format: a SKILL.md that omits `name`
@@ -223,7 +236,17 @@ export function validateSkillSource(raw: string, opts: ValidateOptions): SkillVa
   }
 
   const prompt = scan.delimited && scan.terminated ? scan.body : raw.trim();
-  if (!prompt) add('error', 'no prompt body — everything after the closing `---` is the prompt');
+  if (!prompt) {
+    add('error', 'no prompt body — everything after the closing `---` is the prompt');
+  } else {
+    const bytes = byteLength(prompt);
+    if (bytes > MAX_BODY_BYTES) {
+      add(
+        'error',
+        `body is ${bytes} bytes — must be ${MAX_BODY_BYTES} bytes (8KB) or fewer; trim it or split it into a smaller skill`,
+      );
+    }
+  }
 
   if (issues.some((i) => i.severity === 'error')) return { ok: false, issues };
   const description = scan.fields.get('description');
@@ -286,7 +309,14 @@ export function validateSkill(skill: Skill): SkillIssue[] {
   if (!parsed.success) {
     for (const issue of parsed.error.issues) issues.push(at(formatZodIssue(issue)));
   }
-  if (!skill.prompt.trim()) issues.push(at('no prompt body'));
+  if (!skill.prompt.trim()) {
+    issues.push(at('no prompt body'));
+  } else {
+    const bytes = byteLength(skill.prompt);
+    if (bytes > MAX_BODY_BYTES) {
+      issues.push(at(`body is ${bytes} bytes — must be ${MAX_BODY_BYTES} bytes (8KB) or fewer`));
+    }
+  }
   return issues;
 }
 
@@ -296,4 +326,10 @@ function formatZodIssue(issue: z.ZodIssue): string {
 
 function truncate(text: string, max = 60): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** UTF-8 byte length — what actually lands in the model's context, not the
+ * character count `.length` would give for multi-byte text. */
+export function byteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
 }

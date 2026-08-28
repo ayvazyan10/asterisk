@@ -306,13 +306,51 @@ describe('oauth callback listener', () => {
 
   it('surfaces the authorization server’s own error', async () => {
     const port = await freePort();
-    const listener = await startCallbackServer({ expectedState: () => undefined, port });
+    // A real error redirect still echoes the state Asterisk sent, so this
+    // exercises the error branch with a ready, matching state — not the
+    // "not ready yet" case, which is covered separately below.
+    const listener = await startCallbackServer({ expectedState: () => 'state-1', port });
     try {
       const pending = expect(listener.waitForCode(5000)).rejects.toThrow(
         /access_denied: user said no/,
       );
-      await fetch(`${listener.redirectUrl}?error=access_denied&error_description=user%20said%20no`);
+      await fetch(
+        `${listener.redirectUrl}?error=access_denied&error_description=user%20said%20no&state=state-1`,
+      );
       await pending;
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it('refuses a callback that arrives before a state value has been minted, without consuming the flow', async () => {
+    const port = await freePort();
+    // Mirrors production timing: `expectedState` reads `provider?.issuedState`,
+    // which starts undefined and only becomes a real value once auth() calls
+    // provider.state() — a window that opens as soon as the listener binds.
+    let ready: string | undefined;
+    const listener = await startCallbackServer({ expectedState: () => ready, port });
+    try {
+      const pending = listener.waitForCode(5000);
+
+      // A same-origin fetch (or an attacker's probe) fired into that window,
+      // carrying a code of its own choosing.
+      const early = await fetch(`${listener.redirectUrl}?code=attacker-code&state=whatever`);
+      expect(early.status).toBe(400);
+      const earlyBody = await early.text();
+      expect(earlyBody).not.toMatch(/already used|already handled/i);
+
+      // The real flow becomes ready a moment later, exactly as it does once
+      // auth() reaches provider.state().
+      ready = 'state-1';
+
+      // The probe must not have resolved waitForCode, and the listener must
+      // still accept the real redirect rather than reporting "already
+      // handled" — the practical effect the old bug had on the legitimate
+      // flow.
+      const real = await fetch(`${listener.redirectUrl}?code=real-code&state=state-1`);
+      expect(real.status).toBe(200);
+      await expect(pending).resolves.toBe('real-code');
     } finally {
       await listener.close();
     }

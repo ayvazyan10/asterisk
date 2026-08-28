@@ -112,6 +112,35 @@ describe('validateSkillSource — errors that stop a skill loading', () => {
     expect(messages(result, 'error').join()).toMatch(/no prompt body/);
   });
 
+  it('rejects a body over 8KB, naming its size', () => {
+    // A multi-megabyte pasted log or downloaded "community skill" used to
+    // load as valid and go straight into injectInput, which is the same
+    // context the user's own message occupies.
+    const huge = 'x'.repeat(8192 + 1);
+    const result = check(`---\nname: demo\ndescription: Huge\n---\n${huge}`);
+    expect(result.ok).toBe(false);
+    const msgs = messages(result, 'error').join();
+    expect(msgs).toMatch(/body is 8193 bytes/);
+    expect(msgs).toMatch(/8192 bytes \(8KB\) or fewer/);
+    // The file is still named on the issue itself, same as every other error.
+    expect(result.issues.every((i) => i.path === PATH)).toBe(true);
+  });
+
+  it('accepts a body right at the 8KB limit', () => {
+    const atLimit = 'x'.repeat(8192);
+    const result = check(`---\nname: demo\ndescription: At the limit\n---\n${atLimit}`);
+    expect(result.ok).toBe(true);
+  });
+
+  it('measures body size in UTF-8 bytes, not characters', () => {
+    // Each 'é' is 2 bytes in UTF-8 but 1 JS string character — a body just
+    // under the byte limit in characters can still be over it in bytes.
+    const body = 'é'.repeat(4200); // 8400 bytes, 4200 characters
+    const result = check(`---\nname: demo\ndescription: Multibyte\n---\n${body}`);
+    expect(result.ok).toBe(false);
+    expect(messages(result, 'error').join()).toMatch(/body is 8400 bytes/);
+  });
+
   it('names the offending file on every issue', () => {
     const result = check('---\nname: demo\n---\n');
     expect(result.issues.length).toBeGreaterThan(0);
@@ -178,6 +207,21 @@ describe('validateSkill (in-memory skills)', () => {
     expect(validateSkill({ ...base, name: 'broken', description: '' })).toHaveLength(1);
     expect(validateSkill({ ...base, name: 'broken', description: 'ok', prompt: '  ' })).toEqual([
       expect.objectContaining({ message: 'no prompt body', severity: 'error' }),
+    ]);
+  });
+
+  it('catches a bundled-shaped skill with an oversized body', () => {
+    const base = {
+      scope: 'bundled' as const,
+      path: 'bundled:huge',
+      name: 'huge',
+      description: 'ok',
+    };
+    expect(validateSkill({ ...base, prompt: 'x'.repeat(8192 + 1) })).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        message: expect.stringMatching(/body is 8193 bytes/),
+      }),
     ]);
   });
 });
