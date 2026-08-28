@@ -28,6 +28,11 @@ import { ProviderError, type ProviderErrorKind } from './errors.ts';
  */
 const FAILOVER_KINDS: ReadonlySet<ProviderErrorKind> = new Set([
   'network',
+  // The backend took the request and never answered. It is the reason a
+  // local-first chain exists, and unlike the others here it is NOT retryable
+  // (errors.ts): asking the same silent server again just spends another
+  // timeout, so the chain is the only thing that can rescue the turn.
+  'unresponsive',
   'server',
   'overloaded',
   'rate-limit',

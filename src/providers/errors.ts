@@ -6,7 +6,8 @@ export type ProviderErrorKind =
   | 'rate-limit' // 429
   | 'overloaded' // 529 / overloaded_error
   | 'server' // other 5xx
-  | 'network' // fetch failure / DNS / timeout
+  | 'network' // could not reach it: DNS, refused, connection dropped
+  | 'unresponsive' // reached it, and it never answered: idle / total timeout
   | 'auth' // 401, 403 with auth signature
   | 'bad-request' // 400 — model input rejected, not retryable
   | 'context-overflow' // 400 with prompt-too-long signature
@@ -33,6 +34,21 @@ export class ProviderError extends Error {
   }
 }
 
+/**
+ * Kinds worth sending the identical request again.
+ *
+ * `unresponsive` is deliberately not among them, and it is the interesting
+ * omission. A server that accepted the request and then said nothing for the
+ * whole idle timeout will not answer the same request any sooner — a local
+ * model that died in its KV cache does not come back inside 90 seconds. Five
+ * attempts against that deadline is over seven minutes of silence, which is a
+ * worse failure than the one it is trying to paper over. The useful move is a
+ * different backend, not the same one five times: `unresponsive` is in
+ * FAILOVER_KINDS (fallback.ts) instead.
+ *
+ * `network` stays retryable because it means the request never landed — a
+ * refused connection or a dropped one costs nothing to try again.
+ */
 const RETRYABLE_KINDS: ReadonlySet<ProviderErrorKind> = new Set([
   'rate-limit',
   'overloaded',

@@ -312,9 +312,13 @@ function mapStopReason(
 // failures only"). ESC is not: it must neither be retried nor answered by a
 // different provider.
 //
-// So: caller's signal aborted -> 'aborted'. Our own timer -> 'network', which
-// is this taxonomy's kind for a transport-level failure *including* timeouts
-// (see the union in errors.ts) — retryable, and in FAILOVER_KINDS.
+// So: caller's signal aborted -> 'aborted'. Our own timer -> 'unresponsive',
+// the kind for "reached the backend, waited past a deadline, got nothing". It
+// is in FAILOVER_KINDS and deliberately NOT in RETRYABLE_KINDS: the chain
+// should move to another backend, and nothing should spend a second 90-second
+// deadline on the server that just ignored the first. A failure to *reach* the
+// server stays 'network' and stays retryable — the request never landed, so
+// trying again is free.
 
 /** The message a cancellation reason carries, whichever kind of object it is:
  *  an Error from the timers, a DOMException from a bare `abort()`. */
@@ -330,7 +334,8 @@ function reasonMessage(reason: unknown, fallback: string): string {
  * `caller` is the signal the request came in with. If it has fired, the user
  * or the enclosing turn asked to stop and nothing else may be inferred; if it
  * has not, the only other thing holding this controller is one of our own
- * deadlines, and the backend is what failed.
+ * deadlines, and the backend is what failed — `unresponsive`, which fails over
+ * without retrying.
  */
 function cancellationError(
   reason: unknown,
@@ -340,7 +345,7 @@ function cancellationError(
 ): ProviderError {
   const message = reasonMessage(reason, fallback);
   if (caller?.aborted) return new ProviderError('aborted', message, { cause });
-  return new ProviderError('network', message, { cause });
+  return new ProviderError('unresponsive', message, { cause });
 }
 
 /**

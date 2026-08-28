@@ -341,8 +341,12 @@ describe('a local server that goes quiet', () => {
     clearDetectedModels(baseUrl);
   });
 
+  /** How many times the model endpoint itself was asked for a completion. */
+  let chatRequests = 0;
+
   /** Headers, then `frames`, then silence — the connection stays open. */
   function serveThenStall(frames: string[]): void {
+    chatRequests = 0;
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
       if (String(url).endsWith('/models')) {
         return new Response(JSON.stringify({ data: [{ id: 'qwen', meta: { n_ctx: 8192 } }] }), {
@@ -350,6 +354,7 @@ describe('a local server that goes quiet', () => {
           headers: { 'content-type': 'application/json' },
         });
       }
+      chatRequests++;
       const enc = new TextEncoder();
       const signal = init?.signal;
       let i = 0;
@@ -450,7 +455,7 @@ describe('a local server that goes quiet', () => {
     const err = await chain.send(request({ onText: () => undefined })).catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(ProviderError);
-    expect((err as ProviderError).kind).toBe('network');
+    expect((err as ProviderError).kind).toBe('unresponsive');
     expect(second).not.toHaveBeenCalled();
   });
 
@@ -473,5 +478,51 @@ describe('a local server that goes quiet', () => {
     expect(err).toBeInstanceOf(ProviderError);
     expect((err as ProviderError).kind).toBe('aborted');
     expect(second).not.toHaveBeenCalled();
+  });
+
+  it('gives up after ONE request when there is no fallback configured', async () => {
+    // The default install: `providerFallback` is empty, so there is nothing to
+    // step down to and the retry wrapper is all that is left. Retrying here
+    // would mean five attempts against a 90s idle deadline — over seven
+    // minutes of silence — for a server that has already demonstrated it is
+    // not answering. `unresponsive` is failover-eligible but not retryable
+    // precisely so this turn fails fast instead.
+    const { createAgentState, runAgentTurn } = await import('../src/agent/loop.ts');
+    serveThenStall([]);
+
+    const local = await stalledLocal();
+    const failed = await runAgentTurn(local, createAgentState(), 'still there?').catch(
+      (e: unknown) => e,
+    );
+
+    expect(failed).toBeInstanceOf(ProviderError);
+    expect((failed as ProviderError).kind).toBe('unresponsive');
+    expect(chatRequests).toBe(1);
+  });
+
+  it('still retries a server it could not reach at all', async () => {
+    // Connection refused: the request never landed, so a second attempt costs
+    // nothing and often lands. This is the case that must NOT be swept up with
+    // the silent-server one.
+    const { createAgentState, runAgentTurn } = await import('../src/agent/loop.ts');
+    let attempts = 0;
+    globalThis.fetch = (async () => {
+      attempts++;
+      throw new TypeError('fetch failed');
+    }) as unknown as typeof fetch;
+
+    const { createOpenAiCompatibleProvider } = await import(
+      '../src/providers/openai-compatible.ts'
+    );
+    const local = createOpenAiCompatibleProvider({ baseUrl, model: 'pinned', maxTokens: 0 });
+
+    const failed = await runAgentTurn(local, createAgentState(), 'hello', {
+      maxRetries: 2,
+    }).catch((e: unknown) => e);
+
+    expect(failed).toBeInstanceOf(ProviderError);
+    expect((failed as ProviderError).kind).toBe('network');
+    // Two send attempts; the /models probe is cached, so this counts sends.
+    expect(attempts).toBeGreaterThan(1);
   });
 });

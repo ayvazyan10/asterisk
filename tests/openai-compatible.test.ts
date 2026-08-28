@@ -552,10 +552,11 @@ describe('a stream that stops producing', () => {
 
     expect(seen).toEqual(['Hel']); // the first chunk did arrive
     expect(err).toBeInstanceOf(ProviderError);
-    expect((err as ProviderError).kind).toBe('network');
+    expect((err as ProviderError).kind).toBe('unresponsive');
     expect((err as ProviderError).message).toMatch(/idle timeout/);
-    // Retryable and failover-eligible; not the user's doing.
-    expect(isRetryable(err)).toBe(true);
+    // Failover-eligible, and pointedly NOT retryable: the same silent server
+    // would only spend another 90 seconds saying nothing.
+    expect(isRetryable(err)).toBe(false);
     expect(isAbort(err)).toBe(false);
   });
 
@@ -571,9 +572,9 @@ describe('a stream that stops producing', () => {
       .catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(ProviderError);
-    expect((err as ProviderError).kind).toBe('network');
+    expect((err as ProviderError).kind).toBe('unresponsive');
     expect((err as ProviderError).message).toMatch(/timed out after/);
-    expect(isRetryable(err)).toBe(true);
+    expect(isRetryable(err)).toBe(false);
   });
 
   it('reports a timeout on the non-streaming body the same way', async () => {
@@ -587,6 +588,23 @@ describe('a stream that stops producing', () => {
       modelIdleTimeoutMs: 0,
       modelTimeoutMs: 30,
     })
+      .send(base)
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as ProviderError).kind).toBe('unresponsive');
+    expect(isRetryable(err)).toBe(false);
+  });
+
+  it('keeps a server it could not reach at all retryable', async () => {
+    // The other side of the split. Nothing landed — no request was processed,
+    // no deadline was spent — so trying again is free and often works. This
+    // must not be swept into `unresponsive`.
+    globalThis.fetch = (async () => {
+      throw new TypeError('fetch failed');
+    }) as unknown as typeof fetch;
+
+    const err = await createOpenAiCompatibleProvider({ model: 'm' })
       .send(base)
       .catch((e: unknown) => e);
 
