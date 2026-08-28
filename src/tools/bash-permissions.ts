@@ -40,9 +40,50 @@ const FORBIDDEN_ARGS: Record<string, readonly RegExp[]> = {
   find: [/^-exec(dir)?$/, /^-ok(dir)?$/, /^-delete$/, /^-fprint/, /^-fls$/],
   rg: [/^--pre(=|$)/, /^--hostname-bin(=|$)/],
   grep: [/^--devices(=|$)/],
-  git: [/^-c$/, /^--exec-path(=|$)/, /^--ext-diff$/, /^--(upload|receive)-pack(=|$)/, /^-P$/],
+  // egrep and fgrep are grep under another name, and the lookup is by the
+  // binary as written, so the same guard has to be spelled out for each.
+  egrep: [/^--devices(=|$)/],
+  fgrep: [/^--devices(=|$)/],
+  git: [
+    /^-c$/,
+    /^--exec-path(=|$)/,
+    /^--ext-diff$/,
+    /^--(upload|receive)-pack(=|$)/,
+    /^-P$/,
+    // `git diff --output=FILE` truncates FILE. Every git subcommand on the
+    // allowlist is there as a reader; this flag makes any of them a writer.
+    /^--output(=|$)/,
+    // Both hand git configuration it would not otherwise read, and git config
+    // names programs to run — core.pager, core.fsmonitor, diff.external. This
+    // is the same hole `-c` is already listed for, reached through a file or
+    // an environment variable instead of the command line.
+    /^--config-env(=|$)/,
+    /^--git-dir(=|$)/,
+  ],
+  sort: [
+    // Runs PROG on every temporary spill, so a sort of a large enough file is
+    // arbitrary execution: `sort --compress-program=/bin/sh big.txt`.
+    /^--compress-program(=|$)/,
+    // `-o FILE` / `--output=FILE` write the sorted result over FILE.
+    /^-o$/,
+    /^--output(=|$)/,
+  ],
+  // `tree -o FILE` sends the listing to FILE, overwriting it.
+  tree: [/^-o$/, /^--output(=|$)/],
+  // `date -s` / `--set` set the system clock. A clock reader is on the list;
+  // a clock writer is not.
+  date: [/^-s$/, /^--set(=|$)/],
   ls: [],
 };
+
+/**
+ * Binaries whose *positional* arguments include an output file, which no
+ * pattern over flags can catch. GNU `uniq [INPUT [OUTPUT]]` writes its second
+ * operand, so `uniq notes.txt ~/.bashrc` truncates .bashrc — while the form
+ * everyone actually uses (`sort … | uniq -c`, `uniq file`) stays within the
+ * limit. The number is how many operands the command only reads.
+ */
+const MAX_OPERANDS: Record<string, number> = { uniq: 1 };
 
 /**
  * Commands that read state and nothing else, with the arguments that would
@@ -131,7 +172,7 @@ export function evaluateCommand(command: string, input: PolicyInput): Permission
 
   // Deny is absolute — it outranks the defaults, the user's allow list and
   // anything previously remembered, and it never reaches a prompt.
-  const denied = firstMatch(parsed.segments, input.deny);
+  const denied = firstDenied(parsed.segments, input.deny);
   if (denied) {
     return {
       action: 'deny',
@@ -159,7 +200,7 @@ export function evaluateCommand(command: string, input: PolicyInput): Permission
 
     const forbidden = forbiddenArg(segment);
     if (forbidden) {
-      return refuse(`"${segment.raw}" uses ${forbidden}, which can run arbitrary commands`);
+      return refuse(`"${segment.raw}" uses ${forbidden}, which can run commands or write files`);
     }
   }
 
@@ -172,15 +213,42 @@ export function evaluateCommand(command: string, input: PolicyInput): Permission
  * Granularity is binary plus its first non-flag word, so approving
  * `npm test --run` remembers `npm test` rather than either the exact
  * invocation (useless — the next one differs) or bare `npm` (too broad, it
- * would cover `npm publish`). The prompt shows these back to the user, so
- * what gets remembered is never a surprise.
+ * would cover `npm publish`). A command that starts with a flag has no such
+ * word and is handled below, where the exact invocation is the right answer
+ * rather than the useless one. The prompt shows these back to the user, so
+ * what gets remembered is never a surprise — and a segment that cannot be
+ * expressed as a rule contributes none, which the prompt renders as a plain
+ * "allow always" with nothing listed.
  */
 export function suggestRules(segments: readonly CommandSegment[]): string[] {
-  const rules = segments.map((s) => {
-    const first = s.args[0];
-    return first && !first.startsWith('-') ? `${s.bin} ${first}` : s.bin;
-  });
-  return [...new Set(rules)];
+  return [...new Set(segments.flatMap(suggestRule))];
+}
+
+/**
+ * A flag-led command has no subcommand to narrow to, and the binary alone is
+ * no narrowing at all: `bash -lc "make"` used to be remembered as `bash` — the
+ * binary DEFAULT_ALLOW excludes by name because it re-enters the shell — and
+ * `node -e "console.log(1)"` as `node`. One keystroke handed over exactly the
+ * arbitrary execution the allowlist exists to withhold.
+ *
+ * Stopping one word later would not fix it: because rules match a prefix of
+ * the argument vector, `node -e` still covers every future `-e` payload. What
+ * the user approved was the payload, so the payload is what gets remembered —
+ * the whole invocation becomes the rule. It stays reusable for the commands
+ * people actually repeat (`tsc --noEmit`, `ls -la`, `python3 -m pytest`) and
+ * authorises nothing else.
+ *
+ * A word containing whitespace cannot be written as a rule at all (rules are
+ * whitespace-separated), so those get no suggestion rather than one that
+ * silently never matches — which is also the right answer for the shell
+ * one-liners that reach this branch.
+ */
+function suggestRule(segment: CommandSegment): string[] {
+  const first = segment.args[0];
+  if (first === undefined) return [segment.bin];
+  if (!first.startsWith('-')) return [`${segment.bin} ${first}`];
+  const words = [segment.bin, ...segment.args];
+  return words.some((w) => /\s/.test(w)) ? [] : [words.join(' ')];
 }
 
 /**
@@ -207,15 +275,42 @@ function matchingRule(segment: CommandSegment, rules: readonly string[]): string
   return null;
 }
 
-function firstMatch(
+function firstDenied(
   segments: readonly CommandSegment[],
   rules: readonly string[],
 ): { segment: CommandSegment; rule: string } | null {
   for (const segment of segments) {
-    const rule = matchingRule(segment, rules);
-    if (rule) return { segment, rule };
+    for (const form of denyForms(segment)) {
+      const rule = matchingRule(form, rules);
+      if (rule) return { segment, rule };
+    }
   }
   return null;
+}
+
+/** Words that run the command named after them rather than a command of their
+ *  own, so a deny rule has to see through them. */
+const COMMAND_WRAPPERS = new Set(['command', 'builtin', 'exec']);
+
+/**
+ * The spellings of a segment a deny rule also has to catch. Allow stays exact
+ * — a rule for `git` must never be claimed by `./git`, a file the agent can
+ * create — but deny inherits the opposite requirement: a ban the user wrote as
+ * `curl` has to hold for `/usr/bin/curl` and `command curl`, or "deny is
+ * absolute" is one `which` away from meaningless. Widening here can only ever
+ * refuse more, so it cannot open anything the exact form was closing.
+ */
+function denyForms(segment: CommandSegment): CommandSegment[] {
+  const forms = [segment];
+  let current = segment;
+  while (COMMAND_WRAPPERS.has(current.bin) && current.args.length > 0) {
+    current = { ...current, bin: current.args[0] as string, args: current.args.slice(1) };
+    forms.push(current);
+  }
+  const slash = current.bin.lastIndexOf('/');
+  const base = slash === -1 ? current.bin : current.bin.slice(slash + 1);
+  if (base !== current.bin && base !== '') forms.push({ ...current, bin: base });
+  return forms;
 }
 
 /** The first argument that disqualifies this segment, described for a human. */
@@ -226,5 +321,16 @@ function forbiddenArg(segment: CommandSegment): string | null {
       if (pattern.test(arg)) return `the argument "${arg}"`;
     }
   }
-  return null;
+  const operand = writtenOperand(segment);
+  return operand === null ? null : `"${operand}" as an output file`;
+}
+
+/** The operand past this binary's read-only limit, if it has one. */
+function writtenOperand(segment: CommandSegment): string | null {
+  const limit = MAX_OPERANDS[segment.bin];
+  if (limit === undefined) return null;
+  // A bare `-` is stdin, an operand rather than a flag: `uniq - out` writes
+  // `out` exactly as `uniq in out` does.
+  const operands = segment.args.filter((a) => a === '-' || !a.startsWith('-'));
+  return operands[limit] ?? null;
 }

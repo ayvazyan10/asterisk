@@ -147,6 +147,67 @@ describe('Bash tool with the permission gate', () => {
     expect(asked).toBe(0);
   });
 
+  it('applies a deny rule to a path-qualified spelling of the same binary', async () => {
+    // Deny used to compare the binary exactly, so `deny: ["echo"]` stopped
+    // `echo` and waved `/bin/echo` through to the prompt — where one "allow
+    // always" would have written `/bin/echo` into the allowlist and lifted the
+    // user's ban. Allow stays exact; only deny reads through the path.
+    withPermissions({ deny: ['echo'] });
+    let asked = 0;
+    onApprovalRequest(() => {
+      asked += 1;
+    });
+
+    for (const command of ['/bin/echo hello', 'command echo hello']) {
+      const r = await bashTool.execute({ command });
+      expect(r.isError).toBe(true);
+      expect(r.output).toContain('deny rule');
+    }
+    expect(asked).toBe(0);
+  });
+
+  it('asks before running an allowlisted binary that carries an environment prefix', async () => {
+    // `LD_PRELOAD=./payload.so ls` used to be judged as bare `ls` and run
+    // unattended; the assignment is the part that does something.
+    let asked = 0;
+    onApprovalRequest((req) => {
+      asked += 1;
+      resolveApproval(req.id, 'deny');
+    });
+
+    const prefixed = await bashTool.execute({ command: 'LD_PRELOAD=./payload.so echo hi' });
+    expect(asked).toBe(1);
+    expect(prefixed.isError).toBe(true);
+
+    // The same command without the prefix still runs unattended.
+    const plain = await bashTool.execute({ command: 'echo hi' });
+    expect(asked).toBe(1);
+    expect(plain.isError).toBe(false);
+  });
+
+  it('remembers the payload, not the binary, when a flag leads the command', async () => {
+    // The suggested rule used to collapse to the bare binary whenever the
+    // first word was a flag, so one "allow always" on `node -e "…"` granted
+    // every future `node` invocation.
+    let asked = 0;
+    onApprovalRequest((req) => {
+      asked += 1;
+      resolveApproval(req.id, 'allow-always');
+    });
+
+    const first = await bashTool.execute({ command: 'printf -- one' });
+    expect(first.isError).toBe(false);
+    expect(grantedAllowRules(getDb())).toEqual(['printf -- one']);
+
+    // The grant covers the invocation it was given for…
+    await bashTool.execute({ command: 'printf -- one' });
+    expect(asked).toBe(1);
+
+    // …and not the next payload behind the same flag.
+    await bashTool.execute({ command: 'printf -- two' });
+    expect(asked).toBe(2);
+  });
+
   it('honours permissions.allow from config', async () => {
     withPermissions({ allow: ['printf'] });
     let asked = 0;

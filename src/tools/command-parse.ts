@@ -222,6 +222,20 @@ function readDoubleQuoted(
 function readDollar(src: string, start: number, opaque: string[]): number {
   const next = src[start + 1];
 
+  if (next === "'" || next === '"') {
+    // `$'…'` is ANSI-C quoting and `$"…"` is locale translation. Both decode
+    // escapes this tokenizer does not implement, so `$'-\x65xec'` reads here as
+    // the literal text `-\x65xec` while bash runs `-exec` — a forbidden
+    // argument delivered past a pattern that only ever sees the undecoded
+    // spelling. Reimplementing bash's escape table would be writing a second
+    // bash; the module's standing answer to "this cannot be resolved by
+    // reading it" is to call the construct opaque, and that is what these get.
+    // Inside a double-quoted run bash treats `$'` as two literal characters,
+    // so flagging it there over-approximates: an extra prompt, never a bypass.
+    opaque.push(next === "'" ? 'ANSI-C quoted string' : 'locale-translated string');
+    return skipQuoted(src, start + 1, next);
+  }
+
   if (next === '(') {
     // `$((…))` is arithmetic, `$(…)` is a command. Both are opaque, but the
     // labels matter in the prompt the user sees.
@@ -281,6 +295,25 @@ function readRedirection(src: string, start: number, fd: string, opaque: string[
   return i;
 }
 
+/**
+ * Consumes a quoted run from its opening quote, honouring backslash escapes.
+ * An unterminated run swallows the rest of the input, which is what bash would
+ * do with the next line too.
+ */
+function skipQuoted(src: string, start: number, quote: string): number {
+  let i = start + 1;
+  while (i < src.length) {
+    const c = src[i] as string;
+    if (c === '\\') {
+      i += 2;
+      continue;
+    }
+    if (c === quote) return i + 1;
+    i += 1;
+  }
+  return src.length;
+}
+
 function skipBalanced(src: string, start: number, open: string, close: string): number {
   let depth = 0;
   let i = start;
@@ -327,18 +360,28 @@ function groupIntoSegments(tokens: Token[], opaque: string[]): CommandSegment[] 
 }
 
 /**
- * Drops leading `VAR=value` assignments so `FOO=1 npm test` is judged as
- * `npm test`. An assignment whose value came from an expansion has already
- * been marked opaque by the tokenizer.
+ * Strips leading `VAR=value` assignments so the segment reads as the command
+ * it runs — `FOO=1 npm test` is shown as `npm test` — and records the prefix
+ * as opaque, because the assignment is part of what the command does.
+ *
+ * `GIT_EXTERNAL_DIFF=./x git diff` runs `./x`. `LD_PRELOAD=./x.so ls` loads
+ * `./x.so` into `ls`. `PATH=/tmp/bin ls` picks a different `ls` entirely, and
+ * `BASH_ENV`, `PYTHONPATH`, `NODE_OPTIONS`, `PERL5LIB` and `GIT_CONFIG_*` each
+ * have their own version of it. A denylist of variable names cannot close
+ * that — the attacker picks the next name — so it is the presence of any
+ * assignment, not its name, that makes the segment unresolvable by reading it.
+ *
+ * The cost is one prompt for a DEFAULT_ALLOW binary carrying an env prefix.
+ * Everything else already prompted: `FOO=1 npm test` asked before this change
+ * too, `npm` not being allowlisted.
  */
 function stripEnvAssignments(words: Word[], opaque: string[]): Word[] {
   let i = 0;
   while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test((words[i] as Word).value)) i += 1;
-  if (i > 0 && i === words.length) {
-    // Assignments with no command after them set shell state for later
-    // segments, which a per-segment rule check cannot account for.
-    opaque.push('bare environment assignment');
-  }
+  if (i === 0) return words;
+  // Assignments with no command after them additionally set shell state for
+  // later segments, which a per-segment rule check cannot account for.
+  opaque.push(i === words.length ? 'bare environment assignment' : 'environment assignment');
   return words.slice(i);
 }
 
