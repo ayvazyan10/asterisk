@@ -23,7 +23,6 @@ import {
 } from '../providers/tool-repair.ts';
 import { type Rule, rulesToPromptSection } from '../rules/loader.ts';
 import { type Soul, soulsToPromptSection } from '../soul/loader.ts';
-import { isConcurrencySafe } from '../tools/concurrency.ts';
 import { getTool, toolDefinitions } from '../tools/registry.ts';
 import type {
   ContentBlock,
@@ -41,6 +40,12 @@ import { completeToolResults, repairHistory } from './history.ts';
 import { collectImageBlocks, evictOldImages, imageLimits } from './images.ts';
 import { persistOutput, shouldPersistOutput } from './output-store.ts';
 import { summariseMessages } from './summarise.ts';
+import {
+  type ToolExecResult,
+  countCall,
+  partitionTools,
+  runToolWithTimeout,
+} from './tool-dispatch.ts';
 
 const SYSTEM_PROMPT = `You are Asterisk, a personal AI assistant running on the user's machine.
 
@@ -247,10 +252,7 @@ async function runAgentTurnInner(
     .filter((s) => s && s.length > 0)
     .join('\n\n');
 
-  state.history.push({
-    role: 'user',
-    content: [{ type: 'text', text: userInput }],
-  });
+  pushUserText(state.history, userInput);
 
   // before_turn hooks fire-and-log; failures don't abort the turn.
   if (hooks.length > 0) {
@@ -600,10 +602,14 @@ async function runAgentTurnInner(
             );
             for (const r of after) opts.onHook?.(r);
           }
-          // Persist large non-error outputs to disk and replace content
-          // with a summary + preview for the model's context window.
-          const persistedOutput =
-            !isError && shouldPersistOutput(output) ? persistOutput(name, output) : output;
+          // Persist large outputs to disk and replace the content with a
+          // summary + preview for the model's context window. Errors included:
+          // an MCP tool answers a failure with whatever text the server sent,
+          // untruncated, and a 60KB one used to land in the protected tail of
+          // the history where nothing could shrink it again.
+          const persistedOutput = shouldPersistOutput(output)
+            ? persistOutput(name, output)
+            : output;
           return {
             type: 'tool_result',
             tool_use_id: use.id,
@@ -635,7 +641,12 @@ async function runAgentTurnInner(
       // Images ride in the SAME user message as the tool results. A separate
       // message would put two user turns back to back, which the Anthropic API
       // rejects outright.
-      const answered: ContentBlock[] = completeToolResults(response.content, toolResults);
+      // Against `content`, not `response.content`: the assistant message in the
+      // history is the normalised one, and for a model with no tool channel
+      // its tool_use blocks exist only there — recovered out of the text.
+      // Reading the raw response found no tool_use at all, so nothing was ever
+      // completed and an aborted turn wrote an unanswered call to disk.
+      const answered: ContentBlock[] = completeToolResults(content, toolResults);
       if (imagePaths.length > 0) {
         const { blocks, notes } = await collectImageBlocks(imagePaths);
         for (const note of notes) answered.push({ type: 'text', text: note });
@@ -647,6 +658,10 @@ async function runAgentTurnInner(
 
       if (turn === maxTurns - 1) {
         reason = 'max-turns';
+        // Nothing below fills finalText in, and an empty one is silence: the
+        // daemon hands `text: ''` to the Telegram bridge, which sends no
+        // message at all. The user waited out 48 turns of work for nothing.
+        finalText = lastNonEmptyText || synthesiseStub(toolTally);
         break;
       }
     }
@@ -735,101 +750,25 @@ function unknownToolMessage(name: string, available: readonly string[]): string 
   return `tool not found: ${name}.${hint} Available tools: ${available.join(', ')}`;
 }
 
-/** Bumps and returns the count of dispatches of this exact call this turn. */
-function countCall(
-  counts: Map<string, number>,
-  name: string,
-  input: Record<string, unknown>,
-): number {
-  let signature: string;
-  try {
-    signature = `${name}:${JSON.stringify(input)}`;
-  } catch {
-    // Unserialisable input cannot be compared, so it is never "identical".
-    return 1;
+/**
+ * Adds the user's message, merging into the previous one when that is also a
+ * user turn.
+ *
+ * A turn that ended on `aborted` or `max-turns` leaves tool results — a user
+ * message — as the last thing in the history, and the next turn used to push a
+ * second user message straight after it. Two user turns back to back are
+ * rejected outright by the Anthropic API; it is the same invariant the loop
+ * folds image blocks into the tool-result message for, and this was the other
+ * path that broke it.
+ */
+function pushUserText(history: Message[], text: string): void {
+  const block: TextBlock = { type: 'text', text };
+  const last = history[history.length - 1];
+  if (last?.role === 'user') {
+    history[history.length - 1] = { ...last, content: [...last.content, block] };
+    return;
   }
-  const next = (counts.get(signature) ?? 0) + 1;
-  counts.set(signature, next);
-  return next;
-}
-
-// Partition tool_use blocks into sequential/parallel batches.
-// Consecutive concurrency-safe tools form a parallel batch; any
-// non-safe tool breaks the sequence and runs alone.
-interface ToolBatch {
-  uses: ToolUseBlock[];
-  parallel: boolean;
-}
-
-function partitionTools(uses: ToolUseBlock[]): ToolBatch[] {
-  const batches: ToolBatch[] = [];
-  let currentParallel: ToolUseBlock[] = [];
-
-  for (const use of uses) {
-    if (isConcurrencySafe(use.name)) {
-      currentParallel.push(use);
-    } else {
-      if (currentParallel.length > 0) {
-        batches.push({ uses: currentParallel, parallel: true });
-        currentParallel = [];
-      }
-      batches.push({ uses: [use], parallel: false });
-    }
-  }
-  if (currentParallel.length > 0) {
-    batches.push({ uses: currentParallel, parallel: true });
-  }
-  return batches;
-}
-
-interface ToolExecResult {
-  output: string;
-  isError: boolean;
-  attachments?: Array<{ kind: string; path: string; caption?: string }>;
-}
-
-async function runToolWithTimeout(
-  tool: {
-    execute: (
-      input: Record<string, unknown>,
-      opts?: { signal?: AbortSignal },
-    ) => Promise<ToolExecResult>;
-  },
-  input: Record<string, unknown>,
-  timeoutMs: number,
-  parent?: AbortSignal,
-): Promise<ToolExecResult> {
-  const ctrl = new AbortController();
-  const onParentAbort = () => ctrl.abort(parent?.reason);
-  if (parent) {
-    if (parent.aborted) ctrl.abort(parent.reason);
-    else parent.addEventListener('abort', onParentAbort, { once: true });
-  }
-  // Hard deadline via Promise.race — guarantees we return within timeoutMs
-  // even if the tool ignores the AbortSignal (e.g. execa + Bun edge cases
-  // where cancelSignal doesn't kill the child process tree).
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<ToolExecResult>((resolve) => {
-    timer = setTimeout(() => {
-      ctrl.abort(new Error(`tool timeout after ${Math.round(timeoutMs / 1000)}s`));
-      resolve({
-        output: `tool timed out after ${Math.round(timeoutMs / 1000)}s`,
-        isError: true,
-      });
-    }, timeoutMs);
-  });
-  try {
-    return await Promise.race([
-      tool.execute(input, { signal: ctrl.signal }).catch((e) => ({
-        output: `tool execution error: ${(e as Error).message}`,
-        isError: true,
-      })),
-      deadline,
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-    if (parent) parent.removeEventListener('abort', onParentAbort);
-  }
+  history.push({ role: 'user', content: [block] });
 }
 
 /** Build a stub final reply when the model finished a turn without

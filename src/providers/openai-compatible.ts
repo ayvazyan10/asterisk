@@ -201,17 +201,43 @@ export function toOpenAiTools(tools: readonly ToolDefinition[]): unknown[] {
   }));
 }
 
-/** Accumulates streamed tool-call fragments, which arrive keyed by index. */
+/**
+ * Accumulates tool-call fragments.
+ *
+ * Streaming and non-streaming replies identify a call differently, and reading
+ * them the same way loses calls. In a stream the fragments of one call arrive
+ * over several frames and `index` is the only thing tying a later arguments
+ * chunk to the call it belongs to. A non-streaming reply carries whole calls in
+ * `message.tool_calls` and, per the spec, no `index` at all — there, position
+ * in the array is the identity.
+ *
+ * Reading a missing `index` as 0 therefore collapsed every parallel call in a
+ * non-streaming reply into one: last id, last name, and every argument string
+ * concatenated, of which `parseToolArguments` then read the first object. Two
+ * of three calls vanished with no error, and the survivor ran under another
+ * call's arguments. Everything that does not stream took that path —
+ * sub-agents, scheduled runs, the eval runner.
+ */
 class ToolCallBuffer {
   private readonly byIndex = new Map<number, { id: string; name: string; args: string }>();
 
+  /** A streamed fragment, keyed by the slot the server assigned it. */
   push(delta: WireToolCall): void {
-    const index = delta.index ?? 0;
-    const existing = this.byIndex.get(index) ?? { id: '', name: '', args: '' };
-    if (delta.id) existing.id = delta.id;
-    if (delta.function?.name) existing.name = delta.function.name;
-    if (delta.function?.arguments) existing.args += delta.function.arguments;
-    this.byIndex.set(index, existing);
+    this.merge(delta.index ?? 0, delta);
+  }
+
+  /** A complete call from a non-streaming reply, keyed by array position. */
+  pushComplete(call: WireToolCall, position: number): void {
+    this.merge(position, call);
+  }
+
+  private merge(index: number, delta: WireToolCall): void {
+    const prev = this.byIndex.get(index) ?? { id: '', name: '', args: '' };
+    this.byIndex.set(index, {
+      id: delta.id || prev.id,
+      name: delta.function?.name || prev.name,
+      args: prev.args + (delta.function?.arguments ?? ''),
+    });
   }
 
   blocks(): ToolUseBlock[] {
@@ -240,7 +266,9 @@ function blocksFrom(message: WireMessage, repetition?: RepetitionOptions): Conte
   if (text) blocks.push({ type: 'text', text });
 
   const buffer = new ToolCallBuffer();
-  for (const call of message.tool_calls ?? []) buffer.push(call);
+  for (const [position, call] of (message.tool_calls ?? []).entries()) {
+    buffer.pushComplete(call, position);
+  }
   blocks.push(...buffer.blocks());
 
   return blocks;
@@ -261,6 +289,88 @@ function mapStopReason(
   if (finish === 'length') return 'max_tokens';
   if (finish === 'stop') return 'end_turn';
   return 'end_turn';
+}
+
+// --- cancellation classification -----------------------------------------
+//
+// Every cancellation in this module arrives through the same AbortController:
+// the caller's signal, the total timeout and the stream's idle timeout all end
+// up as `ctrl.abort(reason)`. Two questions follow from one rejection, and the
+// old code answered neither consistently.
+//
+// What kind of failure is it? The streaming half read the body outside any
+// try, so the plain Error the timers hand to `abort()` reached the agent loop
+// verbatim: not a ProviderError, so `isAbort` and `isRetryable` both said no,
+// retry declined, the fallback chain would not step down, and the turn ended
+// with an unhandled exception and reason 'unknown-error'.
+//
+// And WHO cancelled? That is the difference between "the user changed their
+// mind" and "this backend stopped answering", and only the source can tell
+// them apart — the symptom is identical. A server that took the request and
+// then went quiet past `modelIdleTimeoutMs` is an availability failure, which
+// is precisely what a fallback chain is for (fallback.ts: "chain; availability
+// failures only"). ESC is not: it must neither be retried nor answered by a
+// different provider.
+//
+// So: caller's signal aborted -> 'aborted'. Our own timer -> 'network', which
+// is this taxonomy's kind for a transport-level failure *including* timeouts
+// (see the union in errors.ts) — retryable, and in FAILOVER_KINDS.
+
+/** The message a cancellation reason carries, whichever kind of object it is:
+ *  an Error from the timers, a DOMException from a bare `abort()`. */
+function reasonMessage(reason: unknown, fallback: string): string {
+  if (reason instanceof Error) return reason.message;
+  const message = (reason as { message?: unknown } | null | undefined)?.message;
+  return typeof message === 'string' && message ? message : fallback;
+}
+
+/**
+ * Classifies a cancellation by its source.
+ *
+ * `caller` is the signal the request came in with. If it has fired, the user
+ * or the enclosing turn asked to stop and nothing else may be inferred; if it
+ * has not, the only other thing holding this controller is one of our own
+ * deadlines, and the backend is what failed.
+ */
+function cancellationError(
+  reason: unknown,
+  cause: unknown,
+  fallback: string,
+  caller: AbortSignal | undefined,
+): ProviderError {
+  const message = reasonMessage(reason, fallback);
+  if (caller?.aborted) return new ProviderError('aborted', message, { cause });
+  return new ProviderError('network', message, { cause });
+}
+
+/**
+ * Classifies a response body that stopped producing.
+ *
+ * Aborting the controller rejects the in-flight read with the very reason it
+ * was given, before control can reach the post-loop check — which is why that
+ * check alone was not enough.
+ */
+function bodyFailure(
+  error: unknown,
+  ctrl: AbortController,
+  caller: AbortSignal | undefined,
+): ProviderError {
+  if (error instanceof ProviderError) return error;
+  if (ctrl.signal.aborted) {
+    return cancellationError(ctrl.signal.reason, error, 'model response aborted', caller);
+  }
+  if (error instanceof Error && error.name === 'AbortError') {
+    return cancellationError(error, error, 'model response aborted', caller);
+  }
+  // The connection dropped, or the body was not what it claimed to be. Either
+  // way this backend did not answer the request.
+  return new ProviderError(
+    'network',
+    `response body failed: ${reasonMessage(error, String(error))}`,
+    {
+      cause: error,
+    },
+  );
 }
 
 // --- provider ------------------------------------------------------------
@@ -347,12 +457,7 @@ export function createOpenAiCompatibleProvider(
           });
         } catch (e) {
           if ((e as Error).name === 'AbortError' || ctrl.signal.aborted) {
-            const reason = ctrl.signal.reason;
-            throw new ProviderError(
-              'aborted',
-              reason instanceof Error ? reason.message : 'request aborted',
-              { cause: e },
-            );
+            throw cancellationError(ctrl.signal.reason, e, 'request aborted', req.signal);
           }
           throw new ProviderError(
             'network',
@@ -374,7 +479,17 @@ export function createOpenAiCompatibleProvider(
           return await readStream(res, req, cfg, ctrl);
         }
 
-        const parsed = (await res.json()) as WireResponse;
+        // The body is a stream here too. A server that sends headers and then
+        // goes quiet leaves this pending until one of our timers aborts it,
+        // and the rejection carries the timer's own Error — the same hole the
+        // streaming half had, in the branch every non-streaming caller uses:
+        // sub-agents, scheduled runs, the eval runner, the bot daemon.
+        let parsed: WireResponse;
+        try {
+          parsed = (await res.json()) as WireResponse;
+        } catch (e) {
+          throw bodyFailure(e, ctrl, req.signal);
+        }
         if (parsed.error?.message) {
           throw new ProviderError('bad-request', parsed.error.message);
         }
@@ -497,6 +612,10 @@ async function readStream(
         break;
       }
     }
+  } catch (e) {
+    // An idle or total timeout lands here, not on the check below: aborting
+    // the controller rejects the pending read with the timer's own Error.
+    throw bodyFailure(e, ctrl, req.signal);
   } finally {
     if (idleTimer !== undefined) clearTimeout(idleTimer);
     try {
@@ -511,12 +630,14 @@ async function readStream(
 
   if (runaway) text = text.slice(0, repetition.keepLength());
 
+  // Still reachable: a stream that ended cleanly while the signal was already
+  // aborted (the caller cancelled between the last frame and here).
   if (ctrl.signal.aborted) {
-    const reason = ctrl.signal.reason;
-    throw new ProviderError(
-      'aborted',
-      reason instanceof Error ? reason.message : 'model response aborted',
-      { cause: reason },
+    throw cancellationError(
+      ctrl.signal.reason,
+      ctrl.signal.reason,
+      'model response aborted',
+      req.signal,
     );
   }
 

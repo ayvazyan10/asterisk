@@ -50,6 +50,31 @@ function shouldFailover(error: unknown): boolean {
 }
 
 /**
+ * The smallest window in the chain, not the first link's.
+ *
+ * History is built once and then sent to whichever link answers, so budgeting
+ * against a 200k-token provider and landing on a 32k one overflows on
+ * failover — precisely when things are already going badly. A link that does
+ * not report a window makes the whole chain unknown: a minimum over the rest
+ * would be a guess, and compaction's own default is the honest answer.
+ *
+ * Computed per call rather than once at construction. `openai-compatible`
+ * exposes its window as a getter because it learns the server's real `n_ctx`
+ * during the first `send()`; a value snapshotted while building the chain is
+ * `undefined` forever, which is exactly the 128k-guess overflow that
+ * model-detect.ts was written to end.
+ */
+function smallestWindow(links: readonly FallbackLink[]): number | undefined {
+  let smallest: number | undefined;
+  for (const link of links) {
+    const window = link.provider.contextWindow;
+    if (typeof window !== 'number' || window <= 0) return undefined;
+    smallest = smallest === undefined ? window : Math.min(smallest, window);
+  }
+  return smallest;
+}
+
+/**
  * Wraps a chain of providers so a request walks down it until one answers.
  *
  * A single link is returned unwrapped: there is nothing to fall back to, and
@@ -63,18 +88,18 @@ export function createFallbackProvider(
   if (!first) throw new Error('a fallback chain needs at least one provider');
   if (links.length === 1) return first.provider;
 
-  // The smallest window in the chain, not the first link's. History is built
-  // once and then sent to whichever link answers, so budgeting against a
-  // 200k-token provider and landing on a 32k one overflows on failover —
-  // precisely when things are already going badly.
-  const windows = links
-    .map((l) => l.provider.contextWindow)
-    .filter((w): w is number => typeof w === 'number' && w > 0);
-  const contextWindow = windows.length === links.length ? Math.min(...windows) : undefined;
-
   return {
-    name: links.map((l) => l.label).join(' → '),
-    ...(contextWindow !== undefined ? { contextWindow } : {}),
+    // Both of these are getters, not snapshots, because a link's own name and
+    // window can be. `openai-compatible` reports the model the server says it
+    // is serving, and it only learns that on the first request: read once at
+    // construction, the chain said `openai-compatible:auto` for the rest of
+    // the run and reported no window at all.
+    get name(): string {
+      return links.map((l) => l.provider.name).join(' → ');
+    },
+    get contextWindow(): number | undefined {
+      return smallestWindow(links);
+    },
 
     async send(req: ProviderRequest): Promise<ProviderResponse> {
       let lastError: unknown;

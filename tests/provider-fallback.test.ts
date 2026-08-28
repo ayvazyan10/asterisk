@@ -6,7 +6,7 @@
 // started streaming must not be restarted (the first half is already on the
 // user's screen).
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ProviderError } from '../src/providers/errors.ts';
 import { createFallbackProvider } from '../src/providers/fallback.ts';
@@ -177,11 +177,106 @@ describe('createFallbackProvider', () => {
   });
 
   it('names every link so the transcript shows the chain', () => {
+    // Rewritten: the chain used to join the labels, which factory.ts fills in
+    // from `provider.name` at construction time. That snapshot is what made
+    // /status say `openai-compatible:auto` for the rest of the run — see the
+    // lazy-getter tests below. The name now comes from the providers
+    // themselves; `label` stays what a failover is reported under.
     const chain = createFallbackProvider([
-      { provider: working('a'), label: 'openai-compatible:qwen' },
-      { provider: working('b'), label: 'anthropic:haiku' },
+      { provider: working('openai-compatible:qwen'), label: 'local' },
+      { provider: working('anthropic:haiku'), label: 'anthropic' },
     ]);
     expect(chain.name).toBe('openai-compatible:qwen → anthropic:haiku');
+  });
+});
+
+describe('a chain over a provider that learns what it is', () => {
+  // openai-compatible does not know its model or its window until it has
+  // spoken to the server, so it exposes both as getters. The chain used to
+  // read them once while it was being built — before any request had been
+  // made — and keep the answer forever: name pinned at `:auto`, window pinned
+  // at undefined, and compaction therefore budgeting 76 800 tokens of history
+  // against a window of 8 192. That is the exact failure model-detect.ts was
+  // written to end, coming back the moment a fallback was configured.
+
+  /** A provider shaped like openai-compatible: both facts arrive on send(). */
+  function lazy(id: string, window: number): Provider {
+    let detected: { id: string; window: number } | null = null;
+    return {
+      get name(): string {
+        return `openai-compatible:${detected?.id ?? 'auto'}`;
+      },
+      get contextWindow(): number | undefined {
+        return detected?.window;
+      },
+      async send() {
+        detected = { id, window };
+        return reply(id);
+      },
+    };
+  }
+
+  it('reports the real window once the first request has been made', async () => {
+    const chain = createFallbackProvider([
+      { provider: lazy('qwen3.5:9b', 8_192), label: 'local' },
+      { provider: working('anthropic', 200_000), label: 'anthropic' },
+    ]);
+
+    expect(chain.contextWindow).toBeUndefined(); // nothing detected yet
+    await chain.send(request());
+    expect(chain.contextWindow).toBe(8_192);
+  });
+
+  it('reports the real model name once the first request has been made', async () => {
+    const chain = createFallbackProvider([
+      { provider: lazy('qwen3.5:9b', 8_192), label: 'local' },
+      { provider: working('anthropic:haiku', 200_000), label: 'anthropic' },
+    ]);
+
+    expect(chain.name).toBe('openai-compatible:auto → anthropic:haiku');
+    await chain.send(request());
+    expect(chain.name).toBe('openai-compatible:qwen3.5:9b → anthropic:haiku');
+  });
+
+  it('budgets compaction against the server window, not the 128k default', async () => {
+    // End to end against the real provider: a server reporting meta.n_ctx.
+    const { clearDetectedModels } = await import('../src/providers/model-detect.ts');
+    const { createOpenAiCompatibleProvider } = await import(
+      '../src/providers/openai-compatible.ts'
+    );
+    const { compactionThreshold, DEFAULT_CONTEXT_WINDOW } = await import(
+      '../src/agent/compaction.ts'
+    );
+
+    const baseUrl = 'http://stub.invalid:9/v1';
+    const realFetch = globalThis.fetch;
+    clearDetectedModels(baseUrl);
+    globalThis.fetch = (async (url: string) =>
+      new Response(
+        String(url).endsWith('/models')
+          ? JSON.stringify({ data: [{ id: 'qwen3.5:9b', meta: { n_ctx: 8192 } }] })
+          : JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'ok' } }] }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )) as unknown as typeof fetch;
+
+    try {
+      const local = createOpenAiCompatibleProvider({ baseUrl, model: '' });
+      const chain = createFallbackProvider([
+        { provider: local, label: 'local' },
+        { provider: working('anthropic', 200_000), label: 'anthropic' },
+      ]);
+
+      await chain.send(request());
+
+      expect(local.contextWindow).toBe(8_192);
+      expect(chain.contextWindow).toBe(8_192);
+      expect(compactionThreshold(chain.contextWindow)).toBeLessThan(
+        compactionThreshold(DEFAULT_CONTEXT_WINDOW),
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+      clearDetectedModels(baseUrl);
+    }
   });
 });
 
@@ -227,5 +322,156 @@ describe('createProviderChain', () => {
       secrets: { ANTHROPIC_API_KEY: 'sk-test' },
     });
     expect(chosen.provider.name).toContain('→');
+  });
+});
+
+describe('a local server that goes quiet', () => {
+  // The scenario the chain exists for, spelled out end to end: the laptop is
+  // configured local-first, llama-server takes the request and stops
+  // answering, and an Anthropic key is sitting right there. Until the
+  // cancellation classifier learnt to ask WHO cancelled, the timeout came out
+  // as the user's own abort — no retry, no step down, and the turn died on the
+  // dead backend with the second provider never called.
+  const realFetch = globalThis.fetch;
+  const baseUrl = 'http://stalled.invalid:9/v1';
+
+  afterEach(async () => {
+    globalThis.fetch = realFetch;
+    const { clearDetectedModels } = await import('../src/providers/model-detect.ts');
+    clearDetectedModels(baseUrl);
+  });
+
+  /** Headers, then `frames`, then silence — the connection stays open. */
+  function serveThenStall(frames: string[]): void {
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'qwen', meta: { n_ctx: 8192 } }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      const enc = new TextEncoder();
+      const signal = init?.signal;
+      let i = 0;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          signal?.addEventListener(
+            'abort',
+            () => {
+              try {
+                controller.error(signal.reason ?? new Error('aborted'));
+              } catch {
+                // already closed
+              }
+            },
+            { once: true },
+          );
+        },
+        pull(controller) {
+          if (i < frames.length) {
+            controller.enqueue(enc.encode(`data: ${frames[i++]}\n\n`));
+            return undefined;
+          }
+          return new Promise<void>(() => undefined);
+        },
+      });
+      return new Response(body, { status: 200 });
+    }) as unknown as typeof fetch;
+  }
+
+  async function stalledLocal(over: Record<string, unknown> = {}): Promise<Provider> {
+    const { createOpenAiCompatibleProvider } = await import(
+      '../src/providers/openai-compatible.ts'
+    );
+    return createOpenAiCompatibleProvider({
+      baseUrl,
+      model: '',
+      modelTimeoutMs: 60,
+      modelIdleTimeoutMs: 40,
+      ...over,
+    });
+  }
+
+  it('answers the turn from the second provider instead of failing', async () => {
+    // The acceptance case. Driven through the real agent loop so the
+    // classifier, the retry wrapper and the chain are all in it together.
+    const { createAgentState, runAgentTurn } = await import('../src/agent/loop.ts');
+    serveThenStall([]);
+    const onFailover = vi.fn();
+
+    const chain = createFallbackProvider(
+      [
+        { provider: await stalledLocal(), label: 'local' },
+        { provider: working('anthropic answered'), label: 'anthropic' },
+      ],
+      { onFailover },
+    );
+
+    const result = await runAgentTurn(chain, createAgentState(), 'still there?');
+
+    expect(result.reason).toBe('end-turn');
+    expect(result.finalText).toBe('anthropic answered');
+    expect(onFailover).toHaveBeenCalledWith(
+      'local',
+      'anthropic',
+      expect.stringMatching(/timed|idle/),
+    );
+  });
+
+  it('steps down when the stream opens and never delivers a token', async () => {
+    // Streaming, but nothing reached the user yet — so there is no half-answer
+    // on screen and the chain is free to move.
+    serveThenStall([]);
+
+    const chain = createFallbackProvider([
+      { provider: await stalledLocal(), label: 'local' },
+      { provider: working('second'), label: 'anthropic' },
+    ]);
+
+    const seen: string[] = [];
+    const out = await chain.send(request({ onText: (d) => seen.push(d) }));
+
+    expect(seen).toEqual([]);
+    expect(out.content[0]).toMatchObject({ text: 'second' });
+  });
+
+  it('stays put once a token is already on screen', async () => {
+    // The other half of the rule, unchanged: a partial answer cannot be
+    // unsent, so the failure is reported rather than answered twice. It is
+    // still classified as an availability failure, so the loop may retry it.
+    serveThenStall(['{"choices":[{"delta":{"content":"Hel"}}]}']);
+    const second = vi.fn();
+
+    const chain = createFallbackProvider([
+      { provider: await stalledLocal(), label: 'local' },
+      { provider: { name: 'second', send: second }, label: 'anthropic' },
+    ]);
+
+    const err = await chain.send(request({ onText: () => undefined })).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as ProviderError).kind).toBe('network');
+    expect(second).not.toHaveBeenCalled();
+  });
+
+  it('does not step down when the caller aborts the turn', async () => {
+    // ESC. Same symptom at the controller, opposite meaning: the user asked
+    // for nothing more, so a second provider must not be asked either.
+    serveThenStall([]);
+    const second = vi.fn();
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 20);
+
+    const slow = await stalledLocal({ modelTimeoutMs: 5_000, modelIdleTimeoutMs: 5_000 });
+    const chain = createFallbackProvider([
+      { provider: slow, label: 'local' },
+      { provider: { name: 'second', send: second }, label: 'anthropic' },
+    ]);
+
+    const err = await chain.send(request({ signal: ctrl.signal })).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as ProviderError).kind).toBe('aborted');
+    expect(second).not.toHaveBeenCalled();
   });
 });

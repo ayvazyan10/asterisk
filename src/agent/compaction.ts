@@ -33,11 +33,36 @@ export const DEFAULT_CONTEXT_WINDOW = 128_000;
  */
 const HISTORY_BUDGET = 0.6;
 
-/** Messages at the end of the history that are never touched. */
+/**
+ * Messages at the end of the history that are never *dropped*.
+ *
+ * They used to be exempt from shortening as well, which quietly read as "the
+ * six most recent messages may be any size at all". One 60KB error
+ * tool_result — MCP results are not truncated anywhere, and the loop skipped
+ * persistence for errors — pinned a seven-message history permanently above an
+ * 8k window: shortening skipped the tail, dropping could not go below it, and
+ * every following turn overflowed while compaction reported the same estimate
+ * forever. See `enforceBudget`.
+ */
 const KEEP_RECENT = 6;
 
 const TOOL_RESULT_MAX = 200;
 const TEXT_MAX = 500;
+
+/**
+ * Per-block character ceilings the last-resort clamp walks down.
+ *
+ * Reached only when the history is still over budget with every eligible
+ * message dropped and every block shortened — a single message larger than
+ * the whole budget, which nothing above it can shrink. The walk ends at 0, so
+ * it terminates on any input: content goes, block structure and message
+ * framing stay.
+ */
+const CLAMP_CEILINGS: readonly number[] = [400, 100, 20, 0];
+
+/** Stands in for content clamped away entirely. Never the empty string: a
+ *  zero-length text block is rejected outright by the Anthropic API. */
+const ELLIPSIS = '…';
 
 /**
  * Room left for a summary that has not been written yet.
@@ -114,6 +139,73 @@ function shortenMessage(msg: Message): Message {
   return { ...msg, content };
 }
 
+/** Truncates to `maxChars`, marking the cut so the model can see one happened. */
+function clip(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  if (maxChars <= ELLIPSIS.length) return ELLIPSIS;
+  return text.slice(0, maxChars - ELLIPSIS.length) + ELLIPSIS;
+}
+
+/**
+ * Clips a tool call's arguments, keeping the object shape the model wrote.
+ *
+ * Serialised arguments are what the estimate counts, so the check is made
+ * against the serialisation; a call whose arguments still do not fit loses
+ * them entirely rather than being dropped, because dropping the block would
+ * strand its tool_result.
+ */
+function clampInput(input: Record<string, unknown>, maxChars: number): Record<string, unknown> {
+  const clamped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    clamped[key] = typeof value === 'string' ? clip(value, Math.floor(maxChars / 2)) : value;
+  }
+  let serialised = '';
+  try {
+    serialised = JSON.stringify(clamped) ?? '';
+  } catch {
+    return {};
+  }
+  return serialised.length <= Math.max(maxChars, 2) ? clamped : {};
+}
+
+/** Clips every block of a message to `maxChars`, keeping block structure: a
+ *  dropped tool_use or tool_result would strand its pair and fail every later
+ *  request. An image cannot be clipped, so it survives every ceiling but the
+ *  last, where it becomes a note. */
+function clampBlock(block: ContentBlock, maxChars: number): ContentBlock {
+  if (block.type === 'text') return { ...block, text: clip(block.text, maxChars) };
+  if (block.type === 'tool_result') return { ...block, content: clip(block.content, maxChars) };
+  if (block.type === 'tool_use') return { ...block, input: clampInput(block.input, maxChars) };
+  if (block.type === 'image' && maxChars <= 0) {
+    return { type: 'text', text: '[image dropped to fit the context window]' };
+  }
+  return block;
+}
+
+/**
+ * The floor of compaction: brings an over-budget history under budget whatever
+ * it is made of.
+ *
+ * Everything above this either drops messages or shortens the ones it is
+ * allowed to touch, and both stop at the protected tail — so a history whose
+ * tail alone exceeds the budget was a fixed point, returned unchanged from
+ * every call and overflowing on every turn. This is the step that guarantees
+ * termination: shorten the tail too, then walk the clamp ceilings down to 0.
+ *
+ * Returns the input untouched when it already fits, so the ordinary path
+ * allocates nothing and compaction stays idempotent.
+ */
+function enforceBudget(messages: Message[], budget: number): Message[] {
+  if (estimateTokens(messages) <= budget) return messages;
+
+  let out = messages.map(shortenMessage);
+  for (const ceiling of CLAMP_CEILINGS) {
+    if (estimateTokens(out) <= budget) return out;
+    out = out.map((msg) => ({ ...msg, content: msg.content.map((b) => clampBlock(b, ceiling)) }));
+  }
+  return out;
+}
+
 /** True if `msg` holds a tool_use whose result lives in a later message. */
 function opensToolCall(msg: Message): boolean {
   return msg.content.some((b) => b.type === 'tool_use');
@@ -157,7 +249,29 @@ function findDropPoint(messages: Message[], budget: number, reserve: number): nu
 function dropOldest(messages: Message[], budget: number): Message[] {
   const start = findDropPoint(messages, budget, estimateTokens([noticeFor(0)]));
   if (start === 0) return messages;
-  return [noticeFor(start), ...messages.slice(start)];
+  return withNotice(noticeFor(start), messages.slice(start));
+}
+
+/**
+ * Puts the drop notice in front of what survived.
+ *
+ * The notice is a user message, and so, very often, is the message it lands in
+ * front of: tool pairs are dropped two at a time, which leaves a user turn at
+ * the seam more often than not. Two user messages back to back are rejected
+ * outright by the Anthropic API — the same invariant the agent loop folds
+ * images into the tool-result message for — so the notice is merged into that
+ * message rather than pushed ahead of it.
+ *
+ * Any tool_result blocks stay first: they answer the assistant turn before
+ * them, and that is the order every provider here is fed.
+ */
+function withNotice(notice: Message, rest: Message[]): Message[] {
+  const first = rest[0];
+  if (first === undefined || first.role !== 'user') return [notice, ...rest];
+
+  const results = first.content.filter((b) => b.type === 'tool_result');
+  const others = first.content.filter((b) => b.type !== 'tool_result');
+  return [{ ...first, content: [...results, ...notice.content, ...others] }, ...rest.slice(1)];
 }
 
 /**
@@ -217,7 +331,7 @@ function noticeReserve(): number {
 export function compactHistory(messages: Message[], contextWindow?: number): Message[] {
   const staged = shortenForBudget(messages, contextWindow);
   if (staged.done) return staged.messages;
-  return dropOldest(staged.messages, staged.budget);
+  return enforceBudget(dropOldest(staged.messages, staged.budget), staged.budget);
 }
 
 /**
@@ -239,11 +353,11 @@ export async function compactHistoryWithSummary(
 
   const shortened = staged.messages;
   const start = findDropPoint(shortened, staged.budget, noticeReserve());
-  if (start === 0) return shortened;
+  if (start === 0) return enforceBudget(shortened, staged.budget);
 
   const summary = await summarise(shortened.slice(0, start));
   const notice = summary ? summaryNoticeFor(start, summary) : noticeFor(start);
-  return [notice, ...shortened.slice(start)];
+  return enforceBudget(withNotice(notice, shortened.slice(start)), staged.budget);
 }
 
 /**
@@ -255,12 +369,14 @@ function shortenForBudget(
   contextWindow?: number,
 ): { done: boolean; messages: Message[]; budget: number } {
   const budget = compactionThreshold(contextWindow);
-  if (estimateTokens(messages) <= budget || messages.length <= KEEP_RECENT) {
-    return { done: true, messages, budget };
-  }
+  if (estimateTokens(messages) <= budget) return { done: true, messages, budget };
 
-  const keep = messages.slice(messages.length - KEEP_RECENT);
-  const older = messages.slice(0, messages.length - KEEP_RECENT).map(shortenMessage);
+  // A short history is NOT exempt. It used to return here untouched whenever
+  // it held six messages or fewer, so a single pasted message larger than the
+  // window left compaction with nothing to say and every turn overflowed.
+  const cut = Math.max(0, messages.length - KEEP_RECENT);
+  const keep = messages.slice(cut);
+  const older = messages.slice(0, cut).map(shortenMessage);
   const shortened = [...older, ...keep];
 
   // Shortening is cheap and lossy-but-recoverable; dropping is neither, so it

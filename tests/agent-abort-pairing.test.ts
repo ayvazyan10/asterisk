@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 
 import { findUnpaired, isPaired } from '../src/agent/history.ts';
 import { createAgentState, runAgentTurn } from '../src/agent/loop.ts';
-import type { Provider, ProviderResponse } from '../src/types/messages.ts';
+import type { Message, Provider, ProviderResponse } from '../src/types/messages.ts';
 
 function fakeProvider(responses: ProviderResponse[]): Provider {
   let i = 0;
@@ -123,5 +123,115 @@ describe('abort during a multi-tool batch', () => {
 
     expect(result.reason).toBe('end-turn');
     expect(findUnpaired(state.history)).toEqual([]);
+  });
+});
+
+/** Pairs of neighbouring messages that share a role, as "i/j: role". */
+function consecutiveSameRole(history: readonly Message[]): string[] {
+  const hits: string[] = [];
+  for (let i = 1; i < history.length; i++) {
+    const prev = history[i - 1];
+    const current = history[i];
+    if (prev && current && prev.role === current.role) hits.push(`${i - 1}/${i}: ${current.role}`);
+  }
+  return hits;
+}
+
+describe('role alternation across turns', () => {
+  // A turn that ends on `aborted` or `max-turns` leaves the tool results — a
+  // user message — as the last thing in the history, and the next turn pushed
+  // the user's new message straight after it. The loop declares that invariant
+  // itself, one comment above the line that folds image blocks into the
+  // tool-result message rather than sending a second user turn: "the Anthropic
+  // API rejects it outright". Two other paths broke it.
+  //
+  // openai-compatible survives it (tool results are hoisted into role:"tool"
+  // messages), which is why this went unnoticed on the default provider.
+  const oneToolCall = (): ProviderResponse => ({
+    content: [{ type: 'tool_use', id: 'x1', name: 'Bash', input: { command: 'echo x' } }],
+    stopReason: 'tool_use',
+  });
+
+  it('does not stack two user turns after a max-turns cap', async () => {
+    const state = createAgentState();
+
+    const first = await runAgentTurn(fakeProvider([oneToolCall()]), state, 'go', { maxTurns: 1 });
+
+    expect(first.reason).toBe('max-turns');
+    expect(state.history.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+
+    const second = await runAgentTurn(
+      fakeProvider([{ content: [{ type: 'text', text: 'ok' }], stopReason: 'end_turn' }]),
+      state,
+      'anything there?',
+    );
+
+    expect(second.reason).toBe('end-turn');
+    expect(consecutiveSameRole(state.history)).toEqual([]);
+    // The message was folded in, not dropped.
+    const merged = state.history[2];
+    expect(merged?.role).toBe('user');
+    expect(merged?.content.some((b) => b.type === 'text' && b.text === 'anything there?')).toBe(
+      true,
+    );
+  });
+
+  it('does not stack two user turns after an aborted batch', async () => {
+    const ctrl = new AbortController();
+    const state = createAgentState();
+    setTimeout(() => ctrl.abort(), 50);
+
+    await runAgentTurn(fakeProvider(slowBatch(2)), state, 'go', {
+      signal: ctrl.signal,
+      toolTimeoutMs: 30_000,
+    });
+    await runAgentTurn(
+      fakeProvider([{ content: [{ type: 'text', text: 'recovered' }], stopReason: 'end_turn' }]),
+      state,
+      'are you ok?',
+    );
+
+    expect(consecutiveSameRole(state.history)).toEqual([]);
+    expect(isPaired(state.history)).toBe(true);
+  });
+});
+
+describe('tool calls the model wrote as prose', () => {
+  // A server started without a tool-aware chat template makes the model write
+  // its calls into the text; `normaliseResponseContent` recovers them, and the
+  // recovered blocks are what goes into the history. Completion was computed
+  // against the RAW response instead, which holds no tool_use blocks at all —
+  // so nothing was ever missing, nothing was ever completed, and an aborted
+  // turn wrote unanswered calls to disk. repairHistory patches it on the next
+  // turn; the transcript on disk stays broken.
+  const spoken = (commands: string[]): ProviderResponse => ({
+    content: [
+      {
+        type: 'text',
+        text: commands
+          .map((c) => `<tool_call>{"name": "Bash", "arguments": {"command": "${c}"}}</tool_call>`)
+          .join('\n'),
+      },
+    ],
+    stopReason: 'end_turn',
+  });
+
+  it('answers every recovered call when the turn is aborted part-way', async () => {
+    const ctrl = new AbortController();
+    const state = createAgentState();
+    setTimeout(() => ctrl.abort(), 50);
+
+    const result = await runAgentTurn(
+      fakeProvider([spoken(['sleep 10', 'sleep 10', 'sleep 10'])]),
+      state,
+      'go',
+      { signal: ctrl.signal, toolTimeoutMs: 30_000 },
+    );
+
+    expect(result.reason).toBe('aborted');
+    const assistant = state.history.find((m) => m.role === 'assistant');
+    expect(assistant?.content.filter((b) => b.type === 'tool_use')).toHaveLength(3);
+    expect(findUnpaired(state.history)).toEqual([]);
+    expect(isPaired(state.history)).toBe(true);
   });
 });

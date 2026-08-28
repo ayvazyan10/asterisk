@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ProviderError } from '../src/providers/errors.ts';
+import { ProviderError, isAbort, isRetryable } from '../src/providers/errors.ts';
 import {
   createOpenAiCompatibleProvider,
   toOpenAiMessages,
@@ -38,6 +38,48 @@ function sse(frames: string[]): void {
           return;
         }
         ctrl.enqueue(enc.encode(`data: ${frames[i++]}\n\n`));
+      },
+    });
+    return new Response(stream, { status: 200 });
+  }) as unknown as typeof fetch;
+}
+
+/**
+ * A server that accepts the request, sends `frames`, and then stops — the
+ * llama-server hang the idle timeout exists for. Aborting the request signal
+ * errors the body the way a real fetch does, which is what makes the pending
+ * `reader.read()` reject with the timer's own reason.
+ */
+function stalls(frames: string[]): void {
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    lastRequest = { url: String(url), init: init ?? {} };
+    if (String(url).endsWith('/models')) {
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    const enc = new TextEncoder();
+    const signal = init?.signal;
+    let i = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        signal?.addEventListener(
+          'abort',
+          () => {
+            try {
+              controller.error(signal.reason ?? new Error('aborted'));
+            } catch {
+              // already closed
+            }
+          },
+          { once: true },
+        );
+      },
+      pull(controller) {
+        if (i < frames.length) {
+          controller.enqueue(enc.encode(`data: ${frames[i++]}\n\n`));
+          return undefined;
+        }
+        // Never settles: the connection is open and nothing more is coming.
+        return new Promise<void>(() => undefined);
       },
     });
     return new Response(stream, { status: 200 });
@@ -237,6 +279,75 @@ describe('non-streaming responses', () => {
     });
   });
 
+  it('keeps parallel tool calls separate, ordered and correctly paired', async () => {
+    // The elements of a non-streaming `message.tool_calls` carry no `index` —
+    // the spec does not give them one. Reading a missing index as 0 dropped
+    // all three into the same slot: last id, last name, every argument string
+    // concatenated. The turn then ran ONE call, Grep, with Read's arguments,
+    // and the other two vanished without an error. Two Edits of the same file
+    // in one turn silently became one, reported as success.
+    respond(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: 'tool_calls',
+            message: {
+              content: '',
+              tool_calls: [
+                {
+                  id: 'call_a',
+                  type: 'function',
+                  function: { name: 'Read', arguments: '{"path":"/a"}' },
+                },
+                {
+                  id: 'call_b',
+                  type: 'function',
+                  function: { name: 'Read', arguments: '{"path":"/b"}' },
+                },
+                {
+                  id: 'call_c',
+                  type: 'function',
+                  function: { name: 'Grep', arguments: '{"pattern":"x"}' },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+
+    const res = await createOpenAiCompatibleProvider({ model: 'm' }).send(base);
+
+    expect(res.content).toEqual([
+      { type: 'tool_use', id: 'call_a', name: 'Read', input: { path: '/a' } },
+      { type: 'tool_use', id: 'call_b', name: 'Read', input: { path: '/b' } },
+      { type: 'tool_use', id: 'call_c', name: 'Grep', input: { pattern: 'x' } },
+    ]);
+  });
+
+  it('still separates parallel calls when the server does send an index', async () => {
+    // Some proxies mirror the streaming shape and number them anyway. Position
+    // and index agree there, so nothing changes.
+    respond(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: 'tool_calls',
+            message: {
+              tool_calls: [
+                { index: 0, id: 'a', function: { name: 'one', arguments: '{}' } },
+                { index: 1, id: 'b', function: { name: 'two', arguments: '{}' } },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+
+    const res = await createOpenAiCompatibleProvider({ model: 'm' }).send(base);
+    expect(res.content.map((b) => (b as ToolUseBlock).id)).toEqual(['a', 'b']);
+  });
+
   it('surfaces reasoning_content through onThinking', async () => {
     respond(
       JSON.stringify({
@@ -414,5 +525,104 @@ describe('streaming', () => {
       },
     });
     expect((res.content[0] as TextBlock).text).toBe('a');
+  });
+});
+
+describe('a stream that stops producing', () => {
+  // There was no coverage here at all, and the two halves of send() disagreed:
+  // the non-streaming half wrapped its timeout in a ProviderError, the
+  // streaming half let the timer's own Error escape. Unclassified, it was not
+  // an abort, not retryable, and — because fallback.ts tests `instanceof
+  // ProviderError` — not a reason to step down to the next backend either. The
+  // agent loop ended the turn with an unhandled exception.
+  //
+  // Classified is only half of it. A timeout WE raised and an abort the CALLER
+  // raised look identical at the controller and mean opposite things: the
+  // first says this backend is not answering, the second says the user changed
+  // their mind. Only the first may retry and step down the chain.
+  const stalled = { model: 'm', modelIdleTimeoutMs: 30, modelTimeoutMs: 5_000 };
+
+  it('reports an idle timeout as an availability failure, not a cancellation', async () => {
+    stalls(['{"choices":[{"delta":{"content":"Hel"}}]}']);
+
+    const seen: string[] = [];
+    const err = await createOpenAiCompatibleProvider(stalled)
+      .send({ ...base, onText: (d) => seen.push(d) })
+      .catch((e: unknown) => e);
+
+    expect(seen).toEqual(['Hel']); // the first chunk did arrive
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as ProviderError).kind).toBe('network');
+    expect((err as ProviderError).message).toMatch(/idle timeout/);
+    // Retryable and failover-eligible; not the user's doing.
+    expect(isRetryable(err)).toBe(true);
+    expect(isAbort(err)).toBe(false);
+  });
+
+  it('reports the total timeout the same way', async () => {
+    stalls(['{"choices":[{"delta":{"content":"Hel"}}]}']);
+
+    const err = await createOpenAiCompatibleProvider({
+      model: 'm',
+      modelIdleTimeoutMs: 0,
+      modelTimeoutMs: 30,
+    })
+      .send({ ...base, onText: () => undefined })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as ProviderError).kind).toBe('network');
+    expect((err as ProviderError).message).toMatch(/timed out after/);
+    expect(isRetryable(err)).toBe(true);
+  });
+
+  it('reports a timeout on the non-streaming body the same way', async () => {
+    // The branch sub-agents, scheduled runs and the bot daemon all use. The
+    // headers arrive, `res.json()` never resolves, and until now the rejection
+    // was not wrapped at all — there was no try around it.
+    stalls([]);
+
+    const err = await createOpenAiCompatibleProvider({
+      model: 'm',
+      modelIdleTimeoutMs: 0,
+      modelTimeoutMs: 30,
+    })
+      .send(base)
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as ProviderError).kind).toBe('network');
+    expect(isRetryable(err)).toBe(true);
+  });
+
+  it('still calls a caller abort a cancellation — the REPL ESC path', async () => {
+    // abort() with no reason gives a DOMException, not an Error. ESC must not
+    // retry and must not move the turn to another provider.
+    stalls(['{"choices":[{"delta":{"content":"Hel"}}]}']);
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 20);
+
+    const err = await createOpenAiCompatibleProvider({ model: 'm', modelIdleTimeoutMs: 5_000 })
+      .send({ ...base, signal: ctrl.signal, onText: () => undefined })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as ProviderError).kind).toBe('aborted');
+    expect(isAbort(err)).toBe(true);
+    expect(isRetryable(err)).toBe(false);
+  });
+
+  it('calls a caller abort a cancellation on the non-streaming branch too', async () => {
+    stalls([]);
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 20);
+
+    const err = await createOpenAiCompatibleProvider({ model: 'm', modelTimeoutMs: 5_000 })
+      .send({ ...base, signal: ctrl.signal })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as ProviderError).kind).toBe('aborted');
+    expect(isAbort(err)).toBe(true);
   });
 });

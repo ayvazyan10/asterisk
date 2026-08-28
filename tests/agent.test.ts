@@ -290,4 +290,54 @@ describe('agent loop', () => {
     const result = await runAgentTurn(provider, state, 'go', { maxTurns: 3 });
     expect(result.reason).toBe('max-turns');
   });
+
+  it('still says something when it runs out of turns', async () => {
+    // Hitting the cap broke out of the loop without ever assigning finalText.
+    // The daemon hands `text: ''` to the Telegram bridge, whose `if (out.text)`
+    // then sends nothing: the user wrote to the bot, the agent worked through
+    // all 48 turns, and the reply was silence. The REPL hid it, because the
+    // text was already on screen from the stream.
+    const provider: Provider = {
+      name: 'loop',
+      async send() {
+        return {
+          content: [{ type: 'tool_use', id: 'i', name: 'Bash', input: { command: 'echo x' } }],
+          stopReason: 'tool_use',
+        };
+      },
+    };
+    const state = createAgentState();
+    const result = await runAgentTurn(provider, state, 'go', { maxTurns: 3 });
+
+    expect(result.reason).toBe('max-turns');
+    expect(result.finalText).not.toBe('');
+    expect(result.finalText).toMatch(/3× Bash/);
+  });
+
+  it('prefers what the model actually said when it runs out of turns', async () => {
+    let turn = 0;
+    const provider: Provider = {
+      name: 'loop',
+      async send() {
+        turn++;
+        return {
+          content: [
+            ...(turn === 1 ? [{ type: 'text' as const, text: 'looking at the config now' }] : []),
+            {
+              type: 'tool_use' as const,
+              id: `i${turn}`,
+              name: 'Bash',
+              input: { command: 'echo x' },
+            },
+          ],
+          stopReason: 'tool_use',
+        };
+      },
+    };
+    const state = createAgentState();
+    const result = await runAgentTurn(provider, state, 'go', { maxTurns: 2 });
+
+    expect(result.reason).toBe('max-turns');
+    expect(result.finalText).toBe('looking at the config now');
+  });
 });

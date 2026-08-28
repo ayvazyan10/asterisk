@@ -11,7 +11,7 @@ import { persistOutput, shouldPersistOutput } from '../src/agent/output-store.ts
 import { isConcurrencySafe } from '../src/tools/concurrency.ts';
 
 // --- compaction ---
-import { compactHistory, estimateTokens } from '../src/agent/compaction.ts';
+import { compactHistory, compactionThreshold, estimateTokens } from '../src/agent/compaction.ts';
 import type { Message, TextBlock, ToolResultBlock } from '../src/types/messages.ts';
 
 // --- bash-safety ---
@@ -210,13 +210,18 @@ describe('compaction', () => {
     expect(result).toEqual(messages);
   });
 
-  it('compactHistory is no-op when message count <= 6', () => {
-    // Even with huge content, if <= 6 messages, return as-is
-    const messages: Message[] = Array.from({ length: 6 }, (_, i) =>
+  it('compacts a short history whose messages do not fit the window', () => {
+    // Was 'no-op when message count <= 6'. Six messages of 100 000 characters
+    // is ~150k tokens against a 128k window: handing that to the model
+    // guarantees the overflow compaction exists to prevent, and no later pass
+    // can undo it. The recent tail is protected from being dropped, not from
+    // being shortened.
+    const messages: Message[] = Array.from({ length: 6 }, () =>
       makeMessage('user', 'x'.repeat(100000)),
     );
     const result = compactHistory(messages);
-    expect(result).toEqual(messages);
+    expect(result).toHaveLength(6);
+    expect(estimateTokens(result)).toBeLessThanOrEqual(compactionThreshold());
   });
 
   it('compactHistory keeps 6 most recent and compacts older messages', () => {
