@@ -171,19 +171,38 @@ export class Budget {
 
   /** Charged once per evaluated node. Throws when a budget runs out. */
   tick(): void {
-    this.steps += 1;
+    this.spend(1);
+  }
+
+  /**
+   * Charged by a builtin whose cost is proportional to the data it walks, in
+   * units of "about one interpreter node's worth of work".
+   *
+   * Without this a builtin was free. `sort()` with no comparator handed the
+   * array to the host sort, which charges no step, never consults the clock
+   * and never hands the event loop back — so one call outlived the tool's
+   * deadline, the REPL's ESC and the agent loop's timeout, all three of which
+   * are timers that cannot fire while the loop is blocked. A builtin that does
+   * work proportional to n must pay for n.
+   */
+  chargeWork(units: number): void {
+    this.spend(Number.isFinite(units) ? Math.max(1, Math.floor(units)) : 1);
+  }
+
+  private spend(n: number): void {
+    this.steps += n;
     if (this.steps > this.limits.maxSteps) {
       throw new CodeLimitError(
         'steps',
         `program exceeded ${this.limits.maxSteps} evaluation steps — it is probably looping without end`,
       );
     }
-    this.sinceClockCheck += 1;
+    this.sinceClockCheck += n;
     if (this.sinceClockCheck >= CLOCK_CHECK_INTERVAL) {
       this.sinceClockCheck = 0;
       this.checkClock();
     }
-    this.sinceYield += 1;
+    this.sinceYield += n;
   }
 
   /** True once per YIELD_INTERVAL steps. Sync so the caller only pays for a
@@ -241,6 +260,19 @@ export class Budget {
       throw new CodeLimitError('size', `array grew past ${this.limits.maxArrayLength} entries`);
     }
   }
+}
+
+/**
+ * A promise that resolves on the next macrotask when a yield is due, and `null`
+ * otherwise — so a hot loop pays nothing on the common iteration and does not
+ * allocate a promise per step. Every construct that can run long, in the
+ * interpreter's loops and in the builtins alike, goes through this.
+ */
+export function yieldIfDue(budget: Budget): Promise<void> | null {
+  if (!budget.dueForYield()) return null;
+  return new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
 }
 
 /** Everything a builtin needs to reach back into the evaluator. */

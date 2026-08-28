@@ -44,6 +44,7 @@ import {
   isCallable,
   truthy,
   typeName,
+  yieldIfDue,
 } from './values.ts';
 
 /** What a tool call looks like from the interpreter's side of the bridge. */
@@ -143,10 +144,8 @@ class Interpreter {
    * are the only unbounded constructs the language has.
    */
   private async maybeYield(): Promise<void> {
-    if (!this.budget.dueForYield()) return;
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve);
-    });
+    const pause = yieldIfDue(this.budget);
+    if (pause) await pause;
   }
 
   private appendLog(text: string): void {
@@ -202,7 +201,18 @@ class Interpreter {
           limit: null,
         });
       }
-      throw e;
+      // The contract below is absolute: a program that will not parse comes
+      // back as a result, never as a rejected tool call. Anything the lexer or
+      // the parser throws that is not a CodeSyntaxError is a bug in them, and
+      // the caller still gets a usable answer rather than "tool execution
+      // error" with the position thrown away.
+      return this.outcome(null, {
+        kind: 'syntax',
+        message: `program could not be parsed: ${e instanceof Error ? e.message : String(e)}`,
+        line: null,
+        col: null,
+        limit: null,
+      });
     }
 
     try {
@@ -277,7 +287,7 @@ class Interpreter {
           this.budget.tick();
           await this.maybeYield();
           const scope = new Env(env);
-          scope.declare(node.name, item, true);
+          scope.declare(node.name, item, node.kind === 'const');
           const c = await this.execStmt(node.body, scope);
           if (c.kind === 'break') return NORMAL;
           if (c.kind === 'return') return c;
@@ -286,8 +296,14 @@ class Interpreter {
       }
 
       case 'For': {
-        const outer = new Env(env);
+        let outer = new Env(env);
         if (node.init) await this.execStmt(node.init, outer);
+        // `let` in a C-style for is one binding *per iteration*, which is what
+        // makes `for (let i = 0; …) fns.push(() => i)` close over 0, 1, 2. One
+        // shared binding made every closure see the final value instead — a
+        // wrong answer with nothing to indicate it.
+        const perIteration = node.init?.type === 'VarDecl' && node.init.kind === 'let';
+        const name = node.init?.type === 'VarDecl' ? node.init.name : '';
         for (;;) {
           this.budget.tick();
           await this.maybeYield();
@@ -295,6 +311,7 @@ class Interpreter {
           const c = await this.execStmt(node.body, new Env(outer));
           if (c.kind === 'break') return NORMAL;
           if (c.kind === 'return') return c;
+          if (perIteration) outer = copyBinding(env, outer, name);
           if (node.update) await this.evalExpr(node.update, outer);
         }
       }
@@ -387,26 +404,21 @@ class Interpreter {
           ? this.evalExpr(node.then, env)
           : this.evalExpr(node.other, env);
 
-      case 'Member': {
-        const object = await this.evalExpr(node.object, env);
-        if (node.optional && object === null) return null;
-        const key = await this.memberKey(node, env);
-        return getMember(object, key, node);
-      }
-
+      case 'Member':
       case 'Call':
-        return this.evalCall(node, env);
+        return (await this.evalChain(node, env)).value;
 
       case 'Assign':
         return this.evalAssign(node, env);
 
       case 'Update': {
-        const before = await this.evalExpr(node.target, env);
+        const ref = await this.resolveRef(node.target, env);
+        const before = this.readRef(ref, env, node.target);
         if (typeof before !== 'number') {
           throw new CodeRuntimeError(`${node.op} expects a number, got ${typeName(before)}`, node);
         }
         const after = node.op === '++' ? before + 1 : before - 1;
-        await this.writeTarget(node.target, after, env);
+        this.writeRef(ref, after, env, node.target);
         return node.prefix ? after : before;
       }
 
@@ -477,24 +489,20 @@ class Interpreter {
   }
 
   private async evalAssign(node: Extract<Expr, { type: 'Assign' }>, env: Env): Promise<Value> {
+    const ref = await this.resolveRef(node.target, env);
     let value: Value;
     if (node.op === '=') {
       value = await this.evalExpr(node.value, env);
     } else {
-      const current = await this.evalExpr(node.target, env);
+      const current = this.readRef(ref, env, node.target);
       const operand = await this.evalExpr(node.value, env);
-      value = await this.applyCompound(node.op, current, operand, node);
+      value = this.applyCompound(node.op, current, operand, node);
     }
-    await this.writeTarget(node.target, value, env);
+    this.writeRef(ref, value, env, node.target);
     return value;
   }
 
-  private async applyCompound(
-    op: string,
-    current: Value,
-    operand: Value,
-    node: Node,
-  ): Promise<Value> {
+  private applyCompound(op: string, current: Value, operand: Value, node: Node): Value {
     if (op === '+=') {
       if (typeof current === 'number' && typeof operand === 'number') return current + operand;
       if (typeof current === 'string' || typeof operand === 'string') {
@@ -517,31 +525,79 @@ class Interpreter {
     throw new CodeRuntimeError(`unsupported operator ${op}`, node);
   }
 
-  private async writeTarget(target: Expr, value: Value, env: Env): Promise<void> {
-    if (target.type === 'Ident') {
-      const binding = env.lookup(target.name);
-      if (!binding) throw new CodeRuntimeError(`"${target.name}" is not defined`, target);
-      if (binding.constant) {
-        throw new CodeRuntimeError(`"${target.name}" is a const and cannot be reassigned`, target);
-      }
-      binding.value = value;
-      return;
-    }
+  /**
+   * Resolves an assignment target to the place it names, evaluating the target
+   * exactly once.
+   *
+   * `evalAssign` and `Update` used to evaluate the target to read it and then
+   * evaluate it again to write it. For `obj.n += 1` that is invisible; for
+   * `tool('Bash', {…}).n += 1` it runs the command twice and spends two calls
+   * from a budget the program was told it had one of.
+   */
+  private async resolveRef(target: Expr, env: Env): Promise<Ref> {
+    if (target.type === 'Ident') return { kind: 'var', name: target.name };
     if (target.type === 'Member') {
       const object = await this.evalExpr(target.object, env);
       const key = await this.memberKey(target, env);
-      setMember(object, key, value, target);
-      return;
+      return { kind: 'member', object, key };
     }
     throw new CodeRuntimeError('cannot assign to this expression', target);
   }
 
-  private async evalCall(node: Extract<Expr, { type: 'Call' }>, env: Env): Promise<Value> {
-    const callee = await this.evalExpr(node.callee, env);
-    if (node.optional && callee === null) return null;
-    const args: Value[] = [];
-    for (const a of node.args) args.push(await this.evalExpr(a, env));
-    return this.callValue(callee, args, node);
+  private readRef(ref: Ref, env: Env, node: Node): Value {
+    if (ref.kind === 'member') return getMember(ref.object, ref.key, node);
+    const binding = env.lookup(ref.name);
+    if (!binding) throw new CodeRuntimeError(`"${ref.name}" is not defined`, node);
+    return binding.value;
+  }
+
+  private writeRef(ref: Ref, value: Value, env: Env, node: Node): void {
+    if (ref.kind === 'member') {
+      setMember(ref.object, ref.key, value, node, this.budget);
+      return;
+    }
+    const binding = env.lookup(ref.name);
+    if (!binding) throw new CodeRuntimeError(`"${ref.name}" is not defined`, node);
+    if (binding.constant) {
+      throw new CodeRuntimeError(`"${ref.name}" is a const and cannot be reassigned`, node);
+    }
+    binding.value = value;
+  }
+
+  /**
+   * One link of a member/call chain.
+   *
+   * `optional` was a property of a single node, so `?.` guarded only the access
+   * written next to it: `r?.data.items` read `data` off null and failed, where
+   * JavaScript answers undefined for the whole chain. Short-circuiting has to
+   * propagate outwards, so it is carried in the result rather than inferred
+   * from the value — null is a value a chain can legitimately produce.
+   */
+  private async evalChain(node: Expr, env: Env): Promise<Chain> {
+    if (node.type === 'Member') {
+      const base = await this.evalChainBase(node.object, env);
+      if (base.short || (node.optional && base.value === null)) return SHORT_CIRCUIT;
+      const key = await this.memberKey(node, env);
+      return { value: getMember(base.value, key, node), short: false };
+    }
+    if (node.type === 'Call') {
+      const callee = await this.evalChainBase(node.callee, env);
+      if (callee.short || (node.optional && callee.value === null)) return SHORT_CIRCUIT;
+      const args: Value[] = [];
+      for (const a of node.args) args.push(await this.evalExpr(a, env));
+      return { value: await this.callValue(callee.value, args, node), short: false };
+    }
+    throw new CodeRuntimeError('unsupported expression', node);
+  }
+
+  /** The thing a chain link is applied to. Ticks for the link it continues,
+   *  because `evalExpr` only charged for the outermost node of a chain. */
+  private async evalChainBase(node: Expr, env: Env): Promise<Chain> {
+    if (node.type !== 'Member' && node.type !== 'Call') {
+      return { value: await this.evalExpr(node, env), short: false };
+    }
+    this.budget.tick();
+    return this.evalChain(node, env);
   }
 
   async callValue(fn: Value, args: Value[], node: Node): Promise<Value> {
@@ -606,6 +662,25 @@ class Interpreter {
     value['tool'] = name;
     return value;
   }
+}
+
+/** Where an assignment writes: a binding by name, or a resolved member. */
+type Ref = { kind: 'var'; name: string } | { kind: 'member'; object: Value; key: string };
+
+/** The result of one chain link, and whether an earlier `?.` cut the chain. */
+interface Chain {
+  value: Value;
+  short: boolean;
+}
+
+const SHORT_CIRCUIT: Chain = { value: null, short: true };
+
+/** A fresh scope carrying the loop variable's current value, so each iteration
+ *  of a C-style `for (let …)` closes over its own binding. */
+function copyBinding(parent: Env, from: Env, name: string): Env {
+  const fresh = new Env(parent);
+  fresh.declare(name, from.lookup(name)?.value ?? null, false);
+  return fresh;
 }
 
 function isStatement(node: Node): node is Stmt {

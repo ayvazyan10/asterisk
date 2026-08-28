@@ -107,6 +107,9 @@ const SIMPLE_ESCAPES: Readonly<Record<string, string>> = {
   $: '$',
 };
 
+/** The last code point Unicode has; String.fromCodePoint throws above it. */
+const MAX_CODE_POINT = 0x10ffff;
+
 function isIdentStart(c: string): boolean {
   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_' || c === '$';
 }
@@ -164,8 +167,21 @@ function readEscape(c: Cursor): string {
       }
       if (at(c) !== '}') throw new CodeSyntaxError('unterminated \\u{…} escape', c.line, c.col);
       advance(c);
+      // Validated rather than handed to String.fromCodePoint, which throws a
+      // host RangeError. That escaped runProgram's "never throws" contract and
+      // reached the caller as a rejected tool call with no position in it —
+      // `\u{-1}` and `\u{110000}` both got there through Number.parseInt.
+      if (!/^[0-9a-fA-F]+$/.test(hex)) {
+        throw new CodeSyntaxError('bad \\u{…} escape', c.line, c.col);
+      }
       const code = Number.parseInt(hex, 16);
-      if (Number.isNaN(code)) throw new CodeSyntaxError('bad \\u{…} escape', c.line, c.col);
+      if (code > MAX_CODE_POINT) {
+        throw new CodeSyntaxError(
+          `\\u{${hex}} is not a code point — they end at 10FFFF`,
+          c.line,
+          c.col,
+        );
+      }
       return String.fromCodePoint(code);
     }
     const hex = c.src.slice(c.i, c.i + 4);
@@ -249,12 +265,19 @@ function readTemplateChunk(c: Cursor, head: boolean): Token {
   }
 }
 
+/** Radix prefixes after a leading `0`: hexadecimal, binary, octal. */
+const RADIX_PREFIXES = new Set(['x', 'b', 'o']);
+
 function readNumber(c: Cursor): Token {
   const line = c.line;
   const col = c.col;
   const start = c.i;
 
-  if (at(c) === '0' && (at(c, 1) === 'x' || at(c, 1) === 'X')) {
+  // 0x, 0b and 0o all lex the same way and are all handed to Number(), which
+  // knows every one of them. Only 0x used to be here, so `0b1010` lexed as the
+  // number 0 followed by the name `b1010` — and `return 0b1010;` returned 0
+  // with no error at all.
+  if (at(c) === '0' && RADIX_PREFIXES.has(at(c, 1).toLowerCase())) {
     advance(c, 2);
     while (/[0-9a-fA-F_]/.test(at(c))) advance(c);
     const raw = c.src.slice(start, c.i).replace(/_/g, '');

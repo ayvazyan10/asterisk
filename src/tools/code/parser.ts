@@ -12,12 +12,40 @@ import { CodeSyntaxError, type Token, tokenise } from './lexer.ts';
 const ASSIGN_OPS = new Set(['=', '+=', '-=', '*=', '/=', '%=']);
 const LITERAL_NAMES = new Set(['true', 'false', 'null', 'undefined']);
 
+/**
+ * How deep statements and expressions may nest.
+ *
+ * A recursive-descent parser's real limit is the JS call stack, and reaching it
+ * throws a host RangeError that is not a CodeSyntaxError — so 5000 nested
+ * parentheses came back to the caller as a rejected tool call with no position
+ * in it, instead of "will not parse at line 1". This bound is reached first,
+ * and it is far above anything a program written to be read would use.
+ */
+const MAX_NESTING = 200;
+
 class Parser {
   private readonly tokens: Token[];
   private pos = 0;
+  /** Enclosing loops, so `break` outside one can be refused. Reset inside an
+   *  arrow body: a loop does not extend into a function, and JavaScript calls
+   *  a `break` there an illegal break statement too. */
+  private loopDepth = 0;
+  private nesting = 0;
 
   constructor(tokens: Token[]) {
     this.tokens = tokens;
+  }
+
+  private enterNesting(): void {
+    this.nesting += 1;
+    if (this.nesting > MAX_NESTING) {
+      const t = this.peek();
+      throw new CodeSyntaxError(
+        `this nests deeper than ${MAX_NESTING} levels — split it into named steps`,
+        t.line,
+        t.col,
+      );
+    }
   }
 
   private peek(offset = 0): Token {
@@ -85,6 +113,15 @@ class Parser {
   }
 
   private parseStatement(): Stmt {
+    this.enterNesting();
+    try {
+      return this.statement();
+    } finally {
+      this.nesting -= 1;
+    }
+  }
+
+  private statement(): Stmt {
     const t = this.peek();
 
     if (t.kind === 'punct' && t.value === '{') return this.parseBlock();
@@ -117,13 +154,8 @@ class Parser {
           return { type: 'Return', value, line: t.line, col: t.col };
         }
         case 'break':
-          this.pos += 1;
-          this.eatPunct(';');
-          return { type: 'Break', line: t.line, col: t.col };
         case 'continue':
-          this.pos += 1;
-          this.eatPunct(';');
-          return { type: 'Continue', line: t.line, col: t.col };
+          return this.parseLoopJump(t);
         default:
           break;
       }
@@ -132,6 +164,40 @@ class Parser {
     const expr = this.parseExpression();
     this.eatPunct(';');
     return { type: 'ExprStmt', expr, line: t.line, col: t.col };
+  }
+
+  /**
+   * `break` / `continue`, refused outside a loop.
+   *
+   * Accepting them anywhere was worse than a wrong answer: the interpreter let
+   * the completion escape the whole program, so `if (!files.ok) break;` — a
+   * model reaching for `return` — ended the run early and reported success,
+   * with the edits it was supposed to make silently not done.
+   */
+  private parseLoopJump(t: Token): Stmt {
+    if (this.loopDepth === 0) {
+      const hint = t.value === 'break' ? ' — use `return` to stop the program' : '';
+      throw new CodeSyntaxError(
+        `\`${t.value}\` is only allowed inside a loop${hint}`,
+        t.line,
+        t.col,
+      );
+    }
+    this.pos += 1;
+    this.eatPunct(';');
+    return t.value === 'break'
+      ? { type: 'Break', line: t.line, col: t.col }
+      : { type: 'Continue', line: t.line, col: t.col };
+  }
+
+  /** Parses a loop body with `break` and `continue` allowed inside it. */
+  private parseLoopBody(): Stmt {
+    this.loopDepth += 1;
+    try {
+      return this.parseStatement();
+    } finally {
+      this.loopDepth -= 1;
+    }
   }
 
   private parseBlock(): Stmt {
@@ -184,7 +250,7 @@ class Parser {
     this.expectPunct('(');
     const test = this.parseExpression();
     this.expectPunct(')');
-    const body = this.parseStatement();
+    const body = this.parseLoopBody();
     return { type: 'While', test, body, line: kw.line, col: kw.col };
   }
 
@@ -194,13 +260,17 @@ class Parser {
 
     const isDecl = this.isName('const') || this.isName('let');
     if (isDecl && this.peek(1).kind === 'name' && this.isName('of', 2)) {
+      // The kind is kept, not discarded: binding a `let` element as a constant
+      // made `for (let s of lines) { s = s.trim(); }` fail, and fail claiming
+      // `s` was a const when the program plainly says otherwise.
+      const kind = this.isName('const') ? 'const' : 'let';
       this.pos += 1;
       const name = this.identName();
       this.pos += 1; // `of`
       const iterable = this.parseExpression();
       this.expectPunct(')');
-      const body = this.parseStatement();
-      return { type: 'ForOf', name, iterable, body, line: kw.line, col: kw.col };
+      const body = this.parseLoopBody();
+      return { type: 'ForOf', kind, name, iterable, body, line: kw.line, col: kw.col };
     }
     if (isDecl && this.peek(1).kind === 'name' && this.isName('in', 2)) {
       throw new CodeSyntaxError(
@@ -220,7 +290,7 @@ class Parser {
     this.expectPunct(';');
     const update = this.isPunct(')') ? null : this.parseExpression();
     this.expectPunct(')');
-    const body = this.parseStatement();
+    const body = this.parseLoopBody();
     return { type: 'For', init, test, update, body, line: kw.line, col: kw.col };
   }
 
@@ -231,6 +301,15 @@ class Parser {
   }
 
   private parseAssign(): Expr {
+    this.enterNesting();
+    try {
+      return this.assignment();
+    } finally {
+      this.nesting -= 1;
+    }
+  }
+
+  private assignment(): Expr {
     const arrow = this.tryParseArrow();
     if (arrow) return arrow;
 
@@ -285,8 +364,14 @@ class Parser {
   }
 
   private finishArrow(params: string[], start: Token): Expr {
-    const body: Expr | Stmt = this.isPunct('{') ? this.parseBlock() : this.parseAssign();
-    return { type: 'Arrow', params, body, line: start.line, col: start.col };
+    const enclosing = this.loopDepth;
+    this.loopDepth = 0;
+    try {
+      const body: Expr | Stmt = this.isPunct('{') ? this.parseBlock() : this.parseAssign();
+      return { type: 'Arrow', params, body, line: start.line, col: start.col };
+    } finally {
+      this.loopDepth = enclosing;
+    }
   }
 
   /** Index of the `)` matching the `(` at `from`, or -1. */

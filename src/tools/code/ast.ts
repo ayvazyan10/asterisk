@@ -37,7 +37,7 @@ export type Stmt =
   | ({ type: 'ExprStmt'; expr: Expr } & Pos)
   | ({ type: 'If'; test: Expr; then: Stmt; other: Stmt | null } & Pos)
   | ({ type: 'While'; test: Expr; body: Stmt } & Pos)
-  | ({ type: 'ForOf'; name: string; iterable: Expr; body: Stmt } & Pos)
+  | ({ type: 'ForOf'; kind: 'const' | 'let'; name: string; iterable: Expr; body: Stmt } & Pos)
   | ({ type: 'For'; init: Stmt | null; test: Expr | null; update: Expr | null; body: Stmt } & Pos)
   | ({ type: 'Return'; value: Expr | null } & Pos)
   | ({ type: 'Break' } & Pos)

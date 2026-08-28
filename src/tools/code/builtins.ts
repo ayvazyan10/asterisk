@@ -8,7 +8,9 @@
 // table below simply does not exist.
 
 import type { Node } from './ast.ts';
+import { budgetedSort, sortByDisplay } from './sort.ts';
 import {
+  type Budget,
   Closure,
   CodeRuntimeError,
   Namespace,
@@ -64,7 +66,17 @@ function stringMember(recv: string, key: string, node: Node): Value | undefined 
 
   switch (key) {
     case 'split':
-      return new NativeFn('split', (a, _c, n) => recv.split(asString(arg(a, 0), n, 'split')));
+      return new NativeFn('split', (a, c, n) => {
+        const sep = asString(arg(a, 0), n, 'split');
+        // The empty separator produces one entry per character, so the cap can
+        // be applied before the array exists rather than after — which is the
+        // difference between refusing 1.2M entries and allocating them first.
+        if (sep === '') c.budget.checkArray(recv.length);
+        const parts = recv.split(sep);
+        c.budget.checkArray(parts.length);
+        c.budget.chargeWork(parts.length);
+        return parts;
+      });
     case 'slice':
       return new NativeFn('slice', (a, _c, n) =>
         recv.slice(
@@ -180,6 +192,32 @@ async function mapLike(
   return out;
 }
 
+/**
+ * The first element whose predicate result matches `want`, or null.
+ *
+ * `find` and `findIndex` stopped at the first hit; `some` and `every` ran the
+ * predicate over the whole array through `mapLike` and only then looked at the
+ * results. That is a wrong answer for a predicate with side effects and an
+ * expensive one for a predicate that calls a tool — `some` over forty paths
+ * spent forty tool calls to learn something the first one settled.
+ */
+async function firstMatch(
+  recv: Value[],
+  fn: Value,
+  ctx: RunCtx,
+  node: Node,
+  what: string,
+  want: boolean,
+): Promise<{ index: number; value: Value } | null> {
+  if (!isCallable(fn)) fail(`${what} expects a function, got ${typeName(fn)}`, node);
+  for (let i = 0; i < recv.length; i += 1) {
+    ctx.budget.tick();
+    const item = recv[i] ?? null;
+    if (truthy(await ctx.callValue(fn, [item, i], node)) === want) return { index: i, value: item };
+  }
+  return null;
+}
+
 function arrayMember(recv: Value[], key: string, node: Node): Value | undefined {
   if (key === 'length') return recv.length;
 
@@ -209,6 +247,7 @@ function arrayMember(recv: Value[], key: string, node: Node): Value | undefined 
     case 'join':
       return new NativeFn('join', (a, c, n) => {
         const sep = arg(a, 0) === null ? ',' : asString(arg(a, 0), n, 'join');
+        c.budget.chargeWork(recv.length);
         const out = recv.map((v) => display(v)).join(sep);
         c.budget.checkString(out.length);
         return out;
@@ -239,40 +278,35 @@ function arrayMember(recv: Value[], key: string, node: Node): Value | undefined 
       });
     case 'find':
       return new NativeFn('find', async (a, c, n) => {
-        const fn = arg(a, 0);
-        if (!isCallable(fn)) fail(`find expects a function, got ${typeName(fn)}`, n);
-        for (let i = 0; i < recv.length; i += 1) {
-          c.budget.tick();
-          if (truthy(await c.callValue(fn, [recv[i] ?? null, i], n))) return recv[i] ?? null;
-        }
-        return null;
+        const hit = await firstMatch(recv, arg(a, 0), c, n, 'find', true);
+        return hit === null ? null : hit.value;
       });
     case 'findIndex':
       return new NativeFn('findIndex', async (a, c, n) => {
-        const fn = arg(a, 0);
-        if (!isCallable(fn)) fail(`findIndex expects a function, got ${typeName(fn)}`, n);
-        for (let i = 0; i < recv.length; i += 1) {
-          c.budget.tick();
-          if (truthy(await c.callValue(fn, [recv[i] ?? null, i], n))) return i;
-        }
-        return -1;
+        const hit = await firstMatch(recv, arg(a, 0), c, n, 'findIndex', true);
+        return hit === null ? -1 : hit.index;
       });
     case 'some':
       return new NativeFn('some', async (a, c, n) => {
-        const flags = await mapLike(recv, arg(a, 0), c, n, 'some');
-        return flags.some((f) => truthy(f));
+        return (await firstMatch(recv, arg(a, 0), c, n, 'some', true)) !== null;
       });
     case 'every':
       return new NativeFn('every', async (a, c, n) => {
-        const flags = await mapLike(recv, arg(a, 0), c, n, 'every');
-        return flags.every((f) => truthy(f));
+        return (await firstMatch(recv, arg(a, 0), c, n, 'every', false)) === null;
       });
     case 'reduce':
       return new NativeFn('reduce', async (a, c, n) => {
         const fn = arg(a, 0);
         if (!isCallable(fn)) fail(`reduce expects a function, got ${typeName(fn)}`, n);
-        let acc = arg(a, 1);
-        for (let i = 0; i < recv.length; i += 1) {
+        // With no initial value JavaScript starts from the first element rather
+        // than from undefined; starting from null instead made `[1,2,3].reduce(
+        // (a, b) => a + b)` fail with "cannot add null and number".
+        const seeded = a.length >= 2;
+        if (!seeded && recv.length === 0) {
+          fail('reduce of an empty array with no initial value', n);
+        }
+        let acc = seeded ? arg(a, 1) : (recv[0] ?? null);
+        for (let i = seeded ? 0 : 1; i < recv.length; i += 1) {
           c.budget.tick();
           acc = await c.callValue(fn, [acc, recv[i] ?? null, i], n);
         }
@@ -281,27 +315,13 @@ function arrayMember(recv: Value[], key: string, node: Node): Value | undefined 
     case 'sort':
       return new NativeFn('sort', async (a, c, n) => {
         const fn = arg(a, 0);
-        if (fn === null) {
-          return recv.sort((x, y) =>
-            display(x) < display(y) ? -1 : display(x) > display(y) ? 1 : 0,
-          );
-        }
+        if (fn === null) return sortByDisplay(recv, c.budget);
         if (!isCallable(fn)) fail(`sort expects a function, got ${typeName(fn)}`, n);
-        // Insertion sort so the comparator can be awaited; arrays here are
-        // bounded by maxArrayLength and the step budget charges every compare.
-        for (let i = 1; i < recv.length; i += 1) {
-          const current = recv[i] ?? null;
-          let j = i - 1;
-          while (j >= 0) {
-            c.budget.tick();
-            const order = await c.callValue(fn, [recv[j] ?? null, current], n);
-            if (typeof order !== 'number' || order <= 0) break;
-            recv[j + 1] = recv[j] ?? null;
-            j -= 1;
-          }
-          recv[j + 1] = current;
-        }
-        return recv;
+        return budgetedSort(
+          recv,
+          async (x, y) => toOrder(await c.callValue(fn, [x, y], n)),
+          c.budget,
+        );
       });
     default:
       return undefined;
@@ -321,6 +341,11 @@ function numberMember(recv: number, key: string): Value | undefined {
     default:
       return undefined;
   }
+}
+
+/** A comparator's answer as a number. Anything else leaves the order alone. */
+function toOrder(v: Value): number {
+  return typeof v === 'number' ? v : 0;
 }
 
 /** The non-negative integer `key` denotes, or null when it is a name. */
@@ -370,19 +395,28 @@ export function getMember(object: Value, key: string, node: Node): Value {
 }
 
 /** Property write. Mirrors getMember's refusals. */
-export function setMember(object: Value, key: string, value: Value, node: Node): void {
+export function setMember(
+  object: Value,
+  key: string,
+  value: Value,
+  node: Node,
+  budget: Budget,
+): void {
   if (object === null) fail(`cannot set "${key}" of null`, node);
   if (BLOCKED_KEYS.has(key)) fail(`"${key}" is not writable`, node);
 
   if (Array.isArray(object)) {
-    const index = Number(key);
-    if (!Number.isInteger(index) || index < 0) {
+    // The same normalisation the read path uses. `Number(key)` accepted "" as
+    // 0 and " 1 " as 1, so `a[""] = 9` wrote to a[0] while reading a[""] came
+    // back null — a write and a read of one key disagreeing about where it is.
+    const index = arrayIndex(key);
+    if (index === null) {
       fail(`cannot set "${key}" on an array — use an integer index`, node);
     }
     if (index >= object.length) {
       // Assigning past the end is how a program grows an array without push;
-      // charge it against the same cap.
-      throwIfHuge(index + 1, node);
+      // charge it against the same cap push is charged against.
+      budget.checkArray(index + 1);
     }
     object[index] = value;
     return;
@@ -396,22 +430,30 @@ export function setMember(object: Value, key: string, value: Value, node: Node):
   fail(`cannot set properties on ${typeName(object)}`, node);
 }
 
-const HARD_ARRAY_CAP = 1_000_000;
-
-function throwIfHuge(length: number, node: Node): void {
-  if (length > HARD_ARRAY_CAP) fail(`array index ${length - 1} is too large`, node);
-}
-
 // ----------------------------------------------------------------- globals
 
-function jsonToValue(v: unknown): Value {
+/**
+ * Converts parsed JSON into interpreter values, charged and capped as it goes.
+ *
+ * The caps are not decoration. `maxToolOutputChars` is 200_000, so a tool
+ * result is already large enough to carry a 200_000-entry array — no `repeat`
+ * needed — and the old walk built every one of them without charging a step or
+ * consulting maxArrayLength.
+ */
+function jsonToValue(v: unknown, budget: Budget, node: Node): Value {
   if (v === null || v === undefined) return null;
   if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return v;
-  if (Array.isArray(v)) return v.map(jsonToValue);
+  if (Array.isArray(v)) {
+    budget.checkArray(v.length);
+    budget.chargeWork(v.length);
+    return v.map((item) => jsonToValue(item, budget, node));
+  }
   const out = makeObject();
-  for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
+  const entries = Object.entries(v as Record<string, unknown>);
+  budget.chargeWork(entries.length);
+  for (const [k, raw] of entries) {
     if (BLOCKED_KEYS.has(k)) continue;
-    out[k] = jsonToValue(raw);
+    out[k] = jsonToValue(raw, budget, node);
   }
   return out;
 }
@@ -426,6 +468,12 @@ function jsonReplacer(_key: string, value: unknown): unknown {
   return value;
 }
 
+/** Characters of text a builtin may walk per charged step. A step is roughly
+ *  one interpreter node, and walking a character is far cheaper than that, so
+ *  charging one per character would price a 200 KB tool result out of the whole
+ *  step budget on its own. */
+const CHARS_PER_STEP = 64;
+
 function namespace(name: string, entries: Array<[string, Value]>): Namespace {
   return new Namespace(name, new Map(entries));
 }
@@ -433,13 +481,18 @@ function namespace(name: string, entries: Array<[string, Value]>): Namespace {
 const JSON_NS = namespace('JSON', [
   [
     'parse',
-    new NativeFn('JSON.parse', (a, _c, n) => {
+    new NativeFn('JSON.parse', (a, c, n) => {
       const text = asString(arg(a, 0), n, 'JSON.parse');
+      c.budget.chargeWork(text.length / CHARS_PER_STEP);
+      let parsed: unknown;
       try {
-        return jsonToValue(JSON.parse(text) as unknown);
+        parsed = JSON.parse(text) as unknown;
       } catch (e) {
         fail(`JSON.parse failed: ${(e as Error).message}`, n);
       }
+      // Outside the try: a CodeLimitError from the walk is a budget, not a
+      // malformed document, and must not be reported as a parse failure.
+      return jsonToValue(parsed, c.budget, n);
     }),
   ],
   [
@@ -449,6 +502,7 @@ const JSON_NS = namespace('JSON', [
       const out = JSON.stringify(arg(a, 0), jsonReplacer, indent);
       if (out === undefined) return null;
       c.budget.checkString(out.length);
+      c.budget.chargeWork(out.length / CHARS_PER_STEP);
       return out;
     }),
   ],
