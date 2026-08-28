@@ -308,6 +308,18 @@ const VisionSchema = z.object({
     ),
 });
 
+// How much of the tool registry travels in every request. Once MCP servers are
+// connected this is the single biggest fixed cost in a prompt: three servers
+// measured at 102 tools and ~180KB of JSON schema, resent on every turn.
+const ToolsSchema = z.object({
+  deferSchemas: z
+    .enum(['off', 'mcp', 'all'])
+    .default('mcp')
+    .describe(
+      'Keep tool schemas out of the prompt until the agent asks for them with ToolSearch. mcp — every built-in stays listed and MCP server tools load on demand (default). all — additionally defers the rarely used built-ins, keeping the core working set. off — send every schema on every turn. This is a prompt-size setting only: which tools the agent may run, and every permission check, are unaffected.',
+    ),
+});
+
 // Hooks fire at agent-loop lifecycle events. Each hook is a shell command
 // run with the event payload on stdin (JSON). Stdout is logged into the
 // transcript as a system note; non-zero exit logs the stderr too.
@@ -404,6 +416,7 @@ export const ConfigSchema = z.object({
   permissions: PermissionsSchema.default({}),
   sandbox: SandboxSchema.default({}),
   vision: VisionSchema.default({}),
+  tools: ToolsSchema.default({}),
   outputStyle: OutputStyleSchema.default('default').describe(
     'Behaviour modifier spliced into the system prompt.',
   ),

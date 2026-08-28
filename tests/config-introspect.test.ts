@@ -89,6 +89,7 @@ describe('settings registry', () => {
       'permissions',
       'sandbox',
       'vision',
+      'tools',
       'outputStyle',
     ]);
   });

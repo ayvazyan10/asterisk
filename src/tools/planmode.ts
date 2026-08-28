@@ -24,6 +24,10 @@ const READ_ONLY_NAMES = new Set([
   'Recall',
   'EnterPlanMode',
   'ExitPlanMode',
+  // Reads tool metadata and returns schemas; it runs nothing. Hiding it here
+  // would strand a plan-mode turn that needs an MCP tool, because with
+  // deferred schemas ToolSearch is the only way to load one.
+  'ToolSearch',
   'Agent',
   'Attach',
   // Reading an audio file is research like any other read. The command

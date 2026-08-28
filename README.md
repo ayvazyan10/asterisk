@@ -322,8 +322,13 @@ the tool call rather than the session. `RunCode` cannot call itself, `Agent`
 or `AskUserQuestion`.
 
 **Tool discovery**
-`ToolSearch` — keyword search across all registered tools. Enables
-deferred tool loading so the full tool list doesn't bloat every prompt.
+`ToolSearch` — keyword search across the registered tools, returning full tool
+definitions. Tool schemas are deferred by default (`tools.deferSchemas`): the
+request carries the built-ins plus a one-line pointer at the connected MCP
+servers, and `ToolSearch` loads the rest on demand — a loaded tool stays
+available for the rest of the conversation. On a three-server install that is
+~207 KB of schema per request down to ~25 KB. Set `tools.deferSchemas` to
+`all` to defer the rarely used built-ins too, or `off` to send everything.
 
 Plus any tools exposed by configured MCP servers, namespaced as
 `<servername>__<toolname>`.

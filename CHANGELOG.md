@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Tool schemas are loaded on demand instead of resent every turn.** Measured
+  on a live install with Notion, GitHub and engram connected: 148 registered
+  tools carrying 206.7 KB of JSON schema — about 60k tokens — into every single
+  request, before the user had typed anything. A one-word "hello" cost 68k
+  tokens of prompt and nine to seventeen minutes of prompt-eval on a local
+  llama.cpp. Every turn. `ToolSearch` now does what the docs always claimed it
+  did: MCP tools travel as a one-line pointer (how many, from which server) and
+  `ToolSearch` returns a matching tool's full definition and makes it callable
+  from the next message onwards. The same inventory now costs 24.9 KB / ~7.3k
+  tokens by default. Nothing is unregistered and no gate moved — dispatch, the
+  bash gate, write policy, plan mode and `allowedTools` all see the same
+  registry they always did. `tools.deferSchemas` sets the policy: `mcp`
+  (default) keeps every built-in listed, `all` also defers the long tail of
+  built-ins for ~2.9k tokens total, `off` restores the previous behaviour.
+
 ### Fixed
 
 - **The control panel says which model is answering.** The header chip read

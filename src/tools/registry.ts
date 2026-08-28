@@ -10,6 +10,7 @@ import { bashTool } from './bash.ts';
 import { BROWSER_TOOLS } from './browser/tools.ts';
 import { codeIntelTool } from './code-intel.ts';
 import { runCodeTool } from './code/tool.ts';
+import { deferMode, deferredPointer, partitionForPrompt } from './deferred.ts';
 import { diffReviewTool } from './diff-review.ts';
 import { editTool } from './edit.ts';
 import { globTool } from './glob.ts';
@@ -76,10 +77,35 @@ export function getTool(name: string): Tool | undefined {
   return listTools().find((t) => t.name === name);
 }
 
-export function toolDefinitions() {
-  return listTools().map((t) => ({
-    name: t.name,
-    description: t.description,
-    input_schema: t.input_schema,
-  }));
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  input_schema: Tool['input_schema'];
+}
+
+function define(tool: Tool, description = tool.description): ToolDefinition {
+  return { name: tool.name, description, input_schema: tool.input_schema };
+}
+
+/** Every registered tool. This is the dispatch view — what the loop may run. */
+export function toolDefinitions(): ToolDefinition[] {
+  return listTools().map((t) => define(t));
+}
+
+/**
+ * The subset actually sent to the provider.
+ *
+ * Separate from `toolDefinitions()` on purpose: the loop still dispatches, gates
+ * and permission-checks against the full registry, and only the schemas riding
+ * in the request shrink. See deferred.ts for why, and for what comes back.
+ */
+export function promptToolDefinitions(): ToolDefinition[] {
+  const all = listTools();
+  const mcpNames = new Set(extraTools.map((t) => t.name));
+  const { visible, deferred } = partitionForPrompt(all, mcpNames, deferMode());
+  if (deferred.length === 0) return visible.map((t) => define(t));
+  const pointer = deferredPointer(deferred);
+  return visible.map((t) =>
+    t.name === 'ToolSearch' ? define(t, `${t.description}\n\n${pointer}`) : define(t),
+  );
 }

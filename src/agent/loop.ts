@@ -23,7 +23,8 @@ import {
 } from '../providers/tool-repair.ts';
 import { type Rule, rulesToPromptSection } from '../rules/loader.ts';
 import { type Soul, soulsToPromptSection } from '../soul/loader.ts';
-import { getTool, toolDefinitions } from '../tools/registry.ts';
+import { revealTool } from '../tools/deferred.ts';
+import { getTool, promptToolDefinitions, toolDefinitions } from '../tools/registry.ts';
 import type {
   ContentBlock,
   Message,
@@ -330,11 +331,13 @@ async function runAgentTurnInner(
             if (signal) sendOpts.signal = signal;
             if (opts.onAssistantDelta) sendOpts.onText = opts.onAssistantDelta;
             if (opts.onAssistantThinking) sendOpts.onThinking = opts.onAssistantThinking;
-            const allTools = toolDefinitions();
+            // An allow-list is already explicit and small, and deferring
+            // inside it would hide a tool the caller deliberately granted, so
+            // it keeps the pre-deferral behaviour. See tools/deferred.ts.
             const tools =
               opts.allowedTools && opts.allowedTools.length > 0
-                ? allTools.filter((t) => opts.allowedTools?.includes(t.name))
-                : allTools;
+                ? toolDefinitions().filter((t) => opts.allowedTools?.includes(t.name))
+                : promptToolDefinitions();
             return provider.send({
               system: systemPrompt,
               messages: state.history,
@@ -555,6 +558,11 @@ async function runAgentTurnInner(
             output = unknownToolMessage(name, available);
             isError = true;
           } else {
+            // A tool the model called is a tool the model has: keep its schema
+            // in every later request. This is what covers a deferred tool named
+            // without searching first — the history now references it, and a
+            // provider may reject a request naming a tool it was not given.
+            revealTool(name);
             // Repair the shape before validating it — a double-wrapped or
             // stringified argument is the model's formatting, not a missing
             // parameter, and reporting it as one would be a lie.
