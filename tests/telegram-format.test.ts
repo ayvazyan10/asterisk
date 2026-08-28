@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   balanceOpenTags,
+  chunkHtml,
   escapeHtml,
   markdownToTelegramHtml,
 } from '../src/bots/telegram/format.ts';
+import { stripTags } from '../src/bots/telegram/index.ts';
 
 describe('markdownToTelegramHtml', () => {
   it('renders bold (** and __) as <b>', () => {
@@ -206,6 +208,76 @@ describe('balanceOpenTags', () => {
 
   it('closes only what is still open when a tag was already closed', () => {
     expect(balanceOpenTags('<b>bold</b> then <i>italic')).toBe('<b>bold</b> then <i>italic</i>');
+  });
+});
+
+describe('chunkHtml', () => {
+  const MAX = 4096;
+  const PRE_TAG = '<pre>';
+  const CODE_TAG_OPEN = '<code class="language-ts">';
+
+  it('never cuts through a tag, on a real rendered message with a code block over the limit', () => {
+    // Engineered so a naive slice(0, MAX) — the bug this replaced — lands
+    // inside `<code class="language-ts">`, exactly the reported failure:
+    // the first piece ended `<pre><code class="langua`, the second began
+    // `ge-ts">…`, and stripTags's fallback then showed that fragment to the
+    // user as literal text because it has no closing `>` to match.
+    const landInsideTagBy = 10;
+    const prefixLen = MAX - landInsideTagBy - PRE_TAG.length - '\n\n'.length;
+    const prefix = 'x'.repeat(prefixLen);
+    const body = 'const value = 1;\n'.repeat(200);
+    const markdown = `${prefix}\n\n\`\`\`ts\n${body}\`\`\`\n`;
+    const rendered = markdownToTelegramHtml(markdown);
+
+    // Confirm the setup actually reproduces the reported failure mode
+    // before trusting the assertions below.
+    const codeTagStart = rendered.indexOf(CODE_TAG_OPEN);
+    expect(codeTagStart).toBeGreaterThan(0);
+    expect(codeTagStart).toBeLessThan(MAX);
+    expect(codeTagStart + CODE_TAG_OPEN.length).toBeGreaterThan(MAX);
+    expect(rendered.slice(0, MAX)).toMatch(/<code[^>]*$/);
+    expect(rendered.length).toBeGreaterThan(MAX);
+
+    const chunks = chunkHtml(rendered, MAX);
+    expect(chunks.length).toBeGreaterThan(1);
+
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(MAX);
+      // No chunk ends (or, since a reopened tag is prepended whole, begins)
+      // mid-tag.
+      expect(chunk).not.toMatch(/<[a-zA-Z/][^<>]*$/);
+      // Every tag in the chunk is complete, so stripping them all leaves no
+      // markup-shaped leftovers — the concrete acceptance check: Telegram's
+      // real fallback (`stripTags`) must never show a raw fragment.
+      expect(stripTags(chunk)).not.toMatch(/[<>]/);
+    }
+
+    // The code content itself survives the split intact.
+    expect(chunks.map(stripTags).join('')).toContain('const value = 1;\nconst value = 1;');
+  });
+
+  it('reopens a tag that spans a boundary with its original attributes', () => {
+    const body = 'line\n'.repeat(900); // long enough to force a split inside <pre><code>
+    const rendered = markdownToTelegramHtml(`\`\`\`with-a-long-name-xyz\n${body}\`\`\``);
+    expect(rendered.length).toBeGreaterThan(MAX);
+
+    const chunks = chunkHtml(rendered, MAX);
+    expect(chunks.length).toBeGreaterThan(1);
+    // The second chunk picks up inside the code block, so it must reopen
+    // <pre><code class="..."> verbatim rather than starting bare.
+    expect(chunks[1]).toMatch(/^<pre><code class="language-with-a-long-name-xyz">/);
+    // And the first chunk closed what it left open.
+    expect(chunks[0]?.endsWith('</code></pre>')).toBe(true);
+  });
+
+  it('leaves short HTML alone', () => {
+    const rendered = markdownToTelegramHtml('**bold** and `code`');
+    expect(chunkHtml(rendered, MAX)).toEqual([rendered]);
+  });
+
+  it('matches plain chunkText slicing when there are no tags to protect', () => {
+    const plain = 'y'.repeat(MAX + 50);
+    expect(chunkHtml(plain, MAX)).toEqual([plain.slice(0, MAX), plain.slice(MAX)]);
   });
 });
 

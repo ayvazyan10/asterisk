@@ -109,7 +109,7 @@ function stateFor(chatId: string): AgentState {
 
 const manager = createBotManager(loaded);
 
-const { tryHandleBotCommand } = await import('../bots/commands.ts');
+const { tryHandleBotCommand, resolveOutputStyle } = await import('../bots/commands.ts');
 const { runWithSession } = await import('../agent/context.ts');
 
 manager
@@ -166,9 +166,9 @@ manager
       const souls = loadSouls(process.cwd(), session);
       const cfg = loadConfig().config;
       const hooks = cfg.hooks;
-      const outputStyle = await import('../output-styles/styles.ts').then((m) =>
-        m.findOutputStyle(cfg.outputStyle),
-      );
+      // Session-first, same precedence loadSouls already applies above: a
+      // chat's own /style choice (if any) wins over the daemon-wide default.
+      const outputStyle = resolveOutputStyle(session, cfg.outputStyle);
 
       // Silence detector — some servers don't stream tool_call arguments, so a
       // model generating a multi-thousand-line Write payload looks identical
@@ -313,9 +313,16 @@ const scheduler = createScheduler({
     const souls = loadSouls(process.cwd(), session);
     const sCfg = loadConfig().config;
     const hooks = sCfg.hooks;
-    const sStyle = await import('../output-styles/styles.ts').then((m) =>
-      m.findOutputStyle(sCfg.outputStyle),
-    );
+    // Same session-aware resolution as the bot-turn path above, mirroring
+    // how loadSouls is already applied uniformly to both. In practice a
+    // `scheduled:<source>` session never has a style override on disk —
+    // nothing writes one for that id, since /style only ever runs inside a
+    // real chat's `bot:<chatId>` session — so this reduces to the daemon
+    // default for cron/schedule runs today. Left uniform rather than
+    // special-cased so the two dispatch paths can't quietly drift apart,
+    // and so a scheduled run tied to a real chat id would pick up that
+    // chat's own style for free if one is ever wired to it.
+    const sStyle = resolveOutputStyle(session, sCfg.outputStyle);
     const result = await runAgentTurn(provider, sched, prompt, {
       session,
       rules,

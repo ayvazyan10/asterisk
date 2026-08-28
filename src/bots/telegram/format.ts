@@ -66,6 +66,126 @@ export function balanceOpenTags(html: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  Length-bounded splitting for already-rendered, fully-balanced HTML
+// ─────────────────────────────────────────────────────────────────────────
+
+interface TagToken {
+  start: number;
+  end: number;
+  name: string;
+  close: boolean;
+  /** The tag's exact source text — carries any attribute, e.g. the fence's
+   *  `class="language-ts"` — so reopening it reproduces it verbatim. */
+  raw: string;
+}
+
+function findTagTokens(html: string): TagToken[] {
+  const tokens: TagToken[] = [];
+  const re = /<\/?([a-z]+)(?:\s[^>]*)?>/gi;
+  let m: RegExpExecArray | null = re.exec(html);
+  for (; m !== null; m = re.exec(html)) {
+    const name = m[1]?.toLowerCase();
+    if (!name || !TG_HTML_TAGS.includes(name as (typeof TG_HTML_TAGS)[number])) continue;
+    tokens.push({
+      start: m.index,
+      end: m.index + m[0].length,
+      name,
+      close: m[0].startsWith('</'),
+      raw: m[0],
+    });
+  }
+  return tokens;
+}
+
+interface OpenTag {
+  name: string;
+  raw: string;
+}
+
+/** Replays every tag fully inside [from, to) against `base`, returning the
+ *  resulting open-tag stack — what a chunk starting at `from` needs
+ *  reopened, and what a chunk ending at `to` needs closed. */
+function stackAfter(
+  base: readonly OpenTag[],
+  tags: readonly TagToken[],
+  from: number,
+  to: number,
+): OpenTag[] {
+  const next = [...base];
+  for (const t of tags) {
+    if (t.start < from || t.end > to) continue;
+    if (t.close) {
+      const idx = next.map((o) => o.name).lastIndexOf(t.name);
+      if (idx !== -1) next.splice(idx, 1);
+    } else {
+      next.push({ name: t.name, raw: t.raw });
+    }
+  }
+  return next;
+}
+
+function closingTags(stack: readonly OpenTag[]): string {
+  return stack
+    .slice()
+    .reverse()
+    .map((t) => `</${t.name}>`)
+    .join('');
+}
+
+/**
+ * Splits already-rendered, fully-balanced Telegram HTML into chunks no
+ * longer than `max` chars, without ever cutting through a tag.
+ *
+ * A plain `slice(i, i + max)` (the bug this replaced) can land inside a tag
+ * — e.g. cut `<pre><code class="langua` / `ge-ts">…` — which Telegram
+ * rejects outright, and whose plain-text fallback (`stripTags`) then leaves
+ * the broken fragment visible verbatim, since it has no closing `>` for the
+ * regexp to match. Here a candidate boundary that would land inside a tag is
+ * pulled back to just before that tag, and whatever tag is left open at a
+ * chunk's end is closed there and reopened (with its original attributes)
+ * at the next chunk's start, so every chunk is independently valid markup.
+ */
+export function chunkHtml(html: string, max: number): string[] {
+  if (html.length <= max) return [html];
+  const tags = findTagTokens(html);
+  const chunks: string[] = [];
+  let pos = 0;
+  let stack: OpenTag[] = [];
+
+  while (pos < html.length) {
+    const prefix = stack.map((t) => t.raw).join('');
+    let end = Math.min(pos + Math.max(1, max - prefix.length), html.length);
+
+    // Never cut through a tag — back the boundary off to its start (or, if
+    // the tag itself starts at/before `pos`, keep it whole even if that
+    // overflows `max`; a single tag is never worth further splitting).
+    for (let guard = 0; guard < 6; guard++) {
+      const straddling = tags.find((t) => t.start < end && end < t.end);
+      if (!straddling) break;
+      end = straddling.start > pos ? straddling.start : straddling.end;
+      if (straddling.start <= pos) break;
+    }
+
+    // Shrink further if reopening + closing tags would push this chunk over
+    // `max`, then re-check for a straddled tag at the new boundary.
+    for (let guard = 0; guard < 6; guard++) {
+      const total =
+        prefix.length + (end - pos) + closingTags(stackAfter(stack, tags, pos, end)).length;
+      if (total <= max || end >= html.length) break;
+      end = Math.max(pos + 1, end - (total - max));
+      const straddling = tags.find((t) => t.start < end && end < t.end);
+      if (straddling) end = straddling.start > pos ? straddling.start : straddling.end;
+    }
+
+    const nextStack = stackAfter(stack, tags, pos, end);
+    chunks.push(prefix + html.slice(pos, end) + closingTags(nextStack));
+    stack = nextStack;
+    pos = end;
+  }
+  return chunks;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  Tokeniser
 // ─────────────────────────────────────────────────────────────────────────
 

@@ -24,9 +24,6 @@ import { escapeHtml } from './format.ts';
 
 const CALLBACK_PREFIX = 'ap';
 
-/** Telegram caps callback_data at 64 bytes, so ids stay short and local. */
-let nextId = 0;
-
 /** id → the resolver of the prompt() call that is still waiting on it. */
 type Pending = Map<string, (outcome: ApprovalOutcome) => void>;
 
@@ -69,6 +66,21 @@ function questionHtml(req: ApprovalPrompt, seconds: number): string {
 export function createApprovalController(allowedUserIds: Iterable<number>): ApprovalController {
   const allowed = new Set(allowedUserIds);
   const pending: Pending = new Map();
+  // Per-chat, never-reset sequence. Two properties matter:
+  //   * Scoped to chatId, so two chats can never generate the same `pending`
+  //     key even if both happen to be on their Nth request — a stale button
+  //     from chat A can never be mistaken for a live request in chat B.
+  //   * No modulo, so within one chat the id never wraps back to a value an
+  //     old (possibly still-visible, e.g. its clear-keyboard edit above
+  //     failed) button might carry. A chat would need billions of requests
+  //     before this string grows large enough to threaten Telegram's 64-byte
+  //     callback_data cap, which no real conversation gets near.
+  const seqByChat = new Map<string, number>();
+  const nextId = (chatId: string): string => {
+    const seq = (seqByChat.get(chatId) ?? 0) + 1;
+    seqByChat.set(chatId, seq);
+    return `${chatId}.${seq}`;
+  };
 
   const finish = (id: string, outcome: ApprovalOutcome): void => {
     const settle = pending.get(id);
@@ -113,8 +125,7 @@ export function createApprovalController(allowedUserIds: Iterable<number>): Appr
     },
 
     async prompt(bot: Bot, chatId: string, req: ApprovalPrompt): Promise<ApprovalOutcome> {
-      nextId = (nextId + 1) % 100_000;
-      const id = `${nextId}`;
+      const id = nextId(chatId);
       const seconds = Math.max(1, Math.round(req.timeoutMs / 1000));
 
       let message: { message_id: number };
@@ -154,12 +165,16 @@ export function createApprovalController(allowedUserIds: Iterable<number>): Appr
 
       // Replace the keyboard with the verdict, so a stale question can never be
       // answered later and nothing in the chat implies it is still open.
+      // `reply_markup` must be passed explicitly — omitting it left whatever
+      // Telegram does by default with an absent field on an edit, which in
+      // practice kept the original inline keyboard live and pressable long
+      // after this promise had already resolved.
       try {
         await bot.api.editMessageText(
           chatId,
           message.message_id,
           `${questionHtml(req, seconds)}\n\n<b>${escapeHtml(ANSWER_LABEL[outcome])}</b>`,
-          { parse_mode: 'HTML' },
+          { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } },
         );
       } catch {
         // Cosmetic; the outcome already went back to the policy.

@@ -20,7 +20,7 @@ import {
 } from '../adapter.ts';
 import { BOT_COMMAND_LIST } from '../commands.ts';
 import { createApprovalController } from './approval.ts';
-import { balanceOpenTags, escapeHtml, markdownToTelegramHtml } from './format.ts';
+import { balanceOpenTags, chunkHtml, escapeHtml, markdownToTelegramHtml } from './format.ts';
 import { downloadVoice } from './voice.ts';
 
 const MAX_TELEGRAM_CHARS = 4096;
@@ -262,7 +262,7 @@ async function handleTurn(
   await writer.flush();
   if (out.text) {
     const rendered = parseMode === 'html' ? markdownToTelegramHtml(out.text) : out.text;
-    const chunks = chunkText(rendered, MAX_TELEGRAM_CHARS);
+    const chunks = chunkText(rendered, MAX_TELEGRAM_CHARS, parseMode);
     const head = chunks[0] ?? '(empty)';
     await safeEdit(ctx, chatId, placeholder.message_id, head, parseMode);
     for (let i = 1; i < chunks.length; i++) {
@@ -283,7 +283,7 @@ async function deliverFinal(
 ): Promise<void> {
   if (out.text) {
     const rendered = parseMode === 'html' ? markdownToTelegramHtml(out.text) : out.text;
-    for (const chunk of chunkText(rendered, MAX_TELEGRAM_CHARS)) {
+    for (const chunk of chunkText(rendered, MAX_TELEGRAM_CHARS, parseMode)) {
       await replyText(ctx, chunk, parseMode);
     }
   }
@@ -330,7 +330,11 @@ async function replyText(ctx: Context, text: string, parseMode: TelegramParseMod
   await ctx.reply(text);
 }
 
-function stripTags(html: string): string {
+/** Exported for tests — this is Telegram's own fallback path (see
+ *  `replyText`/`safeEdit` below), so a chunking regression that leaves a
+ *  broken tag fragment behind is verified through the exact function that
+ *  would show it to a real user. */
+export function stripTags(html: string): string {
   return html
     .replace(/<[^>]+>/g, '')
     .replace(/&lt;/g, '<')
@@ -510,8 +514,17 @@ async function sendAttachment(ctx: Context, a: Attachment): Promise<void> {
   }
 }
 
-function chunkText(text: string, max: number): string[] {
+/**
+ * Splits a rendered reply into Telegram-sized pieces. In HTML mode this
+ * defers to `chunkHtml`, which never cuts through a tag — a blind
+ * `slice(i, i + max)` over rendered markup can land inside one (e.g.
+ * `<pre><code class="langua` | `ge-ts">…`), which Telegram rejects and whose
+ * plain-text fallback then leaves the broken fragment visible as literal
+ * text. Plain mode has no tags to protect, so it keeps the direct slice.
+ */
+function chunkText(text: string, max: number, parseMode: TelegramParseMode): string[] {
   if (text.length <= max) return [text || '(empty)'];
+  if (parseMode === 'html') return chunkHtml(text, max);
   const out: string[] = [];
   let i = 0;
   while (i < text.length) {

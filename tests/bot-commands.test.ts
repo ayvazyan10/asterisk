@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { runWithSession } from '../src/agent/context.ts';
 import { type AgentState, createAgentState } from '../src/agent/loop.ts';
-import { BOT_COMMAND_LIST, tryHandleBotCommand } from '../src/bots/commands.ts';
+import { BOT_COMMAND_LIST, resolveOutputStyle, tryHandleBotCommand } from '../src/bots/commands.ts';
 import { loadConfig, saveConfig } from '../src/config/load.ts';
 import { readSessionSoul } from '../src/soul/loader.ts';
 import { isPlanMode, setPlanMode } from '../src/tools/planmode.ts';
@@ -202,20 +202,61 @@ describe('bot commands', () => {
 
   it('/style with no args lists styles + marks the current one', async () => {
     const r = await runWithSession(SESSION, async () => tryHandleBotCommand('/style', ctx(state)));
-    expect(r?.text).toMatch(/Current output style/);
+    expect(r?.text).toMatch(/Current reply style for this chat/);
     expect(r?.text).toMatch(/concise/);
     expect(r?.text).toMatch(/explanatory/);
     expect(r?.text).toMatch(/learning/);
   });
 
-  it('/style <name> persists to config', async () => {
+  it('/style <name> persists per session, not to the shared config', async () => {
     const r = await runWithSession(SESSION, async () =>
       tryHandleBotCommand('/style explanatory', ctx(state)),
     );
-    expect(r?.text).toMatch(/✓ output style set to "explanatory"/);
-    // Re-reading config should show the persisted value.
+    expect(r?.text).toMatch(/✓ reply style set to "explanatory" for this chat only/);
+    // The global config object is untouched — only this chat's own file
+    // under ASTERISK_HOME/bot-styles changed.
     const { loadConfig } = await import('../src/config/load.ts');
-    expect(loadConfig().config.outputStyle).toBe('explanatory');
+    expect(loadConfig().config.outputStyle).not.toBe('explanatory');
+    // And it comes back for this same session on a later /style with no args.
+    const again = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/style', ctx(state)),
+    );
+    expect(again?.text).toMatch(/Current reply style for this chat: explanatory/);
+  });
+
+  it('/style <name> in one chat never leaks into another chat', async () => {
+    // The bug this guards: /style used to write cfg.outputStyle straight
+    // into the shared, loaded config object, so any chat in the allowlist
+    // saw whatever the last chat picked. Two different sessions must stay
+    // independent.
+    const otherSession = { id: 'bot:other-chat', scope: 'unknown' as const };
+    const otherState = createAgentState();
+
+    await runWithSession(SESSION, async () => tryHandleBotCommand('/style concise', ctx(state)));
+
+    const otherView = await runWithSession(otherSession, async () =>
+      tryHandleBotCommand('/style', ctx(otherState)),
+    );
+    expect(otherView?.text).not.toMatch(/Current reply style for this chat: concise/);
+    expect(otherView?.text).toMatch(/using the bot's shared default/);
+
+    // The original chat still sees its own override.
+    const originalView = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/style', ctx(state)),
+    );
+    expect(originalView?.text).toMatch(/Current reply style for this chat: concise/);
+  });
+
+  it('/style clear drops the per-chat override', async () => {
+    await runWithSession(SESSION, async () => tryHandleBotCommand('/style learning', ctx(state)));
+    const cleared = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/style clear', ctx(state)),
+    );
+    expect(cleared?.text).toMatch(/back to the shared default/);
+    const after = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/style', ctx(state)),
+    );
+    expect(after?.text).toMatch(/using the bot's shared default/);
   });
 
   it('/style <bad> rejects with the valid options', async () => {
@@ -225,6 +266,48 @@ describe('bot commands', () => {
     expect(r?.text).toMatch(/unknown style/);
     expect(r?.text).toMatch(/default/);
     expect(r?.text).toMatch(/concise/);
+  });
+
+  it("resolveOutputStyle — the function daemon.ts actually calls — routes a chat's /style choice to that chat only", async () => {
+    // This is the concrete link the earlier isolation tests above stop short
+    // of: daemon.ts does not read cfg.outputStyle directly any more, it
+    // calls resolveOutputStyle(session, cfg.outputStyle) for both the normal
+    // bot-turn path and the scheduled-dispatch path. Prove the resolver
+    // itself sends chat A's choice to chat A's turn and leaves every other
+    // session — including one that never touched /style — on the shared
+    // default, exactly like loadSouls(cwd, session) already does for souls.
+    const globalDefault = loadConfig().config.outputStyle;
+    const chatA = { id: 'bot:111', scope: 'unknown' as const };
+    const chatB = { id: 'bot:222', scope: 'unknown' as const };
+
+    await runWithSession(chatA, async () =>
+      tryHandleBotCommand('/style concise', ctx(createAgentState())),
+    );
+
+    const resolvedForA = resolveOutputStyle(chatA, globalDefault);
+    const resolvedForB = resolveOutputStyle(chatB, globalDefault);
+
+    expect(resolvedForA?.name).toBe('concise');
+    expect(resolvedForB?.name).toBe(globalDefault);
+    expect(resolvedForB?.name).not.toBe('concise');
+  });
+
+  it("resolveOutputStyle never lets an unrelated scheduled run inherit a chat's style", async () => {
+    // Documents the deliberate choice for `scheduled:<source>` sessions: the
+    // resolver is applied uniformly (same call, same precedence) rather than
+    // special-cased, but a scheduled session's id never coincides with a
+    // chat's `bot:<chatId>` id, so it never has an override file of its own
+    // and always falls back to the shared default — until something
+    // deliberately writes one for that specific scheduled id.
+    const globalDefault = loadConfig().config.outputStyle;
+    const chat = { id: 'bot:333', scope: 'unknown' as const };
+    const scheduled = { id: 'scheduled:daily-report', scope: 'scheduled' as const };
+
+    await runWithSession(chat, async () =>
+      tryHandleBotCommand('/style learning', ctx(createAgentState())),
+    );
+
+    expect(resolveOutputStyle(scheduled, globalDefault)?.name).toBe(globalDefault);
   });
 
   it('/start greets with the same help text', async () => {

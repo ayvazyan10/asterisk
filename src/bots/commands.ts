@@ -7,10 +7,20 @@
 // The prefixes are parsed here regardless, so a transport without an
 // autocomplete UI still gets the same commands.
 
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+
+import type { AgentSession } from '../agent/context.ts';
 import { currentSession, currentSessionId } from '../agent/context.ts';
 import type { AgentState } from '../agent/loop.ts';
-import { loadConfig, saveConfig } from '../config/load.ts';
-import { OUTPUT_STYLES, findOutputStyle } from '../output-styles/styles.ts';
+import { loadConfig } from '../config/load.ts';
+import {
+  OUTPUT_STYLES,
+  type OutputStyle,
+  type OutputStyleName,
+  findOutputStyle,
+} from '../output-styles/styles.ts';
 import { clearSessionSoul, loadSouls, readSessionSoul, writeSessionSoul } from '../soul/loader.ts';
 import { isPlanMode, setPlanMode } from '../tools/planmode.ts';
 import { _allTasks, clearTasksForCurrentSession } from '../tools/tasks.ts';
@@ -221,27 +231,107 @@ function handleSoulCommand(rest: string): string {
   return `Unknown subcommand "${verb}". /soul help for the list.`;
 }
 
+// Per-session output-style override — mirrors writeSessionSoul/readSessionSoul
+// in src/soul/loader.ts (same file-naming scheme, same "scope-id, sanitised"
+// key). /soul is per-chat because souls/loader.ts's loadSouls() already
+// composes user → session → project and daemon.ts passes the session
+// through so the per-chat file is actually read. /style used to have no
+// such storage at all: `/style <name>` wrote straight into the shared
+// config object returned by loadConfig(), so one user's "concise" became
+// everyone's "concise" the moment saveConfig() landed, and
+// `cfg.outputStyle = next.name` mutated that loaded object in place besides.
+//
+// `resolveOutputStyle` below is the piece daemon.ts now calls — for both
+// the normal bot-turn path and the scheduled-dispatch path — instead of
+// resolving `cfg.outputStyle` on its own, the same session-first precedence
+// `loadSouls(cwd, session)` already applies for souls.
+function asteriskHome(): string {
+  return process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk');
+}
+
+function sessionStylePath(session: AgentSession): string {
+  const safe = `${session.scope}-${session.id}`.replace(/[^a-zA-Z0-9._@-]/g, '_');
+  return join(asteriskHome(), 'bot-styles', `${safe}.txt`);
+}
+
+export function readSessionOutputStyle(session: AgentSession): OutputStyleName | null {
+  const path = sessionStylePath(session);
+  try {
+    if (!existsSync(path)) return null;
+    return findOutputStyle(readFileSync(path, 'utf8').trim())?.name ?? null;
+  } catch {
+    // Same posture as readSessionSoul: a bad file costs this one override,
+    // not the turn.
+    return null;
+  }
+}
+
+/**
+ * The small, side-effect-light piece daemon.ts is meant to call: resolve
+ * what `runAgentTurn` should actually use for a given session, preferring
+ * that session's own /style choice and falling back to the daemon-wide
+ * default — the same session-first precedence `loadSouls(cwd, session)`
+ * already applies for souls. Kept here (not in daemon.ts) so it can be unit
+ * tested directly without booting the whole daemon process.
+ */
+export function resolveOutputStyle(
+  session: AgentSession,
+  globalDefaultName: string,
+): OutputStyle | undefined {
+  const override = readSessionOutputStyle(session);
+  return findOutputStyle(override ?? globalDefaultName);
+}
+
+function writeSessionOutputStyle(session: AgentSession, name: OutputStyleName): void {
+  const path = sessionStylePath(session);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${name}\n`, { mode: 0o644 });
+}
+
+function clearSessionOutputStyle(session: AgentSession): boolean {
+  const path = sessionStylePath(session);
+  if (!existsSync(path)) return false;
+  unlinkSync(path);
+  return true;
+}
+
 function handleStyleCommand(rest: string): string {
+  const session = currentSession();
   const requested = rest.trim().toLowerCase();
+  const globalDefault = loadConfig().config.outputStyle;
+  const sessionOverride = readSessionOutputStyle(session);
+  const effective = sessionOverride ?? globalDefault;
+
   if (!requested) {
-    const cur = loadConfig().config.outputStyle;
-    const lines = [`Current output style: ${cur}`, '', 'Options:'];
+    const lines = [`Current reply style for this chat: ${effective}`];
+    lines.push(
+      sessionOverride
+        ? '(set for this chat only — /style clear to go back to the shared default.)'
+        : `(using the bot's shared default, "${globalDefault}" — /style <name> sets one just for this chat.)`,
+    );
+    lines.push('', 'Options:');
     for (const s of OUTPUT_STYLES) {
-      const marker = s.name === cur ? '●' : '○';
+      const marker = s.name === effective ? '●' : '○';
       lines.push(`  ${marker} ${s.name.padEnd(11)} ${s.description}`);
     }
-    lines.push('', 'Switch with: /style <name>');
+    lines.push('', 'Switch with: /style <name> · /style clear to unset');
     return lines.join('\n');
   }
+
+  if (requested === 'clear' || requested === 'reset') {
+    const removed = clearSessionOutputStyle(session);
+    return removed
+      ? `✓ style override removed — back to the shared default ("${globalDefault}").`
+      : `(no per-chat style set — already on the shared default, "${globalDefault}".)`;
+  }
+
   const next = findOutputStyle(requested);
   if (!next) {
     const valid = OUTPUT_STYLES.map((s) => s.name).join(' · ');
     return `unknown style "${requested}". Valid: ${valid}`;
   }
-  const cfg = loadConfig().config;
-  cfg.outputStyle = next.name;
-  saveConfig(cfg);
-  return `✓ output style set to "${next.name}" — ${next.description}`;
+  writeSessionOutputStyle(session, next.name);
+  return `✓ reply style set to "${next.name}" for this chat only — ${next.description}`;
 }
 
 function renderSoulDisplay(session: ReturnType<typeof currentSession>): string {
