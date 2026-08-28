@@ -50,7 +50,8 @@ const en = {
   'approval.allowOnceHelp': 'Run it this time only.',
   'approval.allowAlways': 'Allow always',
   'approval.allowAlwaysHelp': 'Remember {rules} and stop asking.',
-  'approval.allowAlwaysHelpGeneric': 'Remember this command and stop asking.',
+  'approval.allowAlwaysHelpGeneric':
+    'Nothing to remember — this command is too specific to match again.',
   'approval.deny': 'Deny',
   'approval.denyHelp': 'Refuse, and tell the agent not to retry.',
 
@@ -101,7 +102,8 @@ const ru: Partial<Record<MessageKey, string>> = {
   'approval.allowOnceHelp': 'Выполнить только сейчас.',
   'approval.allowAlways': 'Разрешать всегда',
   'approval.allowAlwaysHelp': 'Запомнить {rules} и больше не спрашивать.',
-  'approval.allowAlwaysHelpGeneric': 'Запомнить эту команду и больше не спрашивать.',
+  'approval.allowAlwaysHelpGeneric':
+    'Запомнить нечего — команда слишком специфична, чтобы совпасть снова.',
   'approval.deny': 'Отказать',
   'approval.denyHelp': 'Отказать и сообщить агенту, чтобы не повторял.',
 

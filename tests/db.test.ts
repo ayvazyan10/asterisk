@@ -162,6 +162,61 @@ describe('migrations', () => {
     db.close();
   });
 
+  it('mops up leftover ollama entries migration 9 could not fully remove (two occurrences)', () => {
+    const db = openDriver(':memory:');
+    migrate(db);
+    // Rewind only migration 10 — this simulates an install that already has
+    // migration 9 applied (from an earlier upgrade) and is now upgrading
+    // onto a build that carries the fix for what 9 left behind.
+    db.run('DELETE FROM schema_migrations WHERE version = 10');
+
+    // What migration 9's `LIMIT 1` leaves behind: it removes exactly one
+    // occurrence per run and runs once, so a fallback list that held
+    // 'ollama' twice came out of it still holding one.
+    setSetting(db, 'providerFallback', ['ollama', 'anthropic', 'ollama']);
+
+    expect(migrate(db)).toBe(1);
+    expect(getSetting(db, 'providerFallback')).toEqual(['anthropic']);
+    // The whole point of this migration: readConfig(), called from every
+    // entrypoint, no longer throws on the leftover value.
+    expect(readConfig(db).providerFallback).toEqual(['anthropic']);
+    db.close();
+  });
+
+  it('mops up leftover ollama entries migration 9 could not fully remove (three occurrences)', () => {
+    const db = openDriver(':memory:');
+    migrate(db);
+    db.run('DELETE FROM schema_migrations WHERE version = 10');
+    setSetting(db, 'providerFallback', ['ollama', 'ollama', 'anthropic', 'ollama']);
+
+    expect(migrate(db)).toBe(1);
+    expect(getSetting(db, 'providerFallback')).toEqual(['anthropic']);
+    expect(readConfig(db).providerFallback).toEqual(['anthropic']);
+    db.close();
+  });
+
+  it('leaves an already-clean providerFallback alone', () => {
+    const db = openDriver(':memory:');
+    migrate(db);
+    db.run('DELETE FROM schema_migrations WHERE version = 10');
+    setSetting(db, 'providerFallback', ['anthropic']);
+
+    expect(migrate(db)).toBe(1);
+    expect(getSetting(db, 'providerFallback')).toEqual(['anthropic']);
+    db.close();
+  });
+
+  it('is harmless on an already-migrated database', () => {
+    const db = openDriver(':memory:');
+    expect(migrate(db)).toBe(latestVersion());
+    setSetting(db, 'providerFallback', ['anthropic']);
+    // Migration 10 is already recorded as applied, so a second migrate()
+    // finds nothing pending and does not re-touch the row.
+    expect(migrate(db)).toBe(0);
+    expect(getSetting(db, 'providerFallback')).toEqual(['anthropic']);
+    db.close();
+  });
+
   it('reads a config despite settings the schema no longer declares', () => {
     // Belt and braces for the upgrade path: even if a stale row outlives the
     // migration, ConfigSchema strips unknown keys rather than failing to parse.

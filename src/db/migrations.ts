@@ -335,6 +335,13 @@ export const MIGRATIONS: readonly Migration[] = [
     optionalSql: [
       // providerFallback is a JSON array; drop 'ollama' from it wherever it
       // appears without disturbing the rest of the list.
+      //
+      // BUG (fixed by migration 10, not here — see its header): the `LIMIT 1`
+      // below removes exactly one occurrence per run, and this statement runs
+      // once. A list holding 'ollama' more than once — or where it was
+      // reached only after several `json_each` rows unrelated to it — comes
+      // out of this migration still containing 'ollama'. This entry is left
+      // exactly as it shipped; migrations are never rewritten once applied.
       `UPDATE settings
          SET value = json_remove(value, '$[' || (
                SELECT key FROM json_each(settings.value) WHERE value = 'ollama' LIMIT 1
@@ -343,6 +350,48 @@ export const MIGRATIONS: readonly Migration[] = [
        WHERE key = 'providerFallback'
          AND EXISTS (SELECT 1 FROM json_each(settings.value) WHERE value = 'ollama')`,
     ],
+  },
+  {
+    version: 10,
+    name: 'drop-ollama-fallback-remnants',
+    sql: `
+      -- Mops up what migration 9's providerFallback cleanup could leave
+      -- behind. That statement removed at most one 'ollama' entry (a
+      -- \`LIMIT 1\` index lookup, applied once), so an install whose fallback
+      -- list held 'ollama' more than once was left with one or more
+      -- remaining after upgrading through it. ConfigSchema validates
+      -- providerFallback against PROVIDER_KINDS, which has not included
+      -- 'ollama' since 0.4.2, so readConfig() — called from every
+      -- entrypoint — throws on that leftover value and the install can never
+      -- start. Nothing downstream can repair this itself: writeConfig()
+      -- requires a successful readConfig() first.
+      --
+      -- Rebuilt from scratch via json_each/json_group_array rather than
+      -- repeating the index-and-remove dance, so every matching entry clears
+      -- in one pass regardless of how many there are — unlike migration 9,
+      -- this does not need to run more than once per row. Order and
+      -- duplicates of every other entry are preserved. COALESCE covers the
+      -- all-'ollama' case: json_group_array over zero rows returns NULL, and
+      -- writing NULL into a column readConfig() expects to json_each over
+      -- would trade one failure to start for another.
+      --
+      -- Mandatory rather than optional (unlike migration 9's version of this
+      -- same statement): a run that silently no-ops here would still get
+      -- recorded as applied, and — the whole reason this migration exists —
+      -- there is no later chance to retry. json_each/json_group_array
+      -- (json1) is a compile-time option like FTS5 in principle, but unlike
+      -- FTS5 it ships enabled in bun:sqlite and node:sqlite alike, which are
+      -- the only two drivers this codebase runs on (src/db/driver.ts).
+      UPDATE settings
+         SET value = (
+               SELECT COALESCE(json_group_array(je.value), '[]')
+               FROM json_each(settings.value) AS je
+               WHERE je.value <> 'ollama'
+             ),
+             updated_at = unixepoch() * 1000
+       WHERE key = 'providerFallback'
+         AND EXISTS (SELECT 1 FROM json_each(settings.value) WHERE value = 'ollama');
+    `,
   },
 ];
 

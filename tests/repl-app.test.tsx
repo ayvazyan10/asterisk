@@ -150,7 +150,11 @@ describe('approval prompt', () => {
       approvalOpts,
     );
     await waitFor(h, (f) => f.includes('Approve this command?'), 'approval prompt');
-    expect(h.lastFrame()).toContain('Remember this command');
+    // Honest about what "Allow always" would actually do here: suggestRules
+    // returns nothing to remember for a command this specific, so the copy
+    // must not promise it will stop asking next time.
+    expect(h.lastFrame()).toContain('Nothing to remember');
+    expect(h.lastFrame()).not.toContain('Remember this command');
     await press(h, KEY.enter);
     await pending;
   });
@@ -498,5 +502,59 @@ describe('input handling', () => {
 
     release?.();
     await waitUntil(() => state.history.length > 0, 'turn to finish');
+  });
+
+  it('drains the rest of the queue after a queued slash command', async () => {
+    // A slash command runs through runSlashCommand, which never touches
+    // `busy` — there is no model turn to be busy about. The drain effect
+    // used to pull one queued item per busy→idle transition and rely on the
+    // dispatched item itself producing the next transition; a slash command
+    // produces none, so anything queued behind one was stranded until some
+    // unrelated later turn happened to flip `busy` again. Each successful
+    // chat turn below appends exactly one user + one assistant message to
+    // state.history, so reaching 6 entries is the proof that "third" — the
+    // one queued behind the slash command — actually ran, not just that it
+    // was queued (the queued notice for it would contain the word "third"
+    // regardless).
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const slow: Provider = {
+      name: 'slow',
+      async send() {
+        await gate;
+        return { content: [{ type: 'text', text: 'done' }], stopReason: 'end_turn' };
+      },
+    };
+    const h = mount(slow);
+    await flush();
+    h.write('first');
+    await flush();
+    await press(h, KEY.enter);
+    await waitFor(h, (f) => f.includes('agent is working'), 'busy state');
+
+    h.write('second');
+    await flush();
+    await press(h, KEY.enter);
+    await waitFor(h, (f) => f.includes('queued: "second"'), 'second queued');
+
+    h.write('/help');
+    await flush();
+    await press(h, KEY.enter);
+    await waitFor(h, (f) => f.includes('queued: "/help"'), 'slash command queued');
+
+    h.write('third');
+    await flush();
+    await press(h, KEY.enter);
+    await waitFor(h, (f) => f.includes('queued: "third"'), 'third queued');
+    expect(h.lastFrame()).toContain('3 queued');
+
+    // The gate is shared across every call to `slow.send`, so once it is
+    // released here, every queued chat turn resolves as soon as it starts —
+    // the test just needs the drain loop to actually reach each of them.
+    release?.();
+    await waitUntil(() => state.history.length >= 6, 'every queued turn to finish');
+    expect(state.history.length).toBe(6);
   });
 });

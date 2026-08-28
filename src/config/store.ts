@@ -167,6 +167,59 @@ function parseEnvFile(text: string): Array<[string, string]> {
 export interface MigrationReport {
   configImported: boolean;
   secretsImported: number;
+  /**
+   * Set when a legacy config.json existed but could not be imported (bad
+   * JSON, or JSON that fails ConfigSchema). Holds the reason. The file is
+   * quarantined and defaults are seeded instead of leaving the import
+   * unresolved — see `quarantineBrokenConfig` for why.
+   */
+  configBroken?: string;
+}
+
+/**
+ * Parses a legacy config.json, without touching the filesystem or the
+ * database. Split out so the broken-input paths (bad JSON, schema failure)
+ * are each one return, not a throw — a throw here used to propagate out of
+ * `importLegacyFiles` before defaults were ever seeded, which is what made
+ * the failure permanent (see that function's header).
+ */
+function parseLegacyConfig(
+  configFile: string,
+): { ok: true; config: AsteriskConfig } | { ok: false; reason: string } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(configFile, 'utf8'));
+  } catch (e) {
+    return { ok: false, reason: `config.json is not valid JSON: ${(e as Error).message}` };
+  }
+  const parsed = ConfigSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { ok: false, reason: `config.json failed validation: ${parsed.error.message}` };
+  }
+  return { ok: true, config: parsed.data };
+}
+
+/**
+ * Moves an unimportable config.json out of the way and seeds defaults in its
+ * place.
+ *
+ * Before this, a broken legacy file made `importLegacyFiles` throw *before*
+ * `writeConfig` ran, so the settings table stayed empty — which is the
+ * "already migrated" marker every later call checks. The next run (and every
+ * run after that) found the same broken file still sitting at `configFile`
+ * and threw the same way, from the top level of every entrypoint, forever.
+ * Quarantining the file and seeding defaults here makes the settings table
+ * non-empty on the very first run, so nothing retries the parse again.
+ */
+function quarantineBrokenConfig(db: SqliteDriver, configFile: string): void {
+  writeConfig(db, ConfigSchema.parse({}));
+  try {
+    renameSync(configFile, `${configFile}.broken`);
+  } catch {
+    // Best effort — e.g. a `.broken` file from a previous run already sits
+    // there. Defaults are already seeded either way, so a later run won't
+    // reattempt the import regardless of whether the rename stuck.
+  }
 }
 
 /**
@@ -174,6 +227,9 @@ export interface MigrationReport {
  * settings table being non-empty is the marker that migration already
  * happened. The old config.json is renamed rather than deleted so a user can
  * still recover it; secrets.env is left in place as a read-only fallback.
+ *
+ * A config.json that cannot be imported does not stop startup: see
+ * `quarantineBrokenConfig`.
  */
 export function importLegacyFiles(
   db: SqliteDriver,
@@ -185,19 +241,15 @@ export function importLegacyFiles(
   if ((alreadySeeded?.n ?? 0) > 0) return report;
 
   if (existsSync(paths.configFile)) {
-    let raw: unknown;
-    try {
-      raw = JSON.parse(readFileSync(paths.configFile, 'utf8'));
-    } catch (e) {
-      throw new Error(`config.json is not valid JSON: ${(e as Error).message}`);
+    const outcome = parseLegacyConfig(paths.configFile);
+    if (outcome.ok) {
+      writeConfig(db, outcome.config);
+      renameSync(paths.configFile, `${paths.configFile}.migrated`);
+      report.configImported = true;
+    } else {
+      quarantineBrokenConfig(db, paths.configFile);
+      report.configBroken = outcome.reason;
     }
-    const parsed = ConfigSchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new Error(`config.json failed validation: ${parsed.error.message}`);
-    }
-    writeConfig(db, parsed.data);
-    renameSync(paths.configFile, `${paths.configFile}.migrated`);
-    report.configImported = true;
   } else {
     // Seed defaults so the "already seeded" check above is meaningful on the
     // next run even when there was nothing to import.

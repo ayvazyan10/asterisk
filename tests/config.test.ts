@@ -126,9 +126,38 @@ describe('config schema and persistence', () => {
     expect(text).not.toContain('sk-secret');
   });
 
-  it('rejects malformed config.json', async () => {
+  it('quarantines a malformed config.json instead of blocking every future launch', async () => {
     const { writeFile } = await import('node:fs/promises');
+    const { existsSync } = await import('node:fs');
     await writeFile(join(home, 'config.json'), '{ not json');
-    expect(() => loadConfig()).toThrow(/not valid JSON/);
+
+    // First "launch": used to throw straight out of loadConfig() with the
+    // settings table left empty, which made every later launch throw the
+    // same way forever — the settings table being non-empty is the only
+    // marker that migration already ran.
+    const first = loadConfig();
+    expect(first.config.provider).toBe('openai-compatible');
+
+    // The broken file is moved aside rather than retried on the next run...
+    expect(existsSync(join(home, 'config.json'))).toBe(false);
+    expect(await readFile(join(home, 'config.json.broken'), 'utf8')).toBe('{ not json');
+
+    // ...so a second "launch" against the same ASTERISK_HOME does not repeat
+    // the first one's failure — closing and reopening the database is what a
+    // fresh process start actually does.
+    closeDb();
+    expect(() => loadConfig()).not.toThrow();
+    expect(loadConfig().config.provider).toBe('openai-compatible');
+  });
+
+  it('quarantines a config.json that fails schema validation the same way', async () => {
+    const { writeFile } = await import('node:fs/promises');
+    const { existsSync } = await import('node:fs');
+    await writeFile(join(home, 'config.json'), JSON.stringify({ provider: 'ollama' }));
+
+    expect(() => loadConfig()).not.toThrow();
+    expect(existsSync(join(home, 'config.json'))).toBe(false);
+    expect(existsSync(join(home, 'config.json.broken'))).toBe(true);
+    expect(loadConfig().config.provider).toBe('openai-compatible');
   });
 });

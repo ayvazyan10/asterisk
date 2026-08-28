@@ -562,19 +562,43 @@ export function App({ initialProvider, state, mcp }: Props) {
     [append, busy, dispatch, setPrompt],
   );
 
-  // Drain the queue when the agent transitions from busy → idle.
+  // Drains the whole queue once the agent goes idle, rather than pulling one
+  // item per busy→idle transition and waiting for the next transition to
+  // continue. That per-transition design assumed every dispatched item would
+  // itself flip `busy` back to false when it finished — true for a chat
+  // message (runChat sets it), but a slash command routes through
+  // runSlashCommand, which never touches `busy` at all (there is no model
+  // turn to be busy about). Pulling one item on a transition that a slash
+  // command never produces left the rest of the queue stranded in
+  // queueRef.current until some *unrelated* later turn happened to flip
+  // `busy` again. Looping here instead means continuation never depends on
+  // what kind of item was just dispatched. `drainingRef` guards re-entry:
+  // dispatching a chat message sets `busy` true then false again internally,
+  // which re-runs this effect while the loop below is still mid-`await`.
+  const drainingRef = useRef(false);
+  const drainQueue = useCallback(async () => {
+    if (drainingRef.current) return;
+    drainingRef.current = true;
+    try {
+      let next = queueRef.current.shift();
+      while (next !== undefined) {
+        setQueueLen(queueRef.current.length);
+        await dispatch(next);
+        next = queueRef.current.shift();
+      }
+    } finally {
+      drainingRef.current = false;
+    }
+  }, [dispatch]);
+
   useEffect(() => {
     if (busy) return;
     if (queueRef.current.length === 0) return;
-    const next = queueRef.current.shift();
-    setQueueLen(queueRef.current.length);
-    if (next !== undefined) {
-      // queueMicrotask so React's state update for busy=false has flushed.
-      queueMicrotask(() => {
-        void dispatch(next);
-      });
-    }
-  }, [busy, dispatch]);
+    // queueMicrotask so React's state update for busy=false has flushed.
+    queueMicrotask(() => {
+      void drainQueue();
+    });
+  }, [busy, drainQueue]);
 
   return (
     <Box flexDirection="column">
