@@ -49,6 +49,41 @@ export function cancelAskQuestion(id: string): void {
   }
 }
 
+/** A timer that resolves to a cancellation once ASK_TIMEOUT_MS elapses, plus
+ *  the means to cancel it — mirrors bots/telegram/approval.ts's prompt(). */
+function makeTimeoutRace(id: string): { promise: Promise<AskAnswer>; clear: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const promise = new Promise<AskAnswer>((resolve) => {
+    timer = setTimeout(() => resolve({ id, answer: '', cancelled: true }), ASK_TIMEOUT_MS);
+  });
+  return {
+    promise,
+    clear: () => {
+      if (timer) clearTimeout(timer);
+    },
+  };
+}
+
+/** Same shape as makeTimeoutRace, but resolving on abort instead — null when
+ *  there is no signal to listen to. */
+function makeAbortRace(
+  id: string,
+  signal: AbortSignal | undefined,
+): { promise: Promise<AskAnswer> | null; clear: () => void } {
+  if (!signal) return { promise: null, clear: () => {} };
+  let handler: (() => void) | undefined;
+  const promise = new Promise<AskAnswer>((resolve) => {
+    handler = () => resolve({ id, answer: '', cancelled: true });
+    signal.addEventListener('abort', handler, { once: true });
+  });
+  return {
+    promise,
+    clear: () => {
+      if (handler) signal.removeEventListener('abort', handler);
+    },
+  };
+}
+
 export const askUserQuestionTool: Tool = {
   name: 'AskUserQuestion',
   interactive: true,
@@ -93,20 +128,8 @@ export const askUserQuestionTool: Tool = {
     const answerPromise = new Promise<AskAnswer>((resolve) => {
       pending.set(id, resolve);
     });
-    const timeoutPromise = new Promise<AskAnswer>((resolve) =>
-      setTimeout(() => resolve({ id, answer: '', cancelled: true }), ASK_TIMEOUT_MS),
-    );
-    const abortPromise = opts?.signal
-      ? new Promise<AskAnswer>((resolve) => {
-          opts.signal?.addEventListener(
-            'abort',
-            () => resolve({ id, answer: '', cancelled: true }),
-            {
-              once: true,
-            },
-          );
-        })
-      : null;
+    const timeout = makeTimeoutRace(id);
+    const abort = makeAbortRace(id, opts?.signal);
 
     const q: AskQuestion = {
       id,
@@ -117,10 +140,17 @@ export const askUserQuestionTool: Tool = {
     };
     emitter.emit('question', q);
 
-    const result = abortPromise
-      ? await Promise.race([answerPromise, timeoutPromise, abortPromise])
-      : await Promise.race([answerPromise, timeoutPromise]);
+    const candidates = abort.promise
+      ? [answerPromise, timeout.promise, abort.promise]
+      : [answerPromise, timeout.promise];
+    const result = await Promise.race(candidates);
     pending.delete(id);
+    // Whichever race arm won, the other(s) are now moot — clear the timer and
+    // drop the abort listener rather than leaving them live until they fire
+    // on their own. See bots/telegram/approval.ts's prompt() for the same
+    // pattern.
+    timeout.clear();
+    abort.clear();
 
     if (result.cancelled) return ok('(cancelled)');
     return ok(result.answer);

@@ -1,16 +1,47 @@
 // ScheduleWakeup, CronCreate, CronDelete, CronList — persistent scheduling
 // of agent prompts. Stored in JSONL under ~/.asterisk/schedule/. The daemon
 // polls these files every 30s and dispatches due items as agent turns.
+//
+// Reads and writes stay read-all/modify-in-memory/write-all — see the
+// consumers below — but `writeJsonl` now goes through `writeOwnerOnlyAtomic`
+// (temp file + rename in the same directory, same helper the conversation
+// store uses), so a reader never observes a half-written file and a crash
+// mid-write can no longer truncate the last line. It also puts these files
+// under the same 0600 owner-only mode as the rest of ~/.asterisk, which
+// plain `writeFileSync` never did. `readJsonl` additionally tolerates a
+// line that fails to parse: it is skipped rather than thrown, so one
+// corrupted line does not take every other job down with it.
+//
+// What this does NOT fix: the REPL and the daemon are separate processes
+// sharing the same ~/.asterisk, and both can still race a plain
+// read-modify-write — process A reads [], process B reads [], A writes
+// [jobA], B writes [jobB], and jobA is silently gone. Closing that needs a
+// real lock (flock via a sidecar lockfile, or moving scheduling into the
+// existing SQLite store, which already serialises through one connection)
+// and is out of scope for this fix.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { ensureOwnerOnlyDir, writeOwnerOnlyAtomic } from '../utils/fs-safe.ts';
 import { type Tool, err, ok } from './types.ts';
 
-const SCHEDULE_DIR = join(process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'), 'schedule');
-const ONESHOT_FILE = join(SCHEDULE_DIR, 'oneshots.jsonl');
-const CRON_FILE = join(SCHEDULE_DIR, 'cron.jsonl');
+// Computed lazily rather than as a module-level constant: ASTERISK_HOME is
+// read once, at call time, so tests (and anything else that sets it after
+// this module was first imported — it is reachable transitively through the
+// tool registry) get the directory they actually asked for.
+function scheduleDir(): string {
+  return join(process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'), 'schedule');
+}
+
+function oneshotFile(): string {
+  return join(scheduleDir(), 'oneshots.jsonl');
+}
+
+function cronFile(): string {
+  return join(scheduleDir(), 'cron.jsonl');
+}
 
 export interface OneShot {
   id: string;
@@ -28,37 +59,43 @@ export interface CronJob {
   lastRunAt?: number;
 }
 
-function ensureDir(): void {
-  if (!existsSync(SCHEDULE_DIR)) mkdirSync(SCHEDULE_DIR, { recursive: true });
-}
-
 function readJsonl<T>(file: string): T[] {
   if (!existsSync(file)) return [];
-  return readFileSync(file, 'utf8')
-    .split('\n')
-    .filter((l) => l.trim().length > 0)
-    .map((l) => JSON.parse(l) as T);
+  const items: T[] = [];
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      items.push(JSON.parse(trimmed) as T);
+    } catch {
+      // A line a crash truncated mid-write, or (before writes were made
+      // atomic below) one genuinely interleaved by another process — either
+      // way, not grounds to lose every other job in the file.
+    }
+  }
+  return items;
 }
 
 function writeJsonl<T>(file: string, items: T[]): void {
-  ensureDir();
-  writeFileSync(file, items.map((i) => JSON.stringify(i)).join('\n') + (items.length ? '\n' : ''));
+  ensureOwnerOnlyDir(scheduleDir());
+  const body = items.map((i) => JSON.stringify(i)).join('\n') + (items.length ? '\n' : '');
+  writeOwnerOnlyAtomic(file, body);
 }
 
 export function readOneShots(): OneShot[] {
-  return readJsonl<OneShot>(ONESHOT_FILE);
+  return readJsonl<OneShot>(oneshotFile());
 }
 
 export function writeOneShots(items: OneShot[]): void {
-  writeJsonl(ONESHOT_FILE, items);
+  writeJsonl(oneshotFile(), items);
 }
 
 export function readCronJobs(): CronJob[] {
-  return readJsonl<CronJob>(CRON_FILE);
+  return readJsonl<CronJob>(cronFile());
 }
 
 export function writeCronJobs(items: CronJob[]): void {
-  writeJsonl(CRON_FILE, items);
+  writeJsonl(cronFile(), items);
 }
 
 function nextId(prefix: string): string {

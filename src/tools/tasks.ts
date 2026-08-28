@@ -2,6 +2,13 @@
 // session: each Telegram chat and the REPL gets its own
 // task list. Sub-agents inherit their parent's session so the parent's
 // list reflects what the sub-agent created.
+//
+// Session count is capped (MAX_TASK_SESSIONS), the same growth bound
+// entrypoints/daemon.ts applies to resident chat state (MAX_RESIDENT_CHATS):
+// without it a long-lived daemon talking to many distinct chats accumulates
+// one Map entry per session forever. Unlike that daemon-level cache there is
+// nothing to persist on eviction — a task list is disposable scratch state,
+// not a conversation — so eviction here is a plain LRU drop.
 
 import { currentSessionId } from '../agent/context.ts';
 import { type Tool, err, ok } from './types.ts';
@@ -22,15 +29,32 @@ interface SessionTasks {
   nextId: number;
 }
 
+export const MAX_TASK_SESSIONS = 200;
+
 const tasksBySession = new Map<string, SessionTasks>();
+
+function evictOldestSessions(): void {
+  while (tasksBySession.size > MAX_TASK_SESSIONS) {
+    const oldest = tasksBySession.keys().next();
+    if (oldest.done) break;
+    tasksBySession.delete(oldest.value);
+  }
+}
 
 function bucket(): SessionTasks {
   const sid = currentSessionId();
-  let b = tasksBySession.get(sid);
-  if (!b) {
-    b = { byId: new Map(), nextId: 1 };
-    tasksBySession.set(sid, b);
+  const existing = tasksBySession.get(sid);
+  if (existing) {
+    // Refresh recency: Map preserves insertion order, so re-inserting moves
+    // this session to the end and makes the first key the least recently
+    // used — same trick entrypoints/daemon.ts uses for resident chats.
+    tasksBySession.delete(sid);
+    tasksBySession.set(sid, existing);
+    return existing;
   }
+  const b: SessionTasks = { byId: new Map(), nextId: 1 };
+  tasksBySession.set(sid, b);
+  evictOldestSessions();
   return b;
 }
 

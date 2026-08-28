@@ -2,6 +2,23 @@
 // blocking the agent loop. The command runs detached; stdout+stderr are
 // appended to ~/.asterisk/monitors/<id>.log; PID is tracked separately so
 // the agent can revisit later turns to see what's been happening.
+//
+// Session state is capped (MAX_MONITOR_SESSIONS), the same growth bound
+// entrypoints/daemon.ts applies to resident chat state — otherwise a
+// long-lived daemon talking to many distinct sessions accumulates one Map
+// entry per session forever. Unlike tasks.ts (disposable scratch state) a
+// monitor session can hold live PIDs, so eviction here skips any session
+// that still has a running process: forgetting it would orphan that
+// process — nothing could Monitor(action=stop/tail) it again — which is
+// worse than letting the map grow a little past the cap until the process
+// exits or is explicitly stopped.
+//
+// That still leaves the harder case: if the *daemon itself* restarts, every
+// resident Map — capped or not — is gone from memory, and any detached
+// process it had spawned keeps running with nothing tracking it any more.
+// Fixing that needs the PID/command/log path persisted to disk so a fresh
+// process can rediscover and re-adopt them, which is a larger change than
+// this fix covers and is left open.
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, openSync, readFileSync, statSync } from 'node:fs';
@@ -11,7 +28,10 @@ import { join } from 'node:path';
 import { currentSessionId } from '../agent/context.ts';
 import { type Tool, err, ok } from './types.ts';
 
-const MONITORS_DIR = join(process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'), 'monitors');
+// Computed lazily, not as a module-level constant — see schedule.ts for why.
+function monitorsDir(): string {
+  return join(process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'), 'monitors');
+}
 
 interface MonitorRecord {
   id: string;
@@ -21,20 +41,46 @@ interface MonitorRecord {
   logFile: string;
 }
 
+export const MAX_MONITOR_SESSIONS = 200;
+
 const monitorsBySession = new Map<string, Map<string, MonitorRecord>>();
+
+export function _resetMonitorsForTesting(): void {
+  monitorsBySession.clear();
+}
+
+/** Direct size introspection for tests — the cap is on Map growth, which
+ *  isn't otherwise observable through the tool's own actions. */
+export function _sessionCountForTesting(): number {
+  return monitorsBySession.size;
+}
+
+function evictIdleSessions(): void {
+  for (const [sid, recs] of monitorsBySession) {
+    if (monitorsBySession.size <= MAX_MONITOR_SESSIONS) return;
+    const stillRunning = [...recs.values()].some((m) => isAlive(m.pid));
+    if (!stillRunning) monitorsBySession.delete(sid);
+  }
+}
 
 function monitors(): Map<string, MonitorRecord> {
   const sid = currentSessionId();
-  let m = monitorsBySession.get(sid);
-  if (!m) {
-    m = new Map();
-    monitorsBySession.set(sid, m);
+  const existing = monitorsBySession.get(sid);
+  if (existing) {
+    // Refresh recency, same reasoning as tasks.ts / entrypoints/daemon.ts.
+    monitorsBySession.delete(sid);
+    monitorsBySession.set(sid, existing);
+    return existing;
   }
+  const m = new Map<string, MonitorRecord>();
+  monitorsBySession.set(sid, m);
+  evictIdleSessions();
   return m;
 }
 
 function ensureDir() {
-  if (!existsSync(MONITORS_DIR)) mkdirSync(MONITORS_DIR, { recursive: true });
+  const dir = monitorsDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
 function nextId(): string {
@@ -94,7 +140,7 @@ export const monitorTool: Tool = {
       if (!command) return err('command is required for action=start');
       ensureDir();
       const id = nextId();
-      const logFile = join(MONITORS_DIR, `${id}.log`);
+      const logFile = join(monitorsDir(), `${id}.log`);
       const out = openSync(logFile, 'a');
       const err_ = openSync(logFile, 'a');
       const child = spawn('bash', ['-lc', command], {

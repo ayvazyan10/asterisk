@@ -34,7 +34,13 @@ export const readTool: Tool = {
       if (buf.byteLength > MAX_BYTES) {
         return err(`file too large (${buf.byteLength} bytes); refuse to read >1MB`);
       }
-      const lines = buf.toString('utf8').split('\n');
+      // Split on any of \r\n, \r or \n rather than \n alone: a CRLF file
+      // split only on \n leaves a trailing \r on every line — invisible in
+      // a terminal, but a real character in the string handed back to the
+      // model. An agent composing a multi-line Edit oldString from what it
+      // "saw" here naturally leaves that \r out, which used to make Edit's
+      // exact-match search fail against every CRLF file. See edit.ts.
+      const lines = buf.toString('utf8').split(/\r\n|\r|\n/);
       const slice = lines.slice(offset - 1, offset - 1 + limit);
       const numbered = slice
         .map((line, i) => `${String(offset + i).padStart(5, ' ')}\t${line}`)

@@ -2,6 +2,13 @@
 // risky changes can be tried in a parallel worktree without touching the
 // active branch. Active worktree path is tracked module-level for the
 // session; the agent should `cd` into it via Bash.
+//
+// Session state is capped (MAX_WORKTREE_SESSIONS), the same growth bound
+// applied to tasks.ts and monitor.ts — see monitor.ts's header for why an
+// unbounded per-session Map is a real problem on a long-lived daemon.
+// Unlike monitor.ts there is no live process tied to an evicted entry here,
+// only a git worktree left on disk with nothing pointing at it any more —
+// `git worktree list` / `git worktree remove` still reach it manually.
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -10,32 +17,60 @@ import { execa } from 'execa';
 import { currentSessionId } from '../agent/context.ts';
 import { type Tool, err, ok } from './types.ts';
 
-interface ActiveWorktree {
+export interface ActiveWorktree {
   path: string;
   branch: string;
   createdAt: number;
 }
 
+export const MAX_WORKTREE_SESSIONS = 200;
+
 const worktreesBySession = new Map<string, ActiveWorktree>();
 
+export function _resetWorktreesForTesting(): void {
+  worktreesBySession.clear();
+}
+
+/** Exercises the same LRU path EnterWorktree uses, without needing a real
+ *  git checkout for every session — see tests/session-growth.test.ts. */
+export function _setActiveForTesting(w: ActiveWorktree | null): void {
+  setActive(w);
+}
+
+function evictOldestSessions(): void {
+  while (worktreesBySession.size > MAX_WORKTREE_SESSIONS) {
+    const oldest = worktreesBySession.keys().next();
+    if (oldest.done) break;
+    worktreesBySession.delete(oldest.value);
+  }
+}
+
 function getActive(): ActiveWorktree | null {
-  return worktreesBySession.get(currentSessionId()) ?? null;
+  const sid = currentSessionId();
+  const w = worktreesBySession.get(sid);
+  if (!w) return null;
+  // Refresh recency, same reasoning as tasks.ts / monitor.ts.
+  worktreesBySession.delete(sid);
+  worktreesBySession.set(sid, w);
+  return w;
 }
 
 function setActive(w: ActiveWorktree | null): void {
   const sid = currentSessionId();
-  if (w) worktreesBySession.set(sid, w);
-  else worktreesBySession.delete(sid);
+  worktreesBySession.delete(sid);
+  if (!w) return;
+  worktreesBySession.set(sid, w);
+  evictOldestSessions();
 }
 
 export function activeWorktree(): ActiveWorktree | null {
   return getActive();
 }
 
-const DEFAULT_ROOT = join(
-  process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'),
-  'worktrees',
-);
+// Computed lazily, not as a module-level constant — see schedule.ts for why.
+function defaultRoot(): string {
+  return join(process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'), 'worktrees');
+}
 
 export const enterWorktreeTool: Tool = {
   name: 'EnterWorktree',
@@ -72,7 +107,7 @@ export const enterWorktreeTool: Tool = {
     const path =
       typeof input['path'] === 'string' && input['path'].trim()
         ? input['path'].trim()
-        : join(DEFAULT_ROOT, branch.replace(/[^a-zA-Z0-9_./-]/g, '_'));
+        : join(defaultRoot(), branch.replace(/[^a-zA-Z0-9_./-]/g, '_'));
     const base =
       typeof input['base'] === 'string' && input['base'].trim() ? input['base'].trim() : 'HEAD';
 

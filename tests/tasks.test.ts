@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { runWithSession } from '../src/agent/context.ts';
 import {
+  MAX_TASK_SESSIONS,
   _resetTasksForTesting,
   taskCreateTool,
   taskGetTool,
@@ -71,5 +73,28 @@ describe('task tools', () => {
   it('unknown id surfaces an error', async () => {
     const r = await taskGetTool.execute({ id: '999' });
     expect(r.isError).toBe(true);
+  });
+
+  it('caps per-session growth: the oldest idle session is evicted, not kept forever', async () => {
+    // Create one session more than the cap allows, each with its own task,
+    // then check the very first session's tasks are gone while a session
+    // created near the end still has its task. On the old, uncapped Map
+    // this never evicts anything, so `first` would still be found.
+    const sessionCount = MAX_TASK_SESSIONS + 1;
+    for (let i = 0; i < sessionCount; i++) {
+      await runWithSession({ id: `sess-${i}`, scope: 'unknown' }, async () => {
+        await taskCreateTool.execute({ title: `task for ${i}` });
+      });
+    }
+
+    const first = await runWithSession({ id: 'sess-0', scope: 'unknown' }, () =>
+      taskListTool.execute({}),
+    );
+    expect(first.output).toBe('(no tasks)');
+
+    const recent = await runWithSession({ id: `sess-${sessionCount - 1}`, scope: 'unknown' }, () =>
+      taskListTool.execute({}),
+    );
+    expect(recent.output).toMatch(new RegExp(`task for ${sessionCount - 1}`));
   });
 });

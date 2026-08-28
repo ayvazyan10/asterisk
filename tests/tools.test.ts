@@ -159,6 +159,92 @@ describe('Read / Write / Edit / Glob', () => {
     expect(await readFile(path, 'utf8')).toBe('b\nb\n');
   });
 
+  it('Edit refuses a non-UTF-8 file and leaves its bytes byte-for-byte untouched', async () => {
+    const path = join(dir, 'binary.dat');
+    // "VERSION=1.0.0\n" + FF FE 00 01 80 81 82 83 99 AA BB + "\n" + "END\n" —
+    // FF/FE alone, and most of the 80-9F range, are not valid UTF-8 lead or
+    // continuation bytes.
+    const before = Buffer.from(
+      '56455253494f4e3d312e302e300a' + 'fffe00018081828399aabb' + '0a454e440a',
+      'hex',
+    );
+    await writeFile(path, before);
+
+    const e = await editTool.execute({
+      path,
+      oldString: 'VERSION=1.0.0',
+      newString: 'VERSION=2.0.0',
+    });
+    expect(e.isError).toBe(true);
+    expect(e.output).toMatch(/not valid UTF-8/);
+
+    const after = await readFile(path);
+    expect(after.length).toBe(before.length);
+    expect(after.equals(before)).toBe(true);
+    expect(after.includes(Buffer.from('efbfbd', 'hex'))).toBe(false); // no U+FFFD leaked in
+  });
+
+  it('Edit still works normally on a valid UTF-8 file (no false positive)', async () => {
+    const path = join(dir, 'unicode.txt');
+    await writeFile(path, 'café — naïve 日本語\n');
+    const e = await editTool.execute({ path, oldString: 'café', newString: 'coffee' });
+    expect(e.isError).toBe(false);
+    expect(await readFile(path, 'utf8')).toBe('coffee — naïve 日本語\n');
+  });
+
+  it('Edit matches a multi-line oldString against a CRLF file and preserves CRLF', async () => {
+    const path = join(dir, 'crlf.txt');
+    await writeFile(path, 'hello world\r\nsecond line\r\n');
+    const e = await editTool.execute({
+      path,
+      oldString: 'hello world\nsecond line',
+      newString: 'hi there\nreplaced line',
+    });
+    expect(e.isError).toBe(false);
+    const after = await readFile(path, 'utf8');
+    expect(after).toBe('hi there\r\nreplaced line\r\n');
+  });
+
+  it('Edit replaceAll matches CRLF pairs too and keeps the file CRLF', async () => {
+    const path = join(dir, 'crlf-all.txt');
+    await writeFile(path, 'x\r\nx\r\n');
+    const e = await editTool.execute({
+      path,
+      oldString: 'x',
+      newString: 'y',
+      replaceAll: true,
+    });
+    expect(e.isError).toBe(false);
+    expect(await readFile(path, 'utf8')).toBe('y\r\ny\r\n');
+  });
+
+  it('Write overwriting a non-UTF-8 file notes the replacement', async () => {
+    const path = join(dir, 'was-binary.dat');
+    await writeFile(path, Buffer.from('fffe0001', 'hex'));
+    const w = await writeTool.execute({ path, content: 'now text' });
+    expect(w.isError).toBe(false);
+    expect(w.output).toMatch(/non-UTF-8/);
+    expect(await readFile(path, 'utf8')).toBe('now text');
+  });
+
+  it('Write overwriting a normal text file adds no binary note', async () => {
+    const path = join(dir, 'plain.txt');
+    await writeFile(path, 'old content');
+    const w = await writeTool.execute({ path, content: 'new content' });
+    expect(w.isError).toBe(false);
+    expect(w.output).not.toMatch(/non-UTF-8/);
+  });
+
+  it('Read normalises CRLF so no returned line carries an invisible trailing \\r', async () => {
+    const path = join(dir, 'crlf-read.txt');
+    await writeFile(path, 'alpha\r\nbeta\r\n');
+    const r = await readTool.execute({ path });
+    expect(r.isError).toBe(false);
+    expect(r.output).not.toContain('\r');
+    expect(r.output).toContain('1\talpha');
+    expect(r.output).toContain('2\tbeta');
+  });
+
   it('Glob finds files', async () => {
     await writeFile(join(dir, 'one.ts'), '');
     await writeFile(join(dir, 'two.ts'), '');
