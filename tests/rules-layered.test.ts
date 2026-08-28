@@ -1,9 +1,13 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { detectProjectLang, loadRules } from '../src/rules/loader.ts';
+import {
+  _resetProjectLangWarningForTesting,
+  detectProjectLang,
+  loadRules,
+} from '../src/rules/loader.ts';
 
 describe('rules — layered + language-aware', () => {
   let userHome: string;
@@ -18,6 +22,7 @@ describe('rules — layered + language-aware', () => {
     prevLang = process.env['ASTERISK_LANG'];
     process.env['ASTERISK_HOME'] = userHome;
     delete process.env['ASTERISK_LANG'];
+    _resetProjectLangWarningForTesting();
   });
 
   afterEach(async () => {
@@ -44,6 +49,38 @@ describe('rules — layered + language-aware', () => {
     process.env['ASTERISK_LANG'] = 'go';
     await writeFile(join(projectRoot, 'package.json'), '{}');
     expect(detectProjectLang(projectRoot)).toBe('golang');
+  });
+
+  it('an unrecognised ASTERISK_LANG (e.g. a locale value) warns and falls back to auto-detection instead of silently returning unknown', async () => {
+    // This is the exact regression: a Russian-speaking user sets
+    // ASTERISK_LANG=ru meaning to pick the interface locale (see
+    // src/i18n/index.ts) and used to silently lose the entire per-language
+    // rules layer, with detectProjectLang short-circuiting straight to
+    // 'unknown' and no explanation anywhere.
+    process.env['ASTERISK_LANG'] = 'ru';
+    await writeFile(join(projectRoot, 'package.json'), '{}');
+    await writeFile(join(projectRoot, 'tsconfig.json'), '{}');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(detectProjectLang(projectRoot)).toBe('typescript');
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]?.[0]).toContain('ASTERISK_LANG');
+      expect(spy.mock.calls[0]?.[0]).toContain('ASTERISK_LOCALE');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('the unrecognised-ASTERISK_LANG warning only fires once per process', async () => {
+    process.env['ASTERISK_LANG'] = 'ru';
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      detectProjectLang(projectRoot);
+      detectProjectLang(projectRoot);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('layered: common + matched-language rules are loaded; mismatched ones skipped', async () => {

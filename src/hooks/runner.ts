@@ -8,6 +8,14 @@
 import { spawn } from 'node:child_process';
 import type { HookConfig, HookEvent } from '../config/schema.ts';
 
+/** Hard cap on a hook's captured stdout/stderr, one per stream. Only the
+ *  timeout used to bound a hook's footprint, not its output volume — a hook
+ *  writing to stdout at high speed for the full timeout window would grow
+ *  the daemon process's own heap without limit, and that is the same
+ *  process holding the Telegram bridge and the scheduler. Same idea as the
+ *  execa `maxBuffer` src/stt/command.ts sets for a transcription command. */
+export const MAX_HOOK_OUTPUT_BYTES = 2 * 1024 * 1024;
+
 export interface HookContext {
   event: HookEvent;
   /** For tool events: the tool's name. */
@@ -120,6 +128,37 @@ function parseDecision(stdout: string, ctx: HookContext): HookDecision | undefin
   return undefined;
 }
 
+/** A byte-capped sink for one stream. Chunks past the cap are dropped rather
+ *  than buffered, and `onOverflow` fires exactly once, the moment the cap is
+ *  first reached — the caller uses it to kill the process instead of
+ *  letting it keep writing into a sink that no longer keeps anything. */
+function createCappedSink(onOverflow: () => void): {
+  push(chunk: Buffer): void;
+  text(): string;
+  isTruncated(): boolean;
+} {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  let truncated = false;
+  const push = (chunk: Buffer): void => {
+    if (truncated) return;
+    const remaining = MAX_HOOK_OUTPUT_BYTES - bytes;
+    if (remaining <= 0) {
+      truncated = true;
+      onOverflow();
+      return;
+    }
+    const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+    chunks.push(slice);
+    bytes += slice.length;
+    if (slice.length < chunk.length) {
+      truncated = true;
+      onOverflow();
+    }
+  };
+  return { push, text: () => Buffer.concat(chunks).toString(), isTruncated: () => truncated };
+}
+
 function runShellHook(
   command: string,
   stdin: string,
@@ -129,8 +168,8 @@ function runShellHook(
   return new Promise((resolve) => {
     const proc = spawn('bash', ['-lc', command], { stdio: ['pipe', 'pipe', 'pipe'] });
     let settled = false;
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
+    const stdoutSink = createCappedSink(() => proc.kill('SIGTERM'));
+    const stderrSink = createCappedSink(() => proc.kill('SIGTERM'));
 
     const finish = (result: { exitCode: number; stdout: string; stderr: string }) => {
       if (settled) return;
@@ -156,16 +195,19 @@ function runShellHook(
       else signal.addEventListener('abort', onAbort, { once: true });
     }
 
-    proc.stdout?.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
-    proc.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    proc.stdout?.on('data', (chunk: Buffer) => stdoutSink.push(chunk));
+    proc.stderr?.on('data', (chunk: Buffer) => stderrSink.push(chunk));
     proc.stdin?.write(stdin);
     proc.stdin?.end();
 
     proc.on('close', (code) => {
+      const truncatedNote = stdoutSink.isTruncated()
+        ? `\n…[hook stdout truncated at ${MAX_HOOK_OUTPUT_BYTES} bytes]`
+        : '';
       finish({
         exitCode: code ?? 1,
-        stdout: Buffer.concat(stdoutChunks).toString(),
-        stderr: Buffer.concat(stderrChunks).toString(),
+        stdout: stdoutSink.text() + truncatedNote,
+        stderr: stderrSink.text(),
       });
     });
     proc.on('error', (err) => {

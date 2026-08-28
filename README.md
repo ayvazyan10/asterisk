@@ -407,6 +407,8 @@ skills override bundled ones with the same name.
 - Same structure under `<repo>/.asterisk/rules/`.
 - Auto-detection from manifest files (`package.json`, `Cargo.toml`,
   `pyproject.toml`, `go.mod`, …). Override via `ASTERISK_LANG=python`.
+  This names the *project's* language, and is separate from
+  `ASTERISK_LOCALE`, which names the language you read.
 
 **Output styles** — pluggable behaviour modifiers spliced into the
 system prompt alongside rules + soul. Switch via `/output-style <name>`
@@ -495,9 +497,16 @@ rather than from configuration, because it is a property of the terminal you
 are sitting at, not of the install:
 
 ```bash
-ASTERISK_LANG=ru asterisk        # explicit, wins over everything
+ASTERISK_LOCALE=ru asterisk      # explicit, wins over everything
 LANG=ru_RU.UTF-8 asterisk        # picked up automatically (LC_ALL first)
 ```
+
+`ASTERISK_LANG=ru` also still selects the locale, for one more release, and
+warns when it does. It was a poor name for two jobs: the rules loader reads
+the same variable to pin the *project's* language (`typescript`, `python`),
+so setting it to `ru` for a Russian interface used to silently switch the
+per-language rule layer off. Use `ASTERISK_LOCALE` for what you read and
+`ASTERISK_LANG` for what the project is written in.
 
 **Only what you read is translated.** The system prompt, tool names, tool
 descriptions and tool results stay English in every locale, and that is a

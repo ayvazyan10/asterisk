@@ -7,7 +7,7 @@
 // looks — a model tuned on English tool descriptions given Russian ones is a
 // different, worse model.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { _resetLocaleForTesting, detectLocale, locale, t } from '../src/i18n/index.ts';
 import { MESSAGES, SUPPORTED_LOCALES, isLocale } from '../src/i18n/messages.ts';
@@ -51,9 +51,48 @@ describe('detectLocale', () => {
     expect(detectLocale({ LANG: 'fr_FR.UTF-8' })).toBe('en');
   });
 
-  it('prefers ASTERISK_LANG over the system locale', () => {
-    // So a user who cannot change the system locale can still choose.
-    expect(detectLocale({ ASTERISK_LANG: 'ru', LANG: 'en_US.UTF-8' })).toBe('ru');
+  it('prefers ASTERISK_LOCALE over everything else', () => {
+    // The dedicated variable — see the ASTERISK_LANG split below.
+    expect(detectLocale({ ASTERISK_LOCALE: 'ru', ASTERISK_LANG: 'en', LANG: 'en_US.UTF-8' })).toBe(
+      'ru',
+    );
+  });
+
+  it('honours legacy ASTERISK_LANG for locale (backward compat) when it names a locale', () => {
+    // So a user who cannot change the system locale can still choose — the
+    // same precedence ASTERISK_LANG always had, now second to
+    // ASTERISK_LOCALE. Reading it here at all is a deprecation grace period:
+    // ASTERISK_LANG is dedicated to the project-language pin for rules
+    // today (src/rules/loader.ts), a wholly different vocabulary.
+    _resetLocaleForTesting();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(detectLocale({ ASTERISK_LANG: 'ru', LANG: 'en_US.UTF-8' })).toBe('ru');
+    } finally {
+      spy.mockRestore();
+      _resetLocaleForTesting();
+    }
+  });
+
+  it('does not let a project-language value in ASTERISK_LANG (e.g. "typescript") leak into the interface locale', () => {
+    // The other half of the split: ASTERISK_LANG=typescript means something
+    // to src/rules/loader.ts, and must never move the interface language.
+    expect(detectLocale({ ASTERISK_LANG: 'typescript', LANG: 'ru_RU.UTF-8' })).toBe('ru');
+    expect(detectLocale({ ASTERISK_LANG: 'typescript' })).toBe('en');
+  });
+
+  it('warns once (not per call) when legacy ASTERISK_LANG is used for locale', () => {
+    _resetLocaleForTesting();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      detectLocale({ ASTERISK_LANG: 'ru' });
+      detectLocale({ ASTERISK_LANG: 'ru' });
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]?.[0]).toContain('ASTERISK_LOCALE');
+    } finally {
+      spy.mockRestore();
+      _resetLocaleForTesting();
+    }
   });
 
   it('follows POSIX precedence between LC_ALL and LANG', () => {

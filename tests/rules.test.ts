@@ -1,9 +1,10 @@
+import { symlinkSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { loadRules, rulesToPromptSection } from '../src/rules/loader.ts';
+import { loadRules, loadRulesWithIssues, rulesToPromptSection } from '../src/rules/loader.ts';
 
 describe('rules loader', () => {
   let userHome: string;
@@ -70,5 +71,34 @@ describe('rules loader', () => {
     await mkdir(join(userHome, '.asterisk', 'rules'), { recursive: true });
     await writeFile(join(userHome, '.asterisk', 'rules', 'empty.md'), '   \n\n');
     expect(loadRules(projectRoot)).toEqual([]);
+  });
+
+  it('a broken symlink in rules/ does not crash loadRules — every other rule still loads', async () => {
+    const dir = join(userHome, '.asterisk', 'rules');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'good.md'), 'GOOD_RULE');
+    // A dangling symlink: readdirSync lists it, but statSync on it throws
+    // ENOENT since fs follows the link to a target that does not exist.
+    // Before the fix this was an unhandled throw out of loadRules() — and
+    // loadRules runs fresh on every turn (repl/App.tsx, entrypoints/daemon.ts,
+    // tools/subagent.ts, mcp/server.ts), so every single message would fail.
+    symlinkSync('/nonexistent/target', join(dir, 'broken.md'));
+
+    expect(() => loadRules(projectRoot)).not.toThrow();
+    const rules = loadRules(projectRoot);
+    expect(rules.some((r) => r.content === 'GOOD_RULE')).toBe(true);
+  });
+
+  it('reports which file was broken via loadRulesWithIssues', async () => {
+    const dir = join(userHome, '.asterisk', 'rules');
+    await mkdir(dir, { recursive: true });
+    const brokenPath = join(dir, 'broken.md');
+    symlinkSync('/nonexistent/target', brokenPath);
+
+    const { rules, issues } = loadRulesWithIssues(projectRoot);
+    expect(rules.some((r) => r.path === brokenPath)).toBe(false);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.path).toBe(brokenPath);
+    expect(issues[0]?.message.length).toBeGreaterThan(0);
   });
 });

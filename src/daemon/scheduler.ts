@@ -30,14 +30,36 @@ const DEFAULT_INTERVAL_MS = 30_000;
 export function createScheduler(opts: SchedulerOptions): Scheduler {
   const interval = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   let timer: NodeJS.Timeout | null = null;
+  // Reentrancy guard. setInterval does not wait for its callback to settle,
+  // so without this a dispatch that outlives one tick interval (routine for
+  // Bash, which the agent loop gives up to 15 minutes) would let a second,
+  // third, … tick start concurrently. Per-minute dedup in shouldFireCron
+  // alone does not cover this: once the wall-clock minute rolls over while
+  // the first dispatch of a "* * * * *" job is still in flight, a fresh tick
+  // sees a *different* minute and would legitimately consider the job due
+  // again, even though its previous firing never returned. Serialising ticks
+  // here caps concurrent dispatches at one, system-wide.
+  let ticking = false;
 
   async function tick(): Promise<void> {
-    const now = new Date();
-    // One-shots
+    if (ticking) return;
+    ticking = true;
     try {
+      await runOneShots();
+      await runCronJobs();
+    } finally {
+      ticking = false;
+    }
+  }
+
+  async function runOneShots(): Promise<void> {
+    try {
+      const now = Date.now();
       const oneShots = readOneShots();
-      const due = oneShots.filter((j) => j.fireAt <= now.getTime());
-      const remaining = oneShots.filter((j) => j.fireAt > now.getTime());
+      const due = oneShots.filter((j) => j.fireAt <= now);
+      const remaining = oneShots.filter((j) => j.fireAt > now);
+      // Persisted before dispatch: a job removed from the pending list can
+      // never be picked up by another reader while its dispatch is running.
       if (due.length > 0) writeOneShots(remaining);
       for (const job of due) {
         opts.log({ type: 'oneshot_fire', id: job.id });
@@ -50,25 +72,31 @@ export function createScheduler(opts: SchedulerOptions): Scheduler {
     } catch (e) {
       opts.log({ type: 'oneshot_poll_error', error: (e as Error).message });
     }
+  }
 
-    // Cron jobs
+  async function runCronJobs(): Promise<void> {
     try {
+      const now = new Date();
       const cronJobs = readCronJobs();
-      let dirty = false;
-      for (const job of cronJobs) {
-        if (!job.enabled) continue;
-        if (cronMatches(job.cron, now) && shouldFireCron(job, now)) {
-          opts.log({ type: 'cron_fire', id: job.id, cron: job.cron });
-          job.lastRunAt = now.getTime();
-          dirty = true;
-          try {
-            await opts.dispatch(job.prompt, `cron:${job.id}`);
-          } catch (e) {
-            opts.log({ type: 'cron_error', id: job.id, error: (e as Error).message });
-          }
+      const due = cronJobs.filter(
+        (job) => job.enabled && cronMatches(job.cron, now) && shouldFireCron(job, now),
+      );
+      // Persisted before dispatch, same as the one-shot branch above: a
+      // dispatch that runs long must not leave a stale lastRunAt on disk for
+      // another reader (or the next tick, absent the reentrancy guard) to
+      // see and re-fire against.
+      if (due.length > 0) {
+        for (const job of due) job.lastRunAt = now.getTime();
+        writeCronJobs(cronJobs);
+      }
+      for (const job of due) {
+        opts.log({ type: 'cron_fire', id: job.id, cron: job.cron });
+        try {
+          await opts.dispatch(job.prompt, `cron:${job.id}`);
+        } catch (e) {
+          opts.log({ type: 'cron_error', id: job.id, error: (e as Error).message });
         }
       }
-      if (dirty) writeCronJobs(cronJobs);
     } catch (e) {
       opts.log({ type: 'cron_poll_error', error: (e as Error).message });
     }

@@ -54,12 +54,22 @@ export function loadSouls(cwd: string = process.cwd(), session?: AgentSession): 
   const out: Soul[] = [];
   for (const c of candidates) {
     if (seenScopes.has(c.scope)) continue;
-    if (!existsSync(c.path)) continue;
-    if (!statSync(c.path).isFile()) continue;
-    const content = readFileSync(c.path, 'utf8').trim();
-    if (!content) continue;
-    out.push({ ...c, content });
-    seenScopes.add(c.scope);
+    try {
+      if (!existsSync(c.path)) continue;
+      if (!statSync(c.path).isFile()) continue;
+      const content = readFileSync(c.path, 'utf8').trim();
+      if (!content) continue;
+      out.push({ ...c, content });
+      seenScopes.add(c.scope);
+    } catch {
+      // existsSync already filters a dangling symlink out before statSync
+      // ever runs, but it cannot catch every failure on a fixed path — a
+      // permission-denied SOUL.md, or one removed between the existsSync
+      // check and this readFileSync. Either way this is the same class of
+      // bug fixed in rules/loader.ts and agents/loader.ts: one bad file must
+      // not take every turn down with it. Skipping just means this scope
+      // contributes no persona, same as if the file were absent.
+    }
   }
   return out;
 }
@@ -81,12 +91,18 @@ export function clearSessionSoul(session: AgentSession): boolean {
   return true;
 }
 
-/** Read the raw per-session soul content (untrimmed), or null if absent. */
+/** Read the raw per-session soul content (untrimmed), or null if absent —
+ *  also on a read failure (dangling symlink, permission denied), same as
+ *  loadSouls above. */
 export function readSessionSoul(session: AgentSession): string | null {
   const path = sessionSoulPath(session);
-  if (!existsSync(path)) return null;
-  if (!statSync(path).isFile()) return null;
-  return readFileSync(path, 'utf8');
+  try {
+    if (!existsSync(path)) return null;
+    if (!statSync(path).isFile()) return null;
+    return readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
 }
 
 export function soulsToPromptSection(souls: readonly Soul[]): string {

@@ -1,3 +1,4 @@
+import { mkdirSync, symlinkSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -153,5 +154,30 @@ describe('soul loader', () => {
     await writeFile(join(userHome, '.asterisk', 'SOUL.md'), 'OP');
     const souls = loadSouls(projectRoot);
     expect(souls.map((s) => s.scope)).toEqual(['user']);
+  });
+
+  it('a broken symlink at a SOUL.md path does not crash loadSouls — other scopes still load', async () => {
+    await mkdir(join(userHome, '.asterisk'), { recursive: true });
+    // A dangling symlink: existsSync already returns false for this (its
+    // target does not exist), so this specific path never even reaches
+    // statSync/readFileSync — verifying that the surrounding try/catch is
+    // defence in depth, not covering the only failure mode.
+    symlinkSync('/nonexistent/target', join(userHome, '.asterisk', 'SOUL.md'));
+    await mkdir(join(projectRoot, '.asterisk'), { recursive: true });
+    await writeFile(join(projectRoot, '.asterisk', 'SOUL.md'), 'PROJECT PERSONA');
+
+    expect(() => loadSouls(projectRoot)).not.toThrow();
+    const souls = loadSouls(projectRoot);
+    expect(souls.map((s) => s.scope)).toEqual(['project']);
+    expect(souls[0]?.content).toBe('PROJECT PERSONA');
+  });
+
+  it('readSessionSoul returns null (not a throw) for a broken symlink', () => {
+    const session = { id: 'bot:9', scope: 'telegram' as const };
+    const path = sessionSoulPath(session);
+    mkdirSync(path.slice(0, path.lastIndexOf('/')), { recursive: true });
+    symlinkSync('/nonexistent/target', path);
+    expect(() => readSessionSoul(session)).not.toThrow();
+    expect(readSessionSoul(session)).toBeNull();
   });
 });

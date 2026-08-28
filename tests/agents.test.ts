@@ -1,9 +1,15 @@
+import { symlinkSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { findAgent, loadAgents, parseAgentMarkdown } from '../src/agents/loader.ts';
+import {
+  findAgent,
+  loadAgents,
+  loadAgentsWithIssues,
+  parseAgentMarkdown,
+} from '../src/agents/loader.ts';
 
 describe('agents loader', () => {
   let userHome: string;
@@ -100,5 +106,37 @@ describe('agents loader', () => {
 
   it('returns unknown lookups as undefined', () => {
     expect(findAgent('does-not-exist', projectRoot)).toBeUndefined();
+  });
+
+  it('a broken symlink in agents/ does not crash loadAgents — every other agent still loads', async () => {
+    await mkdir(join(userHome, 'agents'), { recursive: true });
+    await writeFile(
+      join(userHome, 'agents', 'good.md'),
+      '---\nname: good\ndescription: Fine.\n---\nBody.',
+    );
+    // A dangling symlink: readdirSync lists it, but statSync/readFileSync on
+    // it throw ENOENT, since fs follows the link to a target that does not
+    // exist. This reproduces the reported crash — before the fix, loadAgents
+    // itself threw, which took down describeAgent() (src/tools/subagent.ts)
+    // and with it every asterisk entrypoint.
+    symlinkSync('/nonexistent/target', join(userHome, 'agents', 'broken.md'));
+
+    expect(() => loadAgents(projectRoot)).not.toThrow();
+    const agents = loadAgents(projectRoot);
+    expect(agents.some((a) => a.name === 'good')).toBe(true);
+    // Bundled agents are unaffected too.
+    expect(agents.some((a) => a.name === 'general-purpose')).toBe(true);
+  });
+
+  it('reports which file was broken via loadAgentsWithIssues', async () => {
+    await mkdir(join(userHome, 'agents'), { recursive: true });
+    const brokenPath = join(userHome, 'agents', 'broken.md');
+    symlinkSync('/nonexistent/target', brokenPath);
+
+    const { agents, issues } = loadAgentsWithIssues(projectRoot);
+    expect(agents.some((a) => a.path === brokenPath)).toBe(false);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.path).toBe(brokenPath);
+    expect(issues[0]?.message.length).toBeGreaterThan(0);
   });
 });
