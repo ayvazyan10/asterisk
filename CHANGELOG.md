@@ -70,6 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   between.
 
 ### Fixed
+- **`/doctor` reached for the npm registry to tell you Playwright was
+  missing.** It probed with `npx playwright --version`, which downloads the
+  package when it cannot resolve it — so the check meant to report an absent
+  package was the slowest thing in the command, and on a cold cache it
+  outlived its own five-second timeout and failed CI. It asks the resolver
+  now, the same question the lazy import in the browser tools asks, and
+  answers instantly.
 - **Cron fired the same job again while it was still running.** `lastRunAt`
   was written only after every dispatch had awaited, while the one-shot block
   directly above writes before its loop — that asymmetry was the bug. A job

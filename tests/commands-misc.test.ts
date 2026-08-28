@@ -468,7 +468,10 @@ describe('/doctor', () => {
       for (const bin of ['git', 'rg', 'bun', 'node']) {
         expect(out).toContain(`✗ ${bin.padEnd(12)} not found`);
       }
-      expect(out).toContain('· playwright  not found');
+      // Playwright is not a PATH binary — it is a package, and /doctor asks the
+      // resolver, not the shell. Emptying PATH says nothing about it, and the
+      // old expectation only passed because the probe shelled out to npx.
+      expect(out).toContain('✓ playwright  installed');
     } finally {
       if (path === undefined) delete process.env['PATH'];
       else process.env['PATH'] = path;

@@ -84,12 +84,14 @@ export const doctorCommand: SlashCommand = {
     lines.push(checkBin('bun', 'bun --version'));
     lines.push(checkBin('node', 'node --version'));
 
-    // Playwright
+    // Playwright. Resolved, never executed: `npx playwright --version` reaches
+    // for the registry when the package is absent, which is now the ordinary
+    // case since it became an optional peer — so the probe meant to report a
+    // missing package was the slowest thing in /doctor, and on a cold cache it
+    // outlived its own 5s timeout. This asks the resolver the same question
+    // the lazy import in tools/browser/session.ts asks, and answers instantly.
     try {
-      execSync('npx playwright --version 2>/dev/null || bunx playwright --version 2>/dev/null', {
-        encoding: 'utf8',
-        timeout: 5000,
-      });
+      import.meta.resolve('playwright');
       lines.push('  ✓ playwright  installed');
     } catch {
       lines.push('  · playwright  not found — optional; browser tools are disabled until you run');
