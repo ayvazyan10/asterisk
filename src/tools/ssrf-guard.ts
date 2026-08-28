@@ -70,8 +70,28 @@ function ipv6Blocked(host: string): string | null {
   return null;
 }
 
-function hostnameBlocked(host: string): string | null {
-  const h = host.toLowerCase();
+/**
+ * The host as a resolver would see it: lower-cased, with the DNS root label
+ * removed.
+ *
+ * `localhost.` and `localhost` name the same host — the trailing dot is the
+ * explicit root, every resolver accepts it, and the WHATWG parser keeps it
+ * verbatim. Comparing without stripping it let `http://metadata.google.internal./`
+ * walk straight past a module written to stop exactly that request, since
+ * neither `=== 'metadata.google.internal'` nor `endsWith('.internal')` matched.
+ * More than one trailing dot parses too, hence the `+`.
+ *
+ * Case is already folded by the URL parser for http(s) hosts, and the parser
+ * strips tab/CR/LF from its input and rejects a host containing a space — so
+ * the lower-casing is belt and braces and no whitespace handling is needed
+ * here; `checkOutboundUrl` is only ever fed a parsed `URL`.
+ */
+function canonicalHost(host: string): string {
+  return host.toLowerCase().replace(/\.+$/, '');
+}
+
+/** `host` arrives from `canonicalHost`, so no further folding is done here. */
+function hostnameBlocked(h: string): string | null {
   if (h === 'localhost' || h.endsWith('.localhost')) return 'loopback hostname';
   if (h.endsWith('.local')) return 'mDNS hostname';
   if (h.endsWith('.internal')) return 'internal hostname';
@@ -105,7 +125,10 @@ export function checkOutboundUrl(raw: string): UrlCheck {
 
   if (localFetchAllowed()) return { reason: null };
 
-  const host = url.hostname;
+  // Canonical before the IP test as well: `192.168.1.1.` is normalised to a
+  // dotted quad by the URL parser today, but nothing here should depend on that
+  // — a spelling the parser leaves alone must still reach `ipv4Blocked`.
+  const host = canonicalHost(url.hostname);
   const version = isIP(host.replace(/^\[|\]$/g, ''));
   const blocked =
     version === 4 ? ipv4Blocked(host) : version === 6 ? ipv6Blocked(host) : hostnameBlocked(host);

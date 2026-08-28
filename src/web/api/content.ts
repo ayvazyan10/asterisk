@@ -10,7 +10,6 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -18,6 +17,7 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
+import { resolvesInside } from '../../utils/fs-safe.ts';
 import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
 
 export type ContentKind = 'rules' | 'skills' | 'agents' | 'souls';
@@ -82,20 +82,17 @@ function resolveInside(base: string, relPath: string): string {
   const withinLexically = absolute === base || absolute.startsWith(base + sep);
   if (!withinLexically) throw new HttpError('path escapes its content directory');
 
-  // A symlink inside the tree could still point out of it. Check the deepest
-  // existing ancestor, since the target itself may not exist yet on a write.
-  // If the root does not exist there is nothing to traverse, and climbing
-  // above it would compare the wrong directories.
-  if (existsSync(base)) {
-    const realBase = realpathSync(base);
-    let probe = absolute;
-    while (!existsSync(probe) && probe.length > base.length) probe = dirname(probe);
-    if (existsSync(probe)) {
-      const real = realpathSync(probe);
-      if (real !== realBase && !real.startsWith(realBase + sep)) {
-        throw new HttpError('path escapes its content directory via a symlink');
-      }
-    }
+  // A symlink anywhere on the path could still point out of the tree, and on a
+  // write the target usually does not exist yet — so resolve links the way the
+  // write will, including a final component that is a dangling symlink.
+  //
+  // The previous version climbed to the deepest ancestor `existsSync` admitted
+  // to, and `existsSync` follows links: for `rules/evil.md -> /outside/pwned.md`
+  // with no `/outside/pwned.md` yet it reported false, the climb settled on
+  // `rules/`, the check passed, and `writeFileSync` then created the file
+  // outside the base with the caller's content.
+  if (!resolvesInside(base, absolute)) {
+    throw new HttpError('path escapes its content directory via a symlink');
   }
 
   return absolute;

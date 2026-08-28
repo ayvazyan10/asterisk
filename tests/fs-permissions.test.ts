@@ -5,7 +5,16 @@
 // sidecar kept the process umask (0644 on a default Linux install) while
 // holding a verbatim copy of recent writes — including live bot tokens.
 
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -14,7 +23,12 @@ import { persistOutput } from '../src/agent/output-store.ts';
 import { saveConversation } from '../src/agent/persistence.ts';
 import { openDriver } from '../src/db/driver.ts';
 import { closeDb, getDb } from '../src/db/index.ts';
-import { findExposedFiles, writeOwnerOnlyAtomic } from '../src/utils/fs-safe.ts';
+import {
+  findExposedFiles,
+  resolveWriteTarget,
+  resolvesInside,
+  writeOwnerOnlyAtomic,
+} from '../src/utils/fs-safe.ts';
 
 const EXPOSED_BITS = 0o077;
 
@@ -143,5 +157,81 @@ describe('atomic writes', () => {
     writeOwnerOnlyAtomic(file, '{}');
     expect(findExposedFiles(dir)).toEqual([]);
     expect(readdirSync(dir)).toEqual(['state.json']);
+  });
+});
+
+// Where a write lands, as opposed to what mode it gets. Three call sites share
+// this — the file-tools write policy, /api/content and /api/skills — and each
+// of them had either no symlink check at all or one that missed the case
+// below.
+describe('symlink containment', () => {
+  let base: string;
+  let outside: string;
+
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'asterisk-links-'));
+    outside = mkdtempSync(join(tmpdir(), 'asterisk-outside-'));
+  });
+
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('follows a dangling final component, which existsSync cannot', () => {
+    // The bug this exists for: existsSync goes *through* the link, so for a
+    // target that is not there yet it answers false — and a check that then
+    // falls back to the parent directory approves a write landing in `outside`.
+    symlinkSync(join(outside, 'pwned.md'), join(base, 'evil.md'));
+
+    expect(resolveWriteTarget(join(base, 'evil.md'))).toBe(join(outside, 'pwned.md'));
+    expect(resolvesInside(base, join(base, 'evil.md'))).toBe(false);
+  });
+
+  it('follows a link whose target does exist', () => {
+    writeFileSync(join(outside, 'real.md'), 'x');
+    symlinkSync(join(outside, 'real.md'), join(base, 'link.md'));
+    expect(resolvesInside(base, join(base, 'link.md'))).toBe(false);
+  });
+
+  it('follows a symlinked directory, existing or not', () => {
+    symlinkSync(outside, join(base, 'there'));
+    symlinkSync(join(outside, 'gone'), join(base, 'missing'));
+
+    expect(resolvesInside(base, join(base, 'there', 'a.md'))).toBe(false);
+    expect(resolvesInside(base, join(base, 'missing', 'a.md'))).toBe(false);
+  });
+
+  it('follows a relative link target', () => {
+    symlinkSync('../..', join(base, 'up'));
+    expect(resolvesInside(base, join(base, 'up', 'a.md'))).toBe(false);
+  });
+
+  it('resolves a chain of links', () => {
+    symlinkSync(join(base, 'second'), join(base, 'first'));
+    symlinkSync(join(outside, 'end.md'), join(base, 'second'));
+    expect(resolvesInside(base, join(base, 'first'))).toBe(false);
+  });
+
+  it('survives a symlink loop instead of recursing forever', () => {
+    symlinkSync(join(base, 'b'), join(base, 'a'));
+    symlinkSync(join(base, 'a'), join(base, 'b'));
+    // The answer does not matter as much as returning one at all.
+    expect(typeof resolveWriteTarget(join(base, 'a'))).toBe('string');
+  });
+
+  it('keeps ordinary writes working', () => {
+    // A file that is not there yet, at a depth that is not there either, is
+    // the normal case for a write — it must stay inside.
+    expect(resolvesInside(base, join(base, 'a', 'b', 'c.md'))).toBe(true);
+    expect(resolvesInside(base, base)).toBe(true);
+
+    mkdirSync(join(base, 'real'), { recursive: true });
+    symlinkSync(join(base, 'real'), join(base, 'alias'));
+    expect(resolvesInside(base, join(base, 'alias', 'note.md'))).toBe(true);
+  });
+
+  it('does not treat a sibling sharing a prefix as inside', () => {
+    expect(resolvesInside(base, `${base}-other`)).toBe(false);
   });
 });

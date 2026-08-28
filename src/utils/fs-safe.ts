@@ -12,6 +12,13 @@
 // outright, and refusing to start over file permissions would be worse than
 // continuing. `findExposedFiles` exists so the gap surfaces as a `/doctor`
 // warning instead of as a silent leak.
+//
+// `resolveWriteTarget` / `resolvesInside` answer the other half of "is this
+// write safe": not what mode the file gets, but where it actually lands. Three
+// call sites needed that and each had its own answer — `write-policy.ts` had
+// none at all, `web/api/content.ts` had one that missed dangling links, and
+// `web/api/skills.ts` had none either. One implementation now, here, because
+// `utils/` is the only place both `tools/` and `web/` already reach into.
 
 import {
   chmodSync,
@@ -19,15 +26,95 @@ import {
   mkdirSync,
   openSync,
   readdirSync,
+  readlinkSync,
+  realpathSync,
   renameSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import type { Dirent } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 
 export const OWNER_ONLY_FILE = 0o600;
 export const OWNER_ONLY_DIR = 0o700;
+
+/**
+ * Symlink hops and unresolved parent components we are willing to walk before
+ * giving up. Linux stops at 40 links; a path deeper than this is either a loop
+ * or something the kernel would refuse anyway.
+ */
+const MAX_LINK_DEPTH = 40;
+
+function realpathOrNull(path: string): string | null {
+  try {
+    return realpathSync(path);
+  } catch {
+    return null;
+  }
+}
+
+/** The link target, or null when `path` is not a symlink (or is unreadable). */
+function readlinkOrNull(path: string): string | null {
+  try {
+    return readlinkSync(path);
+  } catch {
+    return null;
+  }
+}
+
+function resolveLinks(absPath: string, depth: number): string {
+  const real = realpathOrNull(absPath);
+  if (real !== null) return real;
+
+  const parent = dirname(absPath);
+  if (parent === absPath || depth >= MAX_LINK_DEPTH) return absPath;
+
+  const leaf = join(resolveLinks(parent, depth + 1), basename(absPath));
+  const target = readlinkOrNull(leaf);
+  if (target === null) return leaf;
+  return resolveLinks(resolve(dirname(leaf), target), depth + 1);
+}
+
+/**
+ * Where a write to `absPath` would actually land, with every symlink on the way
+ * resolved — including a final component that is itself a symlink whose target
+ * does not exist yet.
+ *
+ * `realpathSync` cannot be used alone: it throws for anything that does not
+ * exist, and "the file is not there yet" is the ordinary case for a write. The
+ * tempting fallback — climb to the deepest *existing* ancestor and check that
+ * instead — looks right until the leaf is a dangling symlink, because
+ * `existsSync` follows the link, reports false for a missing target, and the
+ * climb then approves the parent directory while the write lands wherever the
+ * link pointed. `readlink` is what distinguishes the two cases, so that is what
+ * this uses.
+ *
+ * Never throws: an unreadable component resolves lexically, and the caller's
+ * containment check is what decides. It is a *pre-flight* answer — see
+ * `resolvesInside` for what it can and cannot promise.
+ */
+export function resolveWriteTarget(absPath: string): string {
+  return resolveLinks(absPath, 0);
+}
+
+/**
+ * True when a write to `absPath` really lands inside `base`.
+ *
+ * Both sides go through `resolveWriteTarget`, because a base is often reached
+ * through a link itself — `/var` on macOS, a bind-mounted home, a workspace the
+ * user symlinked into place — and comparing a resolved path against an
+ * unresolved root would refuse perfectly ordinary writes.
+ *
+ * This is TOCTOU-bounded, not TOCTOU-free: a path can become a symlink between
+ * this returning true and the write happening. Closing that needs `O_NOFOLLOW`
+ * on the open itself, which Node does not expose through `writeFile`. Call it
+ * as late as possible, immediately before the write.
+ */
+export function resolvesInside(base: string, absPath: string): boolean {
+  const realBase = resolveWriteTarget(base);
+  const real = resolveWriteTarget(absPath);
+  return real === realBase || real.startsWith(realBase + sep);
+}
 
 /** Group- and other-readable bits. Anything set here means a local leak. */
 const EXPOSED_BITS = 0o077;

@@ -11,7 +11,7 @@
 // approval prompt and `Write` costs nothing. Unifying would have deleted a
 // consent step rather than an inconsistency.
 
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -19,9 +19,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { saveConfig } from '../src/config/load.ts';
 import { ConfigSchema } from '../src/config/schema.ts';
 import { closeDb } from '../src/db/index.ts';
+import { editTool } from '../src/tools/edit.ts';
 import { defaultWritablePaths } from '../src/tools/sandbox.ts';
 import { _resetWorkspaceForTesting, workspaceRoot } from '../src/tools/workspace.ts';
 import { checkWritable, isWritablePath, writablePaths } from '../src/tools/write-policy.ts';
+import { writeTool } from '../src/tools/write.ts';
 
 let home: string;
 let workspace: string;
@@ -159,6 +161,65 @@ describe('checkWritable', () => {
     // The escape hatch is in-process only; the sandbox's set is unchanged, so
     // Bash stays confined.
     expect(writablePaths()).not.toContain('/etc');
+  });
+});
+
+// The hole these close: `resolve()` is string arithmetic and `writeFile` is
+// not. A symlink inside the workspace — the kind any cloned repository can
+// bring with it — made "the path starts with the workspace" mean nothing, and
+// Write/Edit run in this process where no sandbox is watching.
+describe('symlinks out of the workspace', () => {
+  it('refuses a write that leaves the workspace through a symlink', async () => {
+    await mkdir(join(home, 'ssh'), { recursive: true });
+    await symlink(join(home, 'ssh'), join(workspace, 'link'));
+
+    const message = checkWritable(join(workspace, 'link', 'authorized_keys'));
+    expect(message).not.toBeNull();
+    // "outside the writable set" alone is baffling advice for a path that
+    // visibly starts with the workspace, so the refusal says what happened.
+    expect(message).toContain('symlink');
+    expect(message).toContain('resolves to');
+  });
+
+  it('refuses a write through a dangling symlink', async () => {
+    // The target does not exist yet, which is what an existsSync-based check
+    // reports as "nothing there" while writeFile happily creates it.
+    await symlink(join(home, 'pwned.md'), join(workspace, 'evil.md'));
+    expect(checkWritable(join(workspace, 'evil.md'))).not.toBeNull();
+  });
+
+  it('refuses a write through a symlinked directory that does not exist yet', async () => {
+    await symlink(join(home, 'nowhere'), join(workspace, 'out'));
+    expect(checkWritable(join(workspace, 'out', 'notes.md'))).not.toBeNull();
+  });
+
+  it('allows a symlink that stays inside the workspace', async () => {
+    await mkdir(join(workspace, 'real'), { recursive: true });
+    await symlink(join(workspace, 'real'), join(workspace, 'alias'));
+    expect(checkWritable(join(workspace, 'alias', 'a.ts'))).toBeNull();
+  });
+
+  it('still allows a file that does not exist yet, at any depth', () => {
+    expect(checkWritable(join(workspace, 'a', 'b', 'c', 'new.ts'))).toBeNull();
+  });
+
+  it('stops Write and Edit themselves, not only the policy function', async () => {
+    await mkdir(join(home, 'ssh'), { recursive: true });
+    await symlink(join(home, 'ssh'), join(workspace, 'link'));
+    const target = join(workspace, 'link', 'authorized_keys');
+
+    const written = await writeTool.execute({ path: target, content: 'ssh-rsa AAAA' });
+    expect(written.isError).toBe(true);
+    await expect(readFile(join(home, 'ssh', 'authorized_keys'), 'utf8')).rejects.toThrow();
+
+    const edited = await editTool.execute({ path: target, oldString: 'a', newString: 'b' });
+    expect(edited.isError).toBe(true);
+  });
+
+  it('leaves an ordinary write inside the workspace working', async () => {
+    const result = await writeTool.execute({ path: join(workspace, 'notes.md'), content: 'hi' });
+    expect(result.isError).toBe(false);
+    expect(await readFile(join(workspace, 'notes.md'), 'utf8')).toBe('hi');
   });
 });
 

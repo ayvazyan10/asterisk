@@ -1,7 +1,7 @@
 // Control-panel API tests. The handler is a pure Request -> Response
 // function, so nothing here binds a port.
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -643,6 +643,56 @@ describe('content API', () => {
 
   it('rejects an unknown kind', async () => {
     expect((await call('/api/content/passwords/x.md')).status).toBe(404);
+  });
+
+  // The containment check used to climb to the deepest ancestor `existsSync`
+  // would admit to, and `existsSync` follows links. For a dangling one it
+  // reported false, the climb settled on the parent directory, and the write
+  // went through — landing outside the content root with the caller's bytes.
+  describe('symlink containment', () => {
+    it('refuses a write through a dangling symlink', async () => {
+      const outside = join(home, 'outside');
+      await mkdir(outside, { recursive: true });
+      await symlink(join(outside, 'pwned.md'), join(home, 'rules', 'evil.md'));
+
+      const { status } = await call('/api/content/rules/evil.md', send('PUT', { content: 'x' }));
+      expect(status).toBe(400);
+      await expect(readFile(join(outside, 'pwned.md'), 'utf8')).rejects.toThrow();
+    });
+
+    it('refuses a write through a symlinked directory', async () => {
+      const outside = join(home, 'outside');
+      await mkdir(outside, { recursive: true });
+      await symlink(outside, join(home, 'rules', 'link'));
+
+      const { status } = await call(
+        '/api/content/rules/link/pwned.md',
+        send('PUT', { content: 'x' }),
+      );
+      expect(status).toBe(400);
+      await expect(readFile(join(outside, 'pwned.md'), 'utf8')).rejects.toThrow();
+    });
+
+    it('refuses a write through a symlinked directory that does not exist yet', async () => {
+      await symlink(join(home, 'nowhere'), join(home, 'rules', 'gone'));
+      const { status } = await call(
+        '/api/content/rules/gone/pwned.md',
+        send('PUT', { content: 'x' }),
+      );
+      expect(status).toBe(400);
+    });
+
+    it('still allows a symlink that stays inside the content root', async () => {
+      await mkdir(join(home, 'rules', 'real'), { recursive: true });
+      await symlink(join(home, 'rules', 'real'), join(home, 'rules', 'alias'));
+
+      const { status } = await call(
+        '/api/content/rules/alias/note.md',
+        send('PUT', { content: 'inside' }),
+      );
+      expect(status).toBe(200);
+      expect(await readFile(join(home, 'rules', 'real', 'note.md'), 'utf8')).toBe('inside');
+    });
   });
 });
 

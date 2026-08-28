@@ -30,10 +30,20 @@
 //     A path check is a check; bubblewrap is a kernel boundary. Code running
 //     in this process can bypass this function by not calling it. What is
 //     shared here is the policy, not the enforcement strength.
+//
+// One thing it emphatically does do, since it did not before: resolve
+// symlinks. `resolve()` is pure string arithmetic and `writeFile` is not, so a
+// link inside the workspace — the kind that arrives with any cloned repository
+// — made "inside the writable set" mean nothing at all. `link -> ~/.ssh` plus
+// a Write to `<workspace>/link/authorized_keys` passed this check and landed in
+// the real `~/.ssh`. The sandbox does not cover that: Write and Edit run in
+// this process, as the note above says. `resolvesInside` is the answer, shared
+// with the panel's content and skills endpoints, which had the same hole.
 
 import { resolve, sep } from 'node:path';
 
 import { loadConfig } from '../config/load.ts';
+import { resolveWriteTarget, resolvesInside } from '../utils/fs-safe.ts';
 import { normaliseWritablePaths } from './sandbox-profiles.ts';
 import { workspaceRoot } from './workspace.ts';
 
@@ -74,7 +84,14 @@ export function writablePaths(scope: 'file-tools' | 'shell' = 'file-tools'): str
   return normaliseWritablePaths([workspaceRoot(), ...extra, ...configuredPaths()]);
 }
 
-/** True when `absPath` sits inside one of the writable roots. */
+/**
+ * True when `absPath` sits inside one of the writable roots, as a string.
+ *
+ * Lexical on purpose — it answers "does this path spell out something inside a
+ * root", which is the question the refusal message needs in order to tell a
+ * path that was never allowed from one that was allowed until a symlink was
+ * followed. `checkWritable` is the function that decides.
+ */
 export function isWritablePath(
   absPath: string,
   roots: readonly string[] = writablePaths(),
@@ -83,20 +100,40 @@ export function isWritablePath(
 }
 
 /**
+ * True when a write to `absPath` lands inside a writable root for real, with
+ * every symlink on the way followed the way `writeFile` will follow it.
+ */
+function landsInsideWritable(absPath: string, roots: readonly string[]): boolean {
+  return roots.some((root) => resolvesInside(root, absPath));
+}
+
+/**
  * Returns an error message when `rawPath` may not be written, or null.
  *
  * The message names the roots, because "refused" without them leaves the agent
- * guessing and the usual next move is to try again somewhere equally wrong.
+ * guessing and the usual next move is to try again somewhere equally wrong. A
+ * path that only escaped via a symlink is called out separately: "outside the
+ * writable set" is baffling advice for a path that visibly starts with the
+ * workspace, and the agent's next move would be to try the same thing again.
+ *
+ * The check is deliberately as late as this module can put it, but the tools
+ * call it before their own `mkdir`/`writeFile`, so a path that becomes a
+ * symlink in between is still not covered. See `resolvesInside`.
  */
 export function checkWritable(rawPath: string): string | null {
   if (inProcessGuardDisabled()) return null;
 
   const abs = resolve(rawPath);
   const roots = writablePaths();
-  if (isWritablePath(abs, roots)) return null;
+  if (landsInsideWritable(abs, roots)) return null;
+
+  const escaped = isWritablePath(abs, roots)
+    ? [`refused: ${abs} resolves to ${resolveWriteTarget(abs)} through a symlink,`, 'which is']
+    : [`refused: ${abs} is`];
 
   return [
-    `refused: ${abs} is outside the writable set.`,
+    ...escaped,
+    'outside the writable set.',
     `Writable: ${roots.join(', ')}.`,
     'Ask the user to re-run from the right directory, add the path to',
     'sandbox.writablePaths, or export ASTERISK_NO_WORKSPACE_GUARD=1 — which',

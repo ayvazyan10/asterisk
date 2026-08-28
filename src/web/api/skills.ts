@@ -23,7 +23,7 @@ import { join } from 'node:path';
 import { BUNDLED_SKILLS } from '../../skills/bundled.ts';
 import { type Skill, loadSkillsWithIssues } from '../../skills/loader.ts';
 import { NAME_PATTERN, SKILL_FILE, validateSkill } from '../../skills/schema.ts';
-import { ensureOwnerOnlyDir, writeOwnerOnly } from '../../utils/fs-safe.ts';
+import { ensureOwnerOnlyDir, resolvesInside, writeOwnerOnly } from '../../utils/fs-safe.ts';
 import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
 
 function asteriskHome(): string {
@@ -35,9 +35,10 @@ function userSkillsRoot(): string {
 }
 
 /**
- * The directory a named user skill lives in. The name pattern is the whole
- * defence here: it admits one token of letters, digits, '.', '_' and '-', so
- * nothing that reaches join() can contain a separator or start with a dot.
+ * The directory a named user skill lives in. The name pattern bars a separator
+ * or a leading dot from anything that reaches join(), so the *spelling* of the
+ * path is safe — but see `skillFileToWrite`, because the spelling was never the
+ * whole question.
  */
 function userSkillDir(name: string): string {
   if (!NAME_PATTERN.test(name) || name.length > 64) {
@@ -46,6 +47,29 @@ function userSkillDir(name: string): string {
     );
   }
   return join(userSkillsRoot(), name);
+}
+
+/**
+ * The SKILL.md path `putSkill` may write, refused when it lands outside the
+ * user skills root.
+ *
+ * NAME_PATTERN says what the caller may ask for; it says nothing about what is
+ * already on disk. If `<home>/skills/<name>` is a symlink to somewhere else —
+ * or `<name>/SKILL.md` is — then `mkdir` and `writeFile` both follow it, and
+ * the panel writes an attacker-chosen file into an attacker-chosen directory.
+ * Checking the file rather than the directory covers both links in one go,
+ * since resolution walks the whole path.
+ *
+ * `deleteSkill` deliberately does not go through this: `rmSync` on a symlinked
+ * directory removes the link and not the target, so refusing there would only
+ * strand a bad link the user is trying to get rid of.
+ */
+function skillFileToWrite(name: string, dir: string): string {
+  const file = join(dir, SKILL_FILE);
+  if (!resolvesInside(userSkillsRoot(), file)) {
+    throw new HttpError(`"${name}" resolves outside the skills directory through a symlink`);
+  }
+  return file;
 }
 
 function summarise(skill: Skill): Omit<Skill, 'prompt'> & { editable: boolean } {
@@ -119,8 +143,11 @@ export const putSkill: Handler = async ({ db, params, req }) => {
   }
 
   const content = `---\nname: ${name}\ndescription: ${description.trim()}\n---\n\n${prompt.trim()}\n`;
+  // Last thing before the write, so the window a link could open in is as
+  // small as this module can make it. See `resolvesInside` for what remains.
+  const file = skillFileToWrite(name, dir);
   ensureOwnerOnlyDir(dir);
-  writeOwnerOnly(join(dir, SKILL_FILE), content);
+  writeOwnerOnly(file, content);
   audit(db, 'skill.write', name, { bytes: content.length });
 
   return json({ ok: true, name, bytes: content.length });

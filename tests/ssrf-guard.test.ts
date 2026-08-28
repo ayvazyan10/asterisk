@@ -36,12 +36,33 @@ describe('checkOutboundUrl', () => {
     expect(blocked('http://[fd00:ec2::254]/latest/meta-data/')).toBe(true);
   });
 
-  it('blocks loopback in every spelling', () => {
+  it('blocks loopback in every spelling, including the DNS root dot', () => {
+    // The name claimed completeness it did not have: `localhost.` — the fully
+    // qualified spelling, which the WHATWG parser keeps verbatim and every
+    // resolver answers — went straight through.
     expect(blocked('http://127.0.0.1:4321/api/secrets')).toBe(true);
     expect(blocked('http://127.1.2.3/')).toBe(true);
     expect(blocked('http://localhost:4321/api/hooks')).toBe(true);
     expect(blocked('http://[::1]:4321/')).toBe(true);
     expect(blocked('http://[::ffff:127.0.0.1]/')).toBe(true);
+    expect(blocked('http://localhost./')).toBe(true);
+    expect(blocked('http://LOCALHOST./')).toBe(true);
+    expect(blocked('http://localhost.:4321/api/hooks')).toBe(true);
+  });
+
+  it('ignores a trailing dot on every kind of blocked name', () => {
+    // `metadata.google.internal` resolves to 169.254.169.254 on GCP, so this
+    // is the exact target the module exists for — reachable with one keystroke
+    // while the check compared strings the resolver does not distinguish.
+    expect(blocked('http://metadata.google.internal./')).toBe(true);
+    expect(blocked('http://metadata./')).toBe(true);
+    expect(blocked('http://db.internal./')).toBe(true);
+    expect(blocked('http://printer.local./')).toBe(true);
+    expect(blocked('http://app.localhost./')).toBe(true);
+    // More than one root label parses too.
+    expect(blocked('http://localhost../')).toBe(true);
+    // A public name with the same spelling stays reachable.
+    expect(blocked('http://example.com./')).toBe(false);
   });
 
   it('blocks private and link-local ranges', () => {

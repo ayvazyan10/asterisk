@@ -4,7 +4,7 @@
 // tests/web.test.ts does — the routing is covered there, and what matters here
 // is the boundary between a request body and a directory on disk.
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -140,6 +140,46 @@ describe('PUT /api/skills/:name', () => {
   it('requires both a description and a prompt', async () => {
     await expect(putSkill(ctx(['x'], { prompt: 'body' }))).rejects.toThrow(/description/);
     await expect(putSkill(ctx(['x'], { description: 'd' }))).rejects.toThrow(/prompt/);
+  });
+
+  // The name pattern says what the caller may ask for. It says nothing about
+  // what is already on disk, and both ensureOwnerOnlyDir and writeOwnerOnly
+  // follow links — so a pre-placed `skills/<name>` symlink put the panel's
+  // write wherever it pointed.
+  it('refuses a skill directory that is a symlink out of the skills root', async () => {
+    const outside = join(home, 'outside');
+    mkdirSync(outside, { recursive: true });
+    mkdirSync(join(home, 'skills'), { recursive: true });
+    symlinkSync(outside, join(home, 'skills', 'evil'));
+
+    await expect(
+      putSkill(ctx(['evil'], { description: 'Escapes.', prompt: 'body' })),
+    ).rejects.toThrow(/symlink/);
+    expect(existsSync(join(outside, 'SKILL.md'))).toBe(false);
+  });
+
+  it('refuses one whose symlinked directory does not exist yet', async () => {
+    // mkdir -p follows a dangling link and creates the target, so "it is not
+    // there" is not a reason to allow the write.
+    mkdirSync(join(home, 'skills'), { recursive: true });
+    symlinkSync(join(home, 'nowhere'), join(home, 'skills', 'evil'));
+
+    await expect(
+      putSkill(ctx(['evil'], { description: 'Escapes.', prompt: 'body' })),
+    ).rejects.toThrow(/symlink/);
+    expect(existsSync(join(home, 'nowhere'))).toBe(false);
+  });
+
+  it('refuses one whose SKILL.md is itself a symlink out of the root', async () => {
+    const outside = join(home, 'outside');
+    mkdirSync(outside, { recursive: true });
+    mkdirSync(join(home, 'skills', 'sneaky'), { recursive: true });
+    symlinkSync(join(outside, 'pwned.md'), join(home, 'skills', 'sneaky', 'SKILL.md'));
+
+    await expect(
+      putSkill(ctx(['sneaky'], { description: 'Escapes.', prompt: 'body' })),
+    ).rejects.toThrow(/symlink/);
+    expect(existsSync(join(outside, 'pwned.md'))).toBe(false);
   });
 });
 
