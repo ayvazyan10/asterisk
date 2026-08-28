@@ -183,6 +183,63 @@ describe('telegram approval prompts', () => {
     await expect(answer).resolves.toBe('deny');
   });
 
+  it('denies only the asking chat’s prompts when that chat says /stop', async () => {
+    // /stop is scoped to the sender's own chat. Aborting the turn frees the
+    // tool side at once, but this question is a separate object and would keep
+    // live buttons under it until its own timer expired minutes later.
+    const f = fakeBot();
+    const approvals = createApprovalController([1]);
+    approvals.register(f.bot);
+
+    const mine = approvals.prompt(f.bot, '11', REQUEST);
+    const theirs = approvals.prompt(f.bot, '22', REQUEST);
+    await vi.waitFor(() => expect(f.sent).toHaveLength(2));
+
+    expect(approvals.cancelChat('11')).toBe(1);
+    await expect(mine).resolves.toBe('deny');
+
+    // The other chat is untouched — one chat may only stop itself.
+    let settled = false;
+    void theirs.then(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(settled).toBe(false);
+
+    // And the withdrawn question is rewritten with its verdict, so nothing in
+    // the chat stays pressable.
+    const verdict = f.edits.at(-1);
+    expect(verdict?.chatId).toBe('11');
+    expect(verdict?.text).toContain('denied');
+    expect(verdict?.replyMarkup).toEqual({ inline_keyboard: [] });
+
+    approvals.cancelAll();
+    await theirs;
+  });
+
+  it('reports nothing to withdraw when the chat has no open prompt', () => {
+    const f = fakeBot();
+    const approvals = createApprovalController([1]);
+    approvals.register(f.bot);
+    expect(approvals.cancelChat('11')).toBe(0);
+  });
+
+  it('does not let one chat withdraw another whose id it prefixes', async () => {
+    // Ids are `${chatId}.${seq}`, so chat "1" must not claim chat "12"'s
+    // pending requests — the dot is what keeps that true.
+    const f = fakeBot();
+    const approvals = createApprovalController([1]);
+    approvals.register(f.bot);
+
+    const other = approvals.prompt(f.bot, '12', REQUEST);
+    await vi.waitFor(() => expect(f.sent).toHaveLength(1));
+
+    expect(approvals.cancelChat('1')).toBe(0);
+
+    approvals.cancelAll();
+    await expect(other).resolves.toBe('deny');
+  });
+
   it('never repeats an id in one chat, even past the old 100,000-request wraparound point', async () => {
     // The id used to be `nextId = (nextId + 1) % 100_000`, a single counter
     // shared by every chat. Past 100,000 outstanding requests in one chat it

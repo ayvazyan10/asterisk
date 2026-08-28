@@ -40,6 +40,11 @@ export const BOT_COMMAND_LIST: BotCommandSpec[] = [
   { command: 'clear', description: 'Forget our conversation history' },
   { command: 'reset', description: 'Clear history + tasks + plan mode + worktree' },
   { command: 'tasks', description: 'List your tasks' },
+  // Handled by the daemon, not by tryHandleBotCommand below — see
+  // src/bots/interrupt.ts for why it has to be intercepted before the
+  // per-chat queue this function already runs inside. It is listed here so
+  // Telegram still offers it in autocomplete.
+  { command: 'stop', description: 'Stop what I am doing right now' },
   { command: 'plan', description: 'Toggle plan mode (read-only research mode)' },
   { command: 'soul', description: 'Show / set / clear your personal persona' },
   {
@@ -56,21 +61,30 @@ Commands:
 /clear   — forget our conversation
 /reset   — clear everything (history, tasks, plan mode)
 /tasks   — list your tasks
+/stop    — stop the turn I'm running for you and drop anything queued
 /plan    — toggle Plan Mode (read-only research mode)
 /soul    — show / set / clear your personal persona (try /soul help)
 
 Otherwise just type what you want me to do.`;
 
-interface CommandContext {
-  state: AgentState;
-  providerName: string;
+/** A bot command as the transport delivered it. */
+export interface ParsedBotCommand {
+  /** The command word, lowercased, with any "@botname" suffix removed. */
+  cmd: string;
+  /** Everything after the first whitespace, verbatim. */
+  rest: string;
 }
 
-/** Try to handle a message as a bot command. Returns an OutgoingMessage if
- *  the command was recognised; null if the message should fall through to
- *  the agent. Must be called inside the chat's session ALS scope so it can
- *  read per-session state. */
-export function tryHandleBotCommand(text: string, ctx: CommandContext): OutgoingMessage | null {
+/**
+ * Splits "/cmd@botname rest" into its parts, or returns null when the text is
+ * not a slash command at all.
+ *
+ * Exported because the daemon needs the same answer *before* it queues the
+ * message — /stop is intercepted ahead of the per-chat queue (see
+ * src/bots/interrupt.ts) — and two copies of this would drift the moment one
+ * of them learned about a new prefix form.
+ */
+export function parseBotCommand(text: string): ParsedBotCommand | null {
   const trimmed = text.trim();
   if (!trimmed.startsWith('/')) return null;
   // Slice off the leading `/`, then split into "command word" and "rest".
@@ -83,7 +97,22 @@ export function tryHandleBotCommand(text: string, ctx: CommandContext): Outgoing
   // Telegram appends "@botname" to commands in group chats — strip it.
   const at = head.indexOf('@');
   if (at !== -1) head = head.slice(0, at);
-  const cmd = head.toLowerCase();
+  return { cmd: head.toLowerCase(), rest };
+}
+
+interface CommandContext {
+  state: AgentState;
+  providerName: string;
+}
+
+/** Try to handle a message as a bot command. Returns an OutgoingMessage if
+ *  the command was recognised; null if the message should fall through to
+ *  the agent. Must be called inside the chat's session ALS scope so it can
+ *  read per-session state. */
+export function tryHandleBotCommand(text: string, ctx: CommandContext): OutgoingMessage | null {
+  const parsed = parseBotCommand(text);
+  if (!parsed) return null;
+  const { cmd, rest } = parsed;
 
   switch (cmd) {
     case 'start':

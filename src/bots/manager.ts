@@ -13,6 +13,8 @@ export interface BotManager {
   canPromptApproval(): boolean;
   /** Asks the chat to decide. Denies if no transport can ask. */
   promptApproval(chatId: string, prompt: ApprovalPrompt): Promise<ApprovalOutcome>;
+  /** Withdraws one chat's open permission questions; returns how many. */
+  cancelApprovals(chatId: string): number;
 }
 
 export function createBotManager(loaded: LoadedConfig): BotManager {
@@ -65,6 +67,13 @@ export function createBotManager(loaded: LoadedConfig): BotManager {
         }
       }
       return 'deny';
+    },
+    cancelApprovals(chatId: string): number {
+      // Every transport is asked, because the chat id is what tells them
+      // apart and only the one that owns it has anything to withdraw.
+      let cancelled = 0;
+      for (const a of adapters) cancelled += a.cancelApprovals?.(chatId) ?? 0;
+      return cancelled;
     },
   };
 }

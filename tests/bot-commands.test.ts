@@ -7,7 +7,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { runWithSession } from '../src/agent/context.ts';
 import { type AgentState, createAgentState } from '../src/agent/loop.ts';
-import { BOT_COMMAND_LIST, resolveOutputStyle, tryHandleBotCommand } from '../src/bots/commands.ts';
+import {
+  BOT_COMMAND_LIST,
+  parseBotCommand,
+  resolveOutputStyle,
+  tryHandleBotCommand,
+} from '../src/bots/commands.ts';
 import { loadConfig, saveConfig } from '../src/config/load.ts';
 import { readSessionSoul } from '../src/soul/loader.ts';
 import { isPlanMode, setPlanMode } from '../src/tools/planmode.ts';
@@ -498,5 +503,40 @@ describe('bot commands', () => {
       expect(c.command).toMatch(/^[a-z]+$/);
       expect(c.description.length).toBeGreaterThan(5);
     }
+  });
+
+  it('offers /stop even though this function is not what handles it', async () => {
+    // Being on the list is what gives Telegram autocomplete for it. The
+    // handling itself cannot live here: this function runs inside the daemon's
+    // per-chat queue, and /stop has to be answered before that queue is
+    // entered or it waits for the turn it was sent to kill. See
+    // src/bots/interrupt.ts.
+    expect(BOT_COMMAND_LIST.map((c) => c.command)).toContain('stop');
+    const r = await runWithSession(SESSION, async () => tryHandleBotCommand('/stop', ctx(state)));
+    expect(r).toBeNull();
+  });
+});
+
+describe('parseBotCommand', () => {
+  it('is not a command unless it starts with a slash', () => {
+    expect(parseBotCommand('hello')).toBeNull();
+    expect(parseBotCommand('')).toBeNull();
+    expect(parseBotCommand('tell me about /etc/hosts')).toBeNull();
+  });
+
+  it('lowercases the command and drops the @botname Telegram appends', () => {
+    expect(parseBotCommand('/HELP')?.cmd).toBe('help');
+    expect(parseBotCommand('/help@asterisk_bot')?.cmd).toBe('help');
+    expect(parseBotCommand('  /help  ')?.cmd).toBe('help');
+  });
+
+  it('keeps the rest verbatim, newlines and all', () => {
+    const parsed = parseBotCommand('/soul set Call me Levon.\nBe terse.');
+    expect(parsed?.cmd).toBe('soul');
+    expect(parsed?.rest).toBe('set Call me Levon.\nBe terse.');
+  });
+
+  it('has no rest when the command stands alone', () => {
+    expect(parseBotCommand('/tasks')?.rest).toBe('');
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { z } from 'zod';
 
@@ -30,6 +30,37 @@ describe('BotManager', () => {
         loadedConfig({ bots: { telegram: { enabled: true, allowedUserIds: [1] } } }),
       ),
     ).toThrow(/ASTERISK_TELEGRAM_BOT_TOKEN/);
+  });
+
+  it('counts nothing from a transport that cannot withdraw prompts', async () => {
+    // cancelApprovals is optional on BotAdapter, exactly like promptApproval:
+    // a transport that never asks has nothing to withdraw. Telegram implements
+    // it, so the absent arm is only reachable with the module swapped out —
+    // and it must come back 0, not undefined and not NaN, or /stop would
+    // report nonsense in its acknowledgement.
+    vi.resetModules();
+    vi.doMock('../src/bots/telegram/index.ts', () => ({
+      createTelegramAdapter: () => ({
+        name: 'telegram',
+        async start(): Promise<void> {},
+        async stop(): Promise<void> {},
+      }),
+    }));
+    try {
+      const { createBotManager: create } = await import('../src/bots/manager.ts');
+      const manager = create(
+        loadedConfig(
+          { bots: { telegram: { enabled: true, allowedUserIds: [1] } } },
+          { ASTERISK_TELEGRAM_BOT_TOKEN: 'tok' },
+        ),
+      );
+      const cancelled = manager.cancelApprovals('11');
+      expect(cancelled).toBe(0);
+      expect(Number.isNaN(cancelled)).toBe(false);
+    } finally {
+      vi.doUnmock('../src/bots/telegram/index.ts');
+      vi.resetModules();
+    }
   });
 
   it('ignores a stored whatsapp block left over from an older install', async () => {

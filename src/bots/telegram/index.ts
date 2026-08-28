@@ -178,6 +178,9 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): TelegramAda
     promptApproval(chatId: string, prompt: ApprovalPrompt): Promise<ApprovalOutcome> {
       return approvals.prompt(bot, chatId, prompt);
     },
+    cancelApprovals(chatId: string): number {
+      return approvals.cancelChat(chatId);
+    },
     async whenIdle(): Promise<void> {
       while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
     },

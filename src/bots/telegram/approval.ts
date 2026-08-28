@@ -34,6 +34,14 @@ export interface ApprovalController {
   prompt(bot: Bot, chatId: string, req: ApprovalPrompt): Promise<ApprovalOutcome>;
   /** Denies everything still open — used when the transport shuts down. */
   cancelAll(): void;
+  /**
+   * Denies the prompts still open in one chat, and reports how many there
+   * were. /stop aborts the turn that raised them, which frees the tool side
+   * immediately; the question in the chat is a separate object, and without
+   * this it keeps live buttons under it until its own timer expires minutes
+   * later. Other chats are untouched — one chat may only stop itself.
+   */
+  cancelChat(chatId: string): number;
 }
 
 const ANSWER_LABEL: Record<ApprovalOutcome, string> = {
@@ -184,6 +192,16 @@ export function createApprovalController(allowedUserIds: Iterable<number>): Appr
 
     cancelAll(): void {
       for (const id of [...pending.keys()]) finish(id, 'deny');
+    },
+
+    cancelChat(chatId: string): number {
+      // Ids are `${chatId}.${seq}` (see nextId above), so the chat's own
+      // prompts are exactly the keys under that prefix — and the dot means
+      // chat "1" can never claim chat "12"'s pending requests.
+      const prefix = `${chatId}.`;
+      const mine = [...pending.keys()].filter((id) => id.startsWith(prefix));
+      for (const id of mine) finish(id, 'deny');
+      return mine.length;
     },
   };
 }

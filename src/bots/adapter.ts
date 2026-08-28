@@ -93,6 +93,16 @@ export interface BotAdapter {
    * is a denial, not a tool crash.
    */
   promptApproval?(chatId: string, prompt: ApprovalPrompt): Promise<ApprovalOutcome>;
+  /**
+   * Withdraws the permission questions still open in one chat, returning how
+   * many there were. Used by /stop: aborting the turn frees the tool side at
+   * once, but the question the transport rendered is its own object and would
+   * otherwise sit there with live buttons until its timer ran out.
+   *
+   * Optional for the same reason `promptApproval` is — a transport that never
+   * asks has nothing to withdraw.
+   */
+  cancelApprovals?(chatId: string): number;
 }
 
 export function asOutgoingMessage(r: string | OutgoingMessage): OutgoingMessage {

@@ -223,6 +223,9 @@ describe('lifecycle', () => {
     const registered = bot?.setMyCommandsCalls[0]?.[0] as { command: string }[];
     expect(registered.length).toBeGreaterThan(0);
     expect(registered.every((c) => typeof c.command === 'string')).toBe(true);
+    // /stop is handled by the daemon rather than by tryHandleBotCommand, so
+    // this registration is the only thing that puts it in autocomplete.
+    expect(registered.map((c) => c.command)).toContain('stop');
   });
 
   it('still starts when Telegram rejects the command list', async () => {
@@ -337,6 +340,18 @@ describe('final mode', () => {
     expect(call?.opts).toEqual({ parse_mode: 'HTML' });
     expect(call?.text).toContain('<b>bold</b>');
     expect(call?.text).toContain('<code>code</code>');
+  });
+
+  it('sends no message at all when the turn produced no text', async () => {
+    // What a turn aborted by /stop returns. The acknowledgement has already
+    // been posted in the chat, so an empty reply must be silence — and an
+    // empty sendMessage is an API error, not a no-op, so this is a guard
+    // rather than a nicety.
+    const onMessage = await start({ streamMode: 'final' }, async () => '');
+    const ctx = new FakeCtx();
+    await onMessage(ctx);
+
+    expect(ctx.calls).toEqual([]);
   });
 
   it('sends the raw text in plain mode, markers and all', async () => {
@@ -1019,6 +1034,35 @@ describe('bot manager wiring', () => {
     await expect(
       disabled.promptApproval('1', { command: 'x', reason: 'y', rules: [], timeoutMs: 10 }),
     ).resolves.toBe('deny');
+  });
+
+  it('withdraws one chat’s open permission prompts on request', async () => {
+    // What /stop calls: the aborted turn no longer cares about the answer, and
+    // the question in the chat must not be left pressable.
+    const manager = createBotManager({
+      config: ConfigSchema.parse({ bots: { telegram: { enabled: true, allowedUserIds: [7] } } }),
+      secrets: { ASTERISK_TELEGRAM_BOT_TOKEN: 'tok' },
+    });
+    await manager.start(async () => 'ok');
+
+    const asked = manager.promptApproval('11', {
+      command: 'rm -rf build',
+      reason: 'not on the allowlist',
+      rules: [],
+      timeoutMs: 60_000,
+    });
+    const bot = fakeBotInstances.at(-1);
+    await vi.waitFor(() => expect(bot?.sent).toHaveLength(1));
+
+    expect(manager.cancelApprovals('11')).toBe(1);
+    await expect(asked).resolves.toBe('deny');
+    // A second call has nothing left to withdraw.
+    expect(manager.cancelApprovals('11')).toBe(0);
+  });
+
+  it('has nothing to withdraw when no transport is configured', () => {
+    const manager = createBotManager({ config: ConfigSchema.parse({}), secrets: {} });
+    expect(manager.cancelApprovals('11')).toBe(0);
   });
 
   it('swallows a failure to stop one adapter so the rest still stop', async () => {

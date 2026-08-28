@@ -3,9 +3,19 @@
 // the agent loop with a per-chat conversation pool.
 
 import { createAgentState, runAgentTurn } from '../agent/loop.ts';
-import type { AgentState } from '../agent/loop.ts';
+import type { AgentState, AgentTurnResult } from '../agent/loop.ts';
 import { loadConversation, saveConversation } from '../agent/persistence.ts';
 import { attachChatApprovals } from '../bots/approval-bridge.ts';
+import {
+  clearTurn,
+  currentEpoch,
+  formatStopAck,
+  interrupt,
+  isStale,
+  noteDequeued,
+  noteQueued,
+  registerTurn,
+} from '../bots/interrupt.ts';
 import { createBotManager } from '../bots/manager.ts';
 import { intakeVoice } from '../bots/voice-intake.ts';
 import { loadConfig } from '../config/load.ts';
@@ -109,7 +119,9 @@ function stateFor(chatId: string): AgentState {
 
 const manager = createBotManager(loaded);
 
-const { tryHandleBotCommand, resolveOutputStyle } = await import('../bots/commands.ts');
+const { tryHandleBotCommand, resolveOutputStyle, parseBotCommand } = await import(
+  '../bots/commands.ts'
+);
 const { runWithSession } = await import('../agent/context.ts');
 
 manager
@@ -117,169 +129,238 @@ manager
   // messages arriving in one chat within a second used to run runAgentTurn
   // against the same mutable AgentState, interleaving their history pushes and
   // stranding tool_use blocks between another turn's pairs.
-  .start(async (msg, hopts) =>
-    turnQueue.run(msg.chatId, async () => {
-      log.debug({ chatId: msg.chatId }, 'incoming message');
-      const state = stateFor(msg.chatId);
-      const sessionId = `bot:${msg.chatId}`;
-      const sink = hopts?.sink;
+  .start(async (msg, hopts) => {
+    // /stop is answered *outside* that queue, and has to be: the queue runs
+    // one turn at a time in submission order, so a /stop routed the ordinary
+    // way would wait for the very turn it was sent to kill. See
+    // src/bots/interrupt.ts for the whole mechanism.
+    //
+    // Spoken input is exempt for the same reason the slash commands below
+    // are: a transcript that happens to begin with "/" is a homophone
+    // Whisper heard, not a command the user typed.
+    if (!msg.voice && parseBotCommand(msg.text)?.cmd === 'stop') {
+      const result = interrupt(msg.chatId);
+      // The aborted turn's own signal already denies whatever permission
+      // request it was waiting on. The question rendered in the chat is a
+      // separate object and keeps live buttons until it is withdrawn.
+      const cancelledApprovals = manager.cancelApprovals(msg.chatId);
+      log.info({ chatId: msg.chatId, ...result, cancelledApprovals }, 'stop requested');
+      hopts?.sink?.({ type: 'final' });
+      return { text: formatStopAck({ ...result, cancelledApprovals }) };
+    }
 
-      // A voice message becomes text before anything else looks at it.
-      // Transcription can take tens of seconds on a large local model, so the
-      // chat is told what is happening rather than sitting on a stale spinner.
-      if (msg.voice) sink?.({ type: 'status', text: 'transcribing voice message…' });
-      const intake = await intakeVoice(msg);
-      const userText = intake.text;
-      if (intake.outcome) {
-        if (intake.outcome.ok) {
-          log.info(
-            { chatId: msg.chatId, backend: intake.outcome.backend, chars: userText.length },
-            'voice transcribed',
-          );
-        } else {
-          log.warn({ chatId: msg.chatId, err: intake.outcome.error }, 'voice transcription failed');
+    // Read before entering the queue and compared when the job starts: if an
+    // interrupt lands in between, this message was already queued when the
+    // user asked for everything to stop, and must not run.
+    const epochAtEnqueue = currentEpoch(msg.chatId);
+    noteQueued(msg.chatId);
+
+    return turnQueue.run(msg.chatId, async () => {
+      // Staleness is read first: the dequeue that empties a chat drops its
+      // entry, and the epoch goes with it.
+      const stale = isStale(msg.chatId, epochAtEnqueue);
+      noteDequeued(msg.chatId);
+      if (stale) {
+        log.info({ chatId: msg.chatId }, 'dropped queued message after /stop');
+        hopts?.sink?.({ type: 'final' });
+        // Nothing to say: the /stop acknowledgement already reported this
+        // message as dropped, and an empty text sends no Telegram message.
+        return { text: '' };
+      }
+
+      // Registered before any of the turn's own work rather than just before
+      // the model call: intakeVoice below can spend tens of seconds
+      // transcribing on a local model, and a /stop typed during that window
+      // used to be answered "nothing to stop" — and then the turn ran anyway.
+      // The loop checks the signal at the top of its first iteration, so a
+      // turn aborted in here ends without issuing a single provider request.
+      const ctrl = new AbortController();
+      registerTurn(msg.chatId, ctrl);
+      try {
+        log.debug({ chatId: msg.chatId }, 'incoming message');
+        const state = stateFor(msg.chatId);
+        const sessionId = `bot:${msg.chatId}`;
+        const sink = hopts?.sink;
+
+        // A voice message becomes text before anything else looks at it.
+        // Transcription can take tens of seconds on a large local model, so the
+        // chat is told what is happening rather than sitting on a stale spinner.
+        if (msg.voice) sink?.({ type: 'status', text: 'transcribing voice message…' });
+        const intake = await intakeVoice(msg);
+        const userText = intake.text;
+        if (intake.outcome) {
+          if (intake.outcome.ok) {
+            log.info(
+              { chatId: msg.chatId, backend: intake.outcome.backend, chars: userText.length },
+              'voice transcribed',
+            );
+          } else {
+            log.warn(
+              { chatId: msg.chatId, err: intake.outcome.error },
+              'voice transcription failed',
+            );
+          }
         }
-      }
 
-      // Bot-level slash commands run inside the chat's session ALS scope so
-      // they can read/mutate per-session state (tasks, plan mode). Handled
-      // directly without spending tokens on the agent.
-      //
-      // Spoken input is exempt: a transcript that happens to begin with "/"
-      // is a sentence Whisper heard, not a command the user typed, and running
-      // it as one would act on a homophone.
-      const handled = msg.voice
-        ? null
-        : await runWithSession({ id: sessionId, scope: 'unknown' }, async () =>
-            tryHandleBotCommand(userText, { state, providerName: provider.name }),
-          );
-      if (handled) {
-        log.debug({ chatId: msg.chatId, command: userText.split(' ')[0] }, 'bot command');
-        sink?.({ type: 'final' });
-        // Note: heartbeat hasn't been created yet at this branch (declared
-        // below the slash-command check). Nothing to clear here.
-        return handled;
-      }
+        // Bot-level slash commands run inside the chat's session ALS scope so
+        // they can read/mutate per-session state (tasks, plan mode). Handled
+        // directly without spending tokens on the agent.
+        //
+        // Spoken input is exempt: a transcript that happens to begin with "/"
+        // is a sentence Whisper heard, not a command the user typed, and running
+        // it as one would act on a homophone.
+        const handled = msg.voice
+          ? null
+          : await runWithSession({ id: sessionId, scope: 'unknown' }, async () =>
+              tryHandleBotCommand(userText, { state, providerName: provider.name }),
+            );
+        if (handled) {
+          log.debug({ chatId: msg.chatId, command: userText.split(' ')[0] }, 'bot command');
+          sink?.({ type: 'final' });
+          // The heartbeat hasn't been created yet at this branch (declared
+          // below the slash-command check), so there is no interval to clear.
+          // The controller registered above is released by the outer finally,
+          // on this path like every other.
+          return handled;
+        }
 
-      const rules = loadRules();
-      const session = { id: sessionId, scope: 'unknown' as const };
-      const souls = loadSouls(process.cwd(), session);
-      const cfg = loadConfig().config;
-      const hooks = cfg.hooks;
-      // Session-first, same precedence loadSouls already applies above: a
-      // chat's own /style choice (if any) wins over the daemon-wide default.
-      const outputStyle = resolveOutputStyle(session, cfg.outputStyle);
+        const rules = loadRules();
+        const session = { id: sessionId, scope: 'unknown' as const };
+        const souls = loadSouls(process.cwd(), session);
+        const cfg = loadConfig().config;
+        const hooks = cfg.hooks;
+        // Session-first, same precedence loadSouls already applies above: a
+        // chat's own /style choice (if any) wins over the daemon-wide default.
+        const outputStyle = resolveOutputStyle(session, cfg.outputStyle);
 
-      // Silence detector — some servers don't stream tool_call arguments, so a
-      // model generating a multi-thousand-line Write payload looks identical
-      // to a hang. Push a periodic heartbeat to the sink so bots can show
-      // "generating · 45s of silence" instead of a stale placeholder.
-      let lastSig = Date.now();
-      const botBump = (): void => {
-        lastSig = Date.now();
-      };
-      const heartbeat = setInterval(() => {
-        const silenceSec = Math.floor((Date.now() - lastSig) / 1000);
-        if (silenceSec >= 20) {
-          sink?.({
-            type: 'status',
-            text: `generating · ${silenceSec}s of silence (no content stream — likely a large tool input)`,
+        // Silence detector — some servers don't stream tool_call arguments, so a
+        // model generating a multi-thousand-line Write payload looks identical
+        // to a hang. Push a periodic heartbeat to the sink so bots can show
+        // "generating · 45s of silence" instead of a stale placeholder.
+        let lastSig = Date.now();
+        const botBump = (): void => {
+          lastSig = Date.now();
+        };
+        const heartbeat = setInterval(() => {
+          const silenceSec = Math.floor((Date.now() - lastSig) / 1000);
+          if (silenceSec >= 20) {
+            sink?.({
+              type: 'status',
+              text: `generating · ${silenceSec}s of silence (no content stream — likely a large tool input)`,
+            });
+          }
+        }, 15_000);
+        if (typeof (heartbeat as { unref?: () => void }).unref === 'function') {
+          (heartbeat as { unref?: () => void }).unref?.();
+        }
+
+        const attachments: Array<{ kind: string; path: string; caption?: string }> = [];
+        let turn: AgentTurnResult;
+        try {
+          turn = await runAgentTurn(provider, state, userText, {
+            signal: ctrl.signal,
+            // Per-user isolation — every chatId gets its own task list, plan-mode
+            // flag, browser context, monitored processes, etc. Every transport
+            // shares this code path; the chatId itself is unique enough across
+            // transports that we don't need to disambiguate here.
+            session,
+            rules,
+            souls,
+            hooks,
+            ...(outputStyle ? { outputStyle } : {}),
+            // Streaming: forward per-token deltas to the sink as they arrive.
+            // Also fire a 'text' event from the post-turn whole-text callback so
+            // bots running against a non-streaming provider (or models that
+            // ignore stream:true for tool-only turns) still get something to show.
+            // The sink-side Telegram adapter dedupes by tracking whether deltas
+            // have already arrived for the current turn — see streamMode='stream'.
+            onAssistantText: (t) => {
+              botBump();
+              sink?.({ type: 'text-final', text: t });
+            },
+            onAssistantDelta: (d) => {
+              botBump();
+              sink?.({ type: 'text', text: d });
+            },
+            // Surface chain-of-thought activity as a status event so Telegram's
+            // status / stream modes can show "thinking · N chars" instead of
+            // a static placeholder during long reasoning phases.
+            onAssistantThinking: (() => {
+              let lastReported = 0;
+              let total = 0;
+              return (d: string) => {
+                botBump();
+                total += d.length;
+                // Throttle: only emit every 200 chars to avoid edit-spam in the
+                // bot adapter (already rate-limited to 1 edit/sec, but no point
+                // queuing 100 redundant updates).
+                if (total - lastReported >= 200) {
+                  lastReported = total;
+                  sink?.({ type: 'status', text: `thinking · ${total} chars` });
+                }
+              };
+            })(),
+            onToolUse: (name, input) => {
+              // Summary only. Logging the raw input put whole Write payloads and
+              // every Bash command line into daemon.log — which the control panel
+              // then serves over /api/logs.
+              log.debug({ tool: name, summary: formatToolStatus(name, input) }, 'tool_use');
+              sink?.({ type: 'status', text: formatToolStatus(name, input) });
+            },
+            onToolResult: (name, _output, isError) =>
+              isError ? log.warn({ tool: name }, 'tool_error') : undefined,
+            onRetry: (attempt, delayMs, why) => {
+              log.warn({ attempt, delayMs, why }, 'provider retry');
+              sink?.({ type: 'status', text: `retrying provider (${attempt}) — ${why}` });
+            },
+            onHook: (result) =>
+              log.info(
+                { hook: result.hook, exit: result.exitCode, ms: result.durationMs },
+                'hook fired',
+              ),
+            onAttachment: (a: { kind: string; path: string; caption?: string }) =>
+              attachments.push(a),
           });
+        } finally {
+          // This used to run only on the success path, so an aborted or
+          // throwing turn leaked its interval.
+          clearInterval(heartbeat);
         }
-      }, 15_000);
-      if (typeof (heartbeat as { unref?: () => void }).unref === 'function') {
-        (heartbeat as { unref?: () => void }).unref?.();
+        saveConversation(msg.chatId, state.history);
+        sink?.({ type: 'final' });
+        // An aborted turn is reported like any other: whatever text it managed
+        // to produce is the reply, and when there is none the reply is empty —
+        // the /stop acknowledgement has already said what happened, so the
+        // transport must not add a second message on top of it.
+        if (turn.reason !== 'end-turn')
+          log.warn({ chatId: msg.chatId, reason: turn.reason }, 'turn ended early');
+        if (attachments.length > 0)
+          log.info({ chatId: msg.chatId, attachments: attachments.length }, 'sending attachments');
+        return {
+          text: turn.finalText,
+          attachments: attachments.map((a) => {
+            const out: {
+              kind: 'image' | 'video' | 'audio' | 'document';
+              path: string;
+              caption?: string;
+            } = {
+              kind: (['image', 'video', 'audio', 'document'].includes(a.kind)
+                ? a.kind
+                : 'document') as 'image' | 'video' | 'audio' | 'document',
+              path: a.path,
+            };
+            if (a.caption !== undefined) out.caption = a.caption;
+            return out;
+          }),
+        };
+      } finally {
+        // One owner per resource: this releases the chat's interrupt slot on
+        // every path out of the job — the bot-command early return included.
+        // The heartbeat has a finally of its own, next to where it is made.
+        clearTurn(msg.chatId, ctrl);
       }
-
-      const attachments: Array<{ kind: string; path: string; caption?: string }> = [];
-      const turn = await runAgentTurn(provider, state, userText, {
-        // Per-user isolation — every chatId gets its own task list, plan-mode
-        // flag, browser context, monitored processes, etc. Every transport
-        // shares this code path; the chatId itself is unique enough across
-        // transports that we don't need to disambiguate here.
-        session,
-        rules,
-        souls,
-        hooks,
-        ...(outputStyle ? { outputStyle } : {}),
-        // Streaming: forward per-token deltas to the sink as they arrive.
-        // Also fire a 'text' event from the post-turn whole-text callback so
-        // bots running against a non-streaming provider (or models that
-        // ignore stream:true for tool-only turns) still get something to show.
-        // The sink-side Telegram adapter dedupes by tracking whether deltas
-        // have already arrived for the current turn — see streamMode='stream'.
-        onAssistantText: (t) => {
-          botBump();
-          sink?.({ type: 'text-final', text: t });
-        },
-        onAssistantDelta: (d) => {
-          botBump();
-          sink?.({ type: 'text', text: d });
-        },
-        // Surface chain-of-thought activity as a status event so Telegram's
-        // status / stream modes can show "thinking · N chars" instead of
-        // a static placeholder during long reasoning phases.
-        onAssistantThinking: (() => {
-          let lastReported = 0;
-          let total = 0;
-          return (d: string) => {
-            botBump();
-            total += d.length;
-            // Throttle: only emit every 200 chars to avoid edit-spam in the
-            // bot adapter (already rate-limited to 1 edit/sec, but no point
-            // queuing 100 redundant updates).
-            if (total - lastReported >= 200) {
-              lastReported = total;
-              sink?.({ type: 'status', text: `thinking · ${total} chars` });
-            }
-          };
-        })(),
-        onToolUse: (name, input) => {
-          // Summary only. Logging the raw input put whole Write payloads and
-          // every Bash command line into daemon.log — which the control panel
-          // then serves over /api/logs.
-          log.debug({ tool: name, summary: formatToolStatus(name, input) }, 'tool_use');
-          sink?.({ type: 'status', text: formatToolStatus(name, input) });
-        },
-        onToolResult: (name, _output, isError) =>
-          isError ? log.warn({ tool: name }, 'tool_error') : undefined,
-        onRetry: (attempt, delayMs, why) => {
-          log.warn({ attempt, delayMs, why }, 'provider retry');
-          sink?.({ type: 'status', text: `retrying provider (${attempt}) — ${why}` });
-        },
-        onHook: (result) =>
-          log.info(
-            { hook: result.hook, exit: result.exitCode, ms: result.durationMs },
-            'hook fired',
-          ),
-        onAttachment: (a: { kind: string; path: string; caption?: string }) => attachments.push(a),
-      });
-      clearInterval(heartbeat);
-      saveConversation(msg.chatId, state.history);
-      sink?.({ type: 'final' });
-      if (turn.reason !== 'end-turn')
-        log.warn({ chatId: msg.chatId, reason: turn.reason }, 'turn ended early');
-      if (attachments.length > 0)
-        log.info({ chatId: msg.chatId, attachments: attachments.length }, 'sending attachments');
-      return {
-        text: turn.finalText,
-        attachments: attachments.map((a) => {
-          const out: {
-            kind: 'image' | 'video' | 'audio' | 'document';
-            path: string;
-            caption?: string;
-          } = {
-            kind: (['image', 'video', 'audio', 'document'].includes(a.kind)
-              ? a.kind
-              : 'document') as 'image' | 'video' | 'audio' | 'document',
-            path: a.path,
-          };
-          if (a.caption !== undefined) out.caption = a.caption;
-          return out;
-        }),
-      };
-    }),
-  )
+    });
+  })
   .then((started) => log.info({ adapters: started }, 'adapters started'))
   .catch((e) => log.error({ err: e }, 'failed to start adapters'));
 
