@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-08-29
 
 ### Added
 
@@ -24,7 +24,129 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (default) keeps every built-in listed, `all` also defers the long tail of
   built-ins for ~2.9k tokens total, `off` restores the previous behaviour.
 
+### Security
+
+- **Two spellings walked a forbidden argument past the Bash consent gate.**
+  `FORBIDDEN_ARGS` bans `git -c` because a git config names programs to run,
+  but `$'…'` was invisible to the tokenizer — `find . $'-\x65xec' …` never
+  matched `/^-exec/` while bash expanded it to `-exec`, and evaluated to
+  `allow` even under `allowlist`. Leading `VAR=value` was stripped without
+  looking at the name, so `GIT_EXTERNAL_DIFF=… git diff` was judged as bare
+  `git diff`; that was demonstrated executing an arbitrary script with no
+  prompt. Both now make the segment opaque, which is the answer the module
+  already gave anything it could not resolve statically. A name denylist
+  cannot work here — the next variable name is always free.
+- **Read-only promises that were not.** `sort --compress-program`,
+  `git diff --output`, `tree -o`, `date -s`, `git --config-env`/`--git-dir`,
+  `--devices` on egrep/fgrep, and uniq's positional OUTPUT operand all ran
+  programs or wrote files from commands the allowlist called safe.
+- **"Always allow" on a flag-led command remembered the bare binary.** One
+  press on `node -e "console.log(1)"` left a standing grant for any `node -e`;
+  `bash -lc "make"` granted `bash`. Deny now also matches basenames and
+  `command`/`builtin`/`exec` wrappers, so a ban reaches the spellings it has
+  to; allow stays exact, and `./git` still cannot claim the `git` rule.
+- **Every containment check compared the wrong path.** `resolve()` does not
+  follow symlinks and `writeFile` does, so a `link -> ~/.ssh` inside the
+  workspace made `<workspace>/link/authorized_keys` writable by Write and
+  Edit, which run in-process and are not covered by the sandbox. The panel's
+  own check climbed to the deepest *existing* ancestor with `existsSync`,
+  which follows the link and returns false for a dangling one, so a dangling
+  symlink wrote outside the tree; `/api/skills` had no check at all.
+  Containment now lives in `fs-safe.ts` and walks the links itself.
+- **The SSRF guard ignored the DNS root dot.** `localhost.` and
+  `metadata.google.internal.` — the GCP metadata address the module exists to
+  block — passed while the resolver accepted them.
+- **The panel token was passed to `xdg-open` on the command line**, where any
+  local user reads it from `/proc/<pid>/cmdline` and the browser keeps it in
+  history. The browser now gets a separate single-use token, revoked seconds
+  later.
+- **The origin guard compared hostnames, not origins.** A page served from any
+  other loopback port passed it — a dev server on `127.0.0.1:3000` could `PUT
+  /api/hooks` with credentials, and `hooks.command` is executed through
+  `bash -lc`. Only `Sec-Fetch-Site` stood in the way.
+- **The OAuth callback skipped its CSRF check before the state was known**,
+  which is a real window: the fixed-port listener starts before the SDK has
+  generated the state, with discovery and possibly dynamic registration in
+  between.
+
 ### Fixed
+- **Cron fired the same job again while it was still running.** `lastRunAt`
+  was written only after every dispatch had awaited, while the one-shot block
+  directly above writes before its loop — that asymmetry was the bug. A job
+  whose turn outlasted a 30s tick fired again, and a `* * * * *` job whose
+  turn ran fifteen minutes fired on every tick throughout. Measured at a 10ms
+  interval with a 200ms dispatch: 20 dispatches before, 1 after.
+- **One unreadable file in `~/.asterisk/agents` took down every entrypoint.**
+  `loadAgents` runs at module load through the Agent tool's description, and
+  stats inside a readdir loop with no `try`/`catch`, so a dangling symlink
+  made `asterisk --help` die with ENOENT before the REPL drew. `loadRules`
+  has the same shape but runs per turn, so every message after that answered
+  with a bare ENOENT instead of a reply. `skills/loader.ts` has done this
+  correctly all along; agents and rules now do too, and name the file that
+  failed instead of swallowing it.
+- **Edit destroyed files it could not read.** It decoded every file as UTF-8
+  and wrote the whole thing back, so one `VERSION=1.0.0` → `2.0.0` on a file
+  holding any invalid byte replaced every one of them with U+FFFD across the
+  entire file, grew it from 30 to 48 bytes, and returned success. It now
+  refuses and touches nothing. Edit also could not match a multi-line block in
+  a CRLF file, because Read displays lines split on `\n` with an invisible
+  `\r` left on each.
+- **Grep returned rg's error text as a search result.** The pattern was passed
+  positionally with no `--`, so `-foo` was read as a flag: rg parsed it as
+  `-f oo`, exited 2, and the tool answered `ok()` with the error inside.
+- **Parallel tool calls collapsed into one on the non-streaming path.**
+  `ToolCallBuffer` keyed by `delta.index ?? 0`, and a non-streamed reply's
+  `tool_calls` carry no index — three calls came back as one, id and name from
+  the last, arguments concatenated then read as the first. That path is
+  subagents, cron turns and the eval runner; two Edits in one turn silently
+  lost the second.
+- **Compaction had a fixed point.** Large error results were never persisted
+  and the six most recent messages could be neither shortened nor dropped, so
+  one 60KB MCP error left the history permanently over budget — five passes
+  returned the same size, and the daemon had already written it to disk for
+  `/resume` to restore. The protected tail is now protected from being
+  dropped, not from being shortened.
+- **A stalled stream escaped as a bare `Error`** — not retryable, not a
+  `ProviderError` — so the turn died as `unknown-error` and never stepped down
+  the chain. Both branches now classify by source: the caller's signal is
+  `aborted`, our own deadline is `unresponsive`, which fails over without
+  retrying a backend that has been silent for ninety seconds.
+- **Migration 9 left a duplicate behind.** It removed `'ollama'` from
+  `providerFallback` with `json_remove` on one computed index, `LIMIT 1`, run
+  once, while its comment promised "wherever it appears". A list holding it
+  twice kept one, which then failed the enum on every `readConfig` from every
+  entrypoint, with no way back. Migration 10 rebuilds the array with a filter.
+- **A malformed `config.json` wedged startup permanently.** The import threw
+  before `writeConfig`, so settings stayed empty, the migrated flag never
+  became true, and the file was never renamed — every later start failed
+  identically. It is quarantined as `config.json.broken` now.
+- **stdio MCP servers were orphaned on every quit.** Shutdown ran from
+  `process.on('exit')`, which must be synchronous, so the SIGTERM never went
+  out. Observed in the wild: two orphans spinning at 100% CPU each.
+- **The REPL queue stalled on a slash command**, which never touches `busy`,
+  so a queue holding one in the middle kept its remaining items while the UI
+  went on counting them.
+- **Telegram left answered approval buttons live** — `editMessageText` passed
+  no `reply_markup`, against the comment above it promising otherwise — and
+  chunked rendered HTML blindly at 4096, shipping half a tag that Telegram
+  rejects and `stripTags` cannot repair.
+- **`/style` wrote the shared daemon config**, so one allowlisted user changed
+  every other chat's output style. It is per-session now, like `/soul` beside
+  it.
+- **`ASTERISK_LANG` meant two incompatible things.** The rules loader read it
+  as the project's language, i18n as the interface locale, so setting it to
+  `ru` for a Russian interface silently turned the per-language rule layer off.
+  Locale moves to `ASTERISK_LOCALE`; the old name keeps working one more
+  release, with a warning.
+- **The embedded interpreter ignored its own limits.** `sort()` handed the
+  array to the host's sort, which charges no steps and never checks the clock
+  or the signal: eight of them ran 5.3s against a 1s deadline, reported
+  success, and blocked the event loop so completely that an abort scheduled at
+  50ms only ran afterwards. Ten silently-wrong semantics went with it —
+  `break` outside a loop finishing the program successfully, `for (let x of …)`
+  binding as const, compound assignment evaluating its target twice and so
+  running a tool call twice, `some`/`every` not short-circuiting, `0b1010`
+  parsing as 0.
 
 - **The control panel says which model is answering.** The header chip read
   `(auto-detected)` on every page: it took the model from the config field that
@@ -97,6 +219,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `maximum` are deliberately kept, having been probed against the same server
   and found blameless. The Anthropic provider is untouched: it compiles no
   grammar and loses nothing by keeping them.
+
+### Changed
+
+- **`@anthropic-ai/sdk` 0.30.1 → 0.122.0.** `APIError.headers` is a web
+  `Headers` now, so `headers['retry-after']` had been returning undefined and
+  the server's own backoff hint was silently dropped on every 429; the same
+  re-read found that `APIUserAbortError` was being classified as network and
+  retried. `cache_control` moved into the stable types.
+- **Playwright is an optional peer dependency**, so installing the package no
+  longer pulls the drivers. Missing Playwright degrades to eight failing
+  browser tools naming the install command, not a broken CLI.
+- **`bun audit` reports zero vulnerabilities**, down from 52 (17 high). None
+  needed an upstream fix — every patched version was already inside the range
+  its parent declared, and the lockfile was holding old resolutions.
+- **The published package is 2.2 MB packed, 7.3 MB unpacked**, down from
+  6.5 MB and 22 MB. The nine entrypoints shared nearly their whole graph and
+  each inlined its own copy; `splitting: true` puts it in shared chunks. The
+  build wipes `dist/` first, since chunk names are content-hashed.
 
 ## [0.4.2] - 2026-08-27
 
@@ -533,6 +673,7 @@ Initial public release.
 - 25 tests (Vitest) covering tools, agent loop, daemon lifecycle, config
   persistence, and bot manager wiring.
 
+[0.5.0]: https://github.com/ayvazyan10/asterisk/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/ayvazyan10/asterisk/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/ayvazyan10/asterisk/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ayvazyan10/asterisk/compare/v0.3.0...v0.4.0

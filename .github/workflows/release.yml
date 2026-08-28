@@ -86,8 +86,13 @@ jobs:
       - name: Coverage
         run: bun run test:coverage
 
+      # --minify, because `npm publish` runs prepublishOnly and would build
+      # with it anyway. Without the flag here the tarball attached to the
+      # release is the unminified one (13.9 MB unpacked) while npm gets the
+      # minified one (7.3 MB) — two different artifacts from one tag, which is
+      # exactly what the header comment promises does not happen.
       - name: Build
-        run: bun run build
+        run: bun run build --minify
 
       - name: Extract release notes
         run: bun scripts/release-notes.ts '${{ steps.version.outputs.value }}' > RELEASE_NOTES.md
