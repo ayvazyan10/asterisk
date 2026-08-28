@@ -16,8 +16,10 @@ export default defineConfig({
       // even installed and `--coverage` errored out, so they had never been
       // checked once.
       //
-      // Measured now: 79.47 lines / 81.23 functions / 70.45 branches /
-      // 77.67 statements. Branches is the one with almost no slack, and the
+      // Measured at 0.5.0: 82.41 lines / 84.57 functions / 72.73 branches /
+      // 80.58 statements — the audit's 233 regression tests moved every number
+      // up, so the ratchet moved with them.
+      // Branches is the one with almost no slack, and the
       // connector work proved it: four pushes in a row went red on this gate
       // alone, at 69.76%, while typecheck, lint and the suite were all green
       // locally. New code with many small `?? …` and `? … :` arms moves this
@@ -39,10 +41,10 @@ export default defineConfig({
       // 0%; that was wrong even when written — it has had HTTP-level tests all
       // along, and the render layer joined them.
       thresholds: {
-        lines: 79,
-        functions: 81,
-        branches: 70,
-        statements: 77,
+        lines: 82,
+        functions: 84,
+        branches: 72,
+        statements: 80,
       },
     },
   },
