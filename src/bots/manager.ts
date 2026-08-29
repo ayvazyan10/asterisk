@@ -33,6 +33,9 @@ export function createBotManager(loaded: LoadedConfig): BotManager {
         streamMode: tg.streamMode,
         streamThrottleMs: tg.streamThrottleMs,
         parseMode: tg.parseMode,
+        // Same number the agent loop enforces, so the transport never accepts
+        // a file the loop would then quietly decline to send.
+        maxImageBytes: loaded.config.vision.maxBytes,
       }),
     );
   }

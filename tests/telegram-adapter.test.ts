@@ -29,6 +29,10 @@ const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
     callbackHandler: Handler | null = null;
     /** The voice-message listener. */
     voiceHandler: Handler | null = null;
+    /** The photo listener. */
+    photoHandler: Handler | null = null;
+    /** The document listener — images arrive here when sent uncompressed. */
+    documentHandler: Handler | null = null;
     startCalls = 0;
     stopCalls = 0;
     setMyCommandsCalls: unknown[][] = [];
@@ -65,6 +69,8 @@ const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
     on(event: string, handler: Handler): void {
       if (event === 'message:text') this.handler = handler;
       if (event === 'message:voice') this.voiceHandler = handler;
+      if (event === 'message:photo') this.photoHandler = handler;
+      if (event === 'message:document') this.documentHandler = handler;
       if (event === 'callback_query:data') this.callbackHandler = handler;
     }
 
@@ -928,6 +934,227 @@ describe('voice messages', () => {
     await adapter.whenIdle();
 
     expect(turns).toBe(0);
+    expect(ctx.texts('reply')[0]).toContain('allowlist');
+  });
+});
+
+describe('images', () => {
+  // A photo sent to the bot used to be dropped on the floor, caption and all:
+  // there was no `message:photo` handler and no catch-all, so nothing ever
+  // ran. `message:document` matters just as much — "send as file" is how
+  // anyone sends a screenshot they want kept sharp.
+  class PhotoCtx extends FakeCtx {
+    override message = {
+      text: '',
+      caption: 'what is wrong here?',
+      photo: [{ file_id: 'small' }, { file_id: 'large' }],
+    } as never;
+    fileSize: number | undefined = 1024;
+    getFile = async (): Promise<{ file_path: string; file_size?: number }> => ({
+      file_path: 'photos/file_12.jpg',
+      ...(this.fileSize === undefined ? {} : { file_size: this.fileSize }),
+    });
+  }
+
+  class DocumentCtx extends FakeCtx {
+    constructor(mime: string, name = 'shot.png') {
+      super();
+      this.message = {
+        text: '',
+        caption: '',
+        document: { mime_type: mime, file_name: name },
+      } as never;
+    }
+    getFile = async (): Promise<{ file_path: string; file_size?: number }> => ({
+      file_path: `documents/${'file_13.png'}`,
+      file_size: 2048,
+    });
+  }
+
+  let home: string;
+  let prevHome: string | undefined;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'asterisk-tg-image-'));
+    prevHome = process.env['ASTERISK_HOME'];
+    process.env['ASTERISK_HOME'] = home;
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    if (prevHome === undefined) delete process.env['ASTERISK_HOME'];
+    else process.env['ASTERISK_HOME'] = prevHome;
+    await rm(home, { recursive: true, force: true });
+  });
+
+  /** Starts an adapter and returns it plus every message the handler saw. */
+  async function startCollecting(opts: Partial<TelegramAdapterOptions> = {}): Promise<{
+    bot: InstanceType<typeof FakeBot>;
+    seen: IncomingMessage[];
+    idle: () => Promise<void>;
+  }> {
+    const seen: IncomingMessage[] = [];
+    const adapter = createTelegramAdapter({ token: 'test-token', allowedUserIds: [7], ...opts });
+    await adapter.start(async (msg) => {
+      seen.push(msg);
+      return 'ok';
+    });
+    const bot = fakeBotInstances.at(-1);
+    if (!bot) throw new Error('no bot');
+    return { bot, seen, idle: () => adapter.whenIdle() };
+  }
+
+  it('downloads a photo and hands the file plus the caption to the core', async () => {
+    vi.stubGlobal('fetch', async (url: string) => {
+      expect(url).toContain('/file/bottest-token/photos/file_12.jpg');
+      return new Response(new Uint8Array([137, 80, 78, 71]));
+    });
+
+    const { bot, seen, idle } = await startCollecting();
+    const ctx = new PhotoCtx();
+    await bot.photoHandler?.(ctx);
+    await idle();
+
+    expect(seen).toHaveLength(1);
+    // Telegram puts a picture's words in `caption`, which is exactly why the
+    // text handler never saw them.
+    expect(seen[0]?.text).toBe('what is wrong here?');
+    const saved = seen[0]?.image?.path ?? '';
+    expect(saved.endsWith('.jpg')).toBe(true);
+    expect(readFileSync(saved)).toEqual(Buffer.from([137, 80, 78, 71]));
+    // Someone's photo is theirs; nobody else on the machine gets to read it.
+    expect(statSync(saved).mode & 0o077).toBe(0);
+  });
+
+  it('accepts a photo with no caption at all', async () => {
+    vi.stubGlobal('fetch', async () => new Response(new Uint8Array([1])));
+    const { bot, seen, idle } = await startCollecting();
+    const ctx = new PhotoCtx();
+    (ctx as unknown as { message: Record<string, unknown> }).message['caption'] = undefined;
+
+    await bot.photoHandler?.(ctx);
+    await idle();
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.text).toBe('');
+    expect(seen[0]?.image?.path).toBeTruthy();
+  });
+
+  it('accepts an image sent as a document, which is how a sharp screenshot arrives', async () => {
+    vi.stubGlobal('fetch', async () => new Response(new Uint8Array([1, 2])));
+    const { bot, seen, idle } = await startCollecting();
+
+    await bot.documentHandler?.(new DocumentCtx('image/png'));
+    await idle();
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.image?.path.endsWith('.png')).toBe(true);
+  });
+
+  it('names the file by its mime type, not by what the sender called it', async () => {
+    // A JPEG uploaded as `shot.jfif` is still a JPEG, and the extension is
+    // what decides its media type downstream.
+    vi.stubGlobal('fetch', async () => new Response(new Uint8Array([1])));
+    const { bot, seen, idle } = await startCollecting();
+
+    const ctx = new DocumentCtx('image/jpeg', 'shot.jfif');
+    ctx.getFile = async () => ({ file_path: 'documents/file_14.jfif', file_size: 10 });
+    await bot.documentHandler?.(ctx);
+    await idle();
+
+    expect(seen[0]?.image?.path.endsWith('.jpg')).toBe(true);
+  });
+
+  it.each(['application/pdf', 'text/plain', 'video/mp4', 'image/heic', undefined])(
+    'still ignores a %s document, exactly as before',
+    async (mime) => {
+      let fetched = false;
+      vi.stubGlobal('fetch', async () => {
+        fetched = true;
+        return new Response(new Uint8Array([1]));
+      });
+      const { bot, seen, idle } = await startCollecting();
+
+      await bot.documentHandler?.(new DocumentCtx(mime as string));
+      await idle();
+
+      // No turn, no download, and no reply — a non-image attachment is not an
+      // error, it is simply not for us.
+      expect(seen).toHaveLength(0);
+      expect(fetched).toBe(false);
+    },
+  );
+
+  it('refuses an image over the cap instead of resizing it', async () => {
+    let fetched = false;
+    vi.stubGlobal('fetch', async () => {
+      fetched = true;
+      return new Response(new Uint8Array([1]));
+    });
+    const { bot, seen, idle } = await startCollecting({ maxImageBytes: 1_000_000 });
+    const ctx = new PhotoCtx();
+    ctx.fileSize = 9_000_000;
+
+    await bot.photoHandler?.(ctx);
+    await idle();
+
+    expect(seen).toHaveLength(0);
+    // Telegram already told us the size, so the megabytes are never moved.
+    expect(fetched).toBe(false);
+    const reply = ctx.texts('reply')[0] ?? '';
+    expect(reply).toContain('9.0 MB');
+    expect(reply).toContain('1.0 MB');
+  });
+
+  it('checks the size that actually arrived, not only the one it was promised', async () => {
+    // file_size is advisory; a lying or absent one must not get past the cap.
+    vi.stubGlobal('fetch', async () => new Response(new Uint8Array(2_000_000)));
+    const { bot, seen, idle } = await startCollecting({ maxImageBytes: 1_000_000 });
+    const ctx = new PhotoCtx();
+    ctx.fileSize = undefined;
+
+    await bot.photoHandler?.(ctx);
+    await idle();
+
+    expect(seen).toHaveLength(0);
+    expect(ctx.texts('reply')[0]).toContain('2.0 MB');
+  });
+
+  it('tells the user when the download fails instead of starting a turn', async () => {
+    vi.stubGlobal('fetch', async () => new Response('nope', { status: 500 }));
+    const { bot, seen, idle } = await startCollecting();
+    const ctx = new PhotoCtx();
+
+    await bot.photoHandler?.(ctx);
+    await idle();
+
+    expect(seen).toHaveLength(0);
+    expect(ctx.texts('reply')[0]).toContain('500');
+    // The bot token travels in that URL and must never reach the chat.
+    expect(ctx.texts('reply')[0]).not.toContain('test-token');
+  });
+
+  it('refuses a photo from someone off the allowlist', async () => {
+    const { bot, seen, idle } = await startCollecting();
+    const ctx = new PhotoCtx();
+    ctx.from = { id: 999 };
+
+    await bot.photoHandler?.(ctx);
+    await idle();
+
+    expect(seen).toHaveLength(0);
+    expect(ctx.texts('reply')[0]).toContain('allowlist');
+  });
+
+  it('refuses an image document from someone off the allowlist', async () => {
+    const { bot, seen, idle } = await startCollecting();
+    const ctx = new DocumentCtx('image/png');
+    ctx.from = { id: 999 };
+
+    await bot.documentHandler?.(ctx);
+    await idle();
+
+    expect(seen).toHaveLength(0);
     expect(ctx.texts('reply')[0]).toContain('allowlist');
   });
 });

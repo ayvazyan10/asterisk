@@ -9,7 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearDetectedModels,
   detectActiveModel,
+  detectVisionSupport,
   parseModelsResponse,
+  parsePropsResponse,
+  propsUrlFor,
 } from '../src/providers/model-detect.ts';
 import { createOpenAiCompatibleProvider } from '../src/providers/openai-compatible.ts';
 
@@ -73,6 +76,147 @@ describe('parseModelsResponse', () => {
     expect(parseModelsResponse({})).toBeNull();
     expect(parseModelsResponse(null)).toBeNull();
     expect(parseModelsResponse({ data: [{ id: '   ' }] })).toBeNull();
+  });
+});
+
+describe('parseModelsResponse — modalities', () => {
+  // llama.cpp answers /v1/models with BOTH shapes in one body: the
+  // ollama-compatible `models[]` array, which is the only half carrying
+  // `capabilities`, beside the OpenAI `data[]` array that carries `meta`.
+  // This is the verbatim shape of a running mmproj-backed server.
+  const LLAMA_CPP = {
+    models: [
+      {
+        name: 'qwen3.8-27b-abliterated',
+        model: 'qwen3.8-27b-abliterated',
+        capabilities: ['completion', 'multimodal'],
+      },
+    ],
+    object: 'list',
+    data: [
+      {
+        id: 'qwen3.8-27b-abliterated',
+        object: 'model',
+        owned_by: 'llamacpp',
+        meta: { n_ctx: 131072, n_ctx_train: 262144 },
+      },
+    ],
+  };
+
+  it('reads vision out of the other array in the same body', () => {
+    expect(parseModelsResponse(LLAMA_CPP)).toEqual({
+      id: 'qwen3.8-27b-abliterated',
+      contextWindow: 131072,
+      vision: true,
+    });
+  });
+
+  it('reads a capabilities list without multimodal as a real no', () => {
+    // A list that exists and omits it is an answer, not silence — which is
+    // why `vision` is present and false rather than absent.
+    expect(
+      parseModelsResponse({
+        models: [{ name: 'phi-4', capabilities: ['completion'] }],
+        data: [{ id: 'phi-4' }],
+      }),
+    ).toEqual({ id: 'phi-4', vision: false });
+  });
+
+  it('matches the entry by id rather than by position', () => {
+    expect(
+      parseModelsResponse({
+        models: [
+          { name: 'other-model', capabilities: ['completion'] },
+          { name: 'wanted', capabilities: ['completion', 'multimodal'] },
+        ],
+        data: [{ id: 'wanted' }],
+      }),
+    ).toEqual({ id: 'wanted', vision: true });
+  });
+
+  it.each([
+    ['no models array at all', { data: [{ id: 'm' }] }],
+    ['an empty one', { models: [], data: [{ id: 'm' }] }],
+    [
+      'capabilities that are a string',
+      { models: [{ name: 'm', capabilities: 'multimodal' }], data: [{ id: 'm' }] },
+    ],
+    [
+      'capabilities that are an empty array',
+      { models: [{ name: 'm', capabilities: [] }], data: [{ id: 'm' }] },
+    ],
+    [
+      'capabilities of the wrong element type',
+      { models: [{ name: 'm', capabilities: [1, 2] }], data: [{ id: 'm' }] },
+    ],
+    ['models entries that are not objects', { models: ['nope'], data: [{ id: 'm' }] }],
+  ])('says nothing about vision given %s', (_label, body) => {
+    // `vendor extension absent` must never be recorded as `no`: the caller
+    // has a further signal to try, and a false negative would skip it.
+    const parsed = parseModelsResponse(body);
+    expect(parsed?.id).toBe('m');
+    expect(parsed && 'vision' in parsed).toBe(false);
+  });
+});
+
+describe('parsePropsResponse', () => {
+  it('reads the modalities llama.cpp publishes', () => {
+    expect(parsePropsResponse({ modalities: { vision: true, video: true, audio: false } })).toBe(
+      true,
+    );
+    expect(parsePropsResponse({ modalities: { vision: false } })).toBe(false);
+  });
+
+  it.each([
+    ['a body with no modalities', { total_slots: 1 }],
+    ['modalities of the wrong type', { modalities: 'vision' }],
+    ['a null modalities', { modalities: null }],
+    ['a non-boolean flag', { modalities: { vision: 'true' } }],
+    ['an HTML page a proxy served', '<html>404</html>'],
+    ['nothing at all', null],
+  ])('says nothing given %s', (_label, body) => {
+    expect(parsePropsResponse(body)).toBeUndefined();
+  });
+});
+
+describe('propsUrlFor', () => {
+  it('drops the version segment, because /props hangs off the root', () => {
+    expect(propsUrlFor('http://127.0.0.1:8080/v1')).toBe('http://127.0.0.1:8080/props');
+    expect(propsUrlFor('http://127.0.0.1:8080/v1/')).toBe('http://127.0.0.1:8080/props');
+    expect(propsUrlFor('http://127.0.0.1:8080')).toBe('http://127.0.0.1:8080/props');
+    // A proxy that namespaces the API keeps its own path.
+    expect(propsUrlFor('https://host/api/v1')).toBe('https://host/api/props');
+  });
+});
+
+describe('detectVisionSupport', () => {
+  it('does not ask /props when the listing already answered', async () => {
+    const served = serveModels({
+      models: [{ name: 'm', capabilities: ['completion', 'multimodal'] }],
+      data: [{ id: 'm' }],
+    });
+    await expect(detectVisionSupport(BASE)).resolves.toBe(true);
+    expect(served.calls()).toBe(1);
+  });
+
+  it('caches the /props answer so a server that 404s it is not asked per turn', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', async (url: string) => {
+      calls += 1;
+      if (url.endsWith('/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'm' }] }), { status: 200 });
+      }
+      return new Response('nope', { status: 404 });
+    });
+
+    await expect(detectVisionSupport(BASE)).resolves.toBeUndefined();
+    await expect(detectVisionSupport(BASE)).resolves.toBeUndefined();
+    // One listing, one /props — the second call answered from both caches.
+    expect(calls).toBe(2);
+  });
+
+  it('returns undefined for an endpoint with no address', async () => {
+    await expect(detectVisionSupport('')).resolves.toBeUndefined();
   });
 });
 

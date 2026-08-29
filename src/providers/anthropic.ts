@@ -49,6 +49,9 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
     name: `anthropic:${model}`,
     // Every current Claude model exposes at least a 200k window.
     contextWindow: 200_000,
+    // Every model this SDK can address accepts image blocks; there is nothing
+    // to detect and nothing a user would need to override.
+    supportsImages: async (): Promise<boolean> => true,
     async send(req: ProviderRequest): Promise<ProviderResponse> {
       let response: Anthropic.Messages.Message;
       try {

@@ -6,6 +6,7 @@ import { createAgentState, runAgentTurn } from '../agent/loop.ts';
 import type { AgentState, AgentTurnResult } from '../agent/loop.ts';
 import { loadConversation, saveConversation } from '../agent/persistence.ts';
 import { attachChatApprovals } from '../bots/approval-bridge.ts';
+import { discardImages, intakeImage } from '../bots/image-intake.ts';
 import {
   clearTurn,
   currentEpoch,
@@ -137,8 +138,10 @@ manager
     //
     // Spoken input is exempt for the same reason the slash commands below
     // are: a transcript that happens to begin with "/" is a homophone
-    // Whisper heard, not a command the user typed.
-    if (!msg.voice && parseBotCommand(msg.text)?.cmd === 'stop') {
+    // Whisper heard, not a command the user typed. A picture's caption is
+    // exempt too, and for a second reason: this branch returns before the
+    // queue, and the queue is the one owner of the downloaded file.
+    if (!msg.voice && !msg.image && parseBotCommand(msg.text)?.cmd === 'stop') {
       const result = interrupt(msg.chatId);
       // The aborted turn's own signal already denies whatever permission
       // request it was waiting on. The question rendered in the chat is a
@@ -155,7 +158,7 @@ manager
     const epochAtEnqueue = currentEpoch(msg.chatId);
     noteQueued(msg.chatId);
 
-    return turnQueue.run(msg.chatId, async () => {
+    const queued = turnQueue.run(msg.chatId, async () => {
       // Staleness is read first: the dequeue that empties a chat drops its
       // entry, and the epoch goes with it.
       const stale = isStale(msg.chatId, epochAtEnqueue);
@@ -187,7 +190,7 @@ manager
         // chat is told what is happening rather than sitting on a stale spinner.
         if (msg.voice) sink?.({ type: 'status', text: 'transcribing voice message…' });
         const intake = await intakeVoice(msg);
-        const userText = intake.text;
+        let userText = intake.text;
         if (intake.outcome) {
           if (intake.outcome.ok) {
             log.info(
@@ -201,6 +204,17 @@ manager
             );
           }
         }
+
+        // A picture is settled before anything else runs: a model that cannot
+        // see one must say so rather than answering the caption alone, and the
+        // file is deleted on that path here rather than left behind.
+        const images = await intakeImage({ ...msg, text: userText }, provider);
+        if (images.kind === 'refused') {
+          log.info({ chatId: msg.chatId, why: images.reason }, 'image refused');
+          sink?.({ type: 'final' });
+          return { text: images.reply };
+        }
+        userText = images.text;
 
         // Bot-level slash commands run inside the chat's session ALS scope so
         // they can read/mutate per-session state (tasks, plan mode). Handled
@@ -259,6 +273,8 @@ manager
         try {
           turn = await runAgentTurn(provider, state, userText, {
             signal: ctrl.signal,
+            // Empty unless this message carried a picture the gate accepted.
+            images: images.images,
             // Per-user isolation — every chatId gets its own task list, plan-mode
             // flag, browser context, monitored processes, etc. Every transport
             // shares this code path; the chatId itself is unique enough across
@@ -360,6 +376,18 @@ manager
         clearTurn(msg.chatId, ctrl);
       }
     });
+
+    // Someone's photo is theirs: it lives exactly as long as the job that
+    // needed it, and this is the only thing that ends its life. Wrapped around
+    // the whole queued job rather than sitting next to the turn, because the
+    // job has four ways out — dropped as stale, refused by the vision gate,
+    // answered, thrown — and three of them are not the turn returning.
+    // Deleting a file the intake already removed is a no-op.
+    try {
+      return await queued;
+    } finally {
+      if (msg.image) await discardImages([msg.image.path]);
+    }
   })
   .then((started) => log.info({ adapters: started }, 'adapters started'))
   .catch((e) => log.error({ err: e }, 'failed to start adapters'));

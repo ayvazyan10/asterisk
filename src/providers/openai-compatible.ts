@@ -23,7 +23,7 @@ import type {
   ToolUseBlock,
 } from '../types/messages.ts';
 import { ProviderError, classifyHttpError, parseRetryAfter } from './errors.ts';
-import { type DetectedModel, detectActiveModel } from './model-detect.ts';
+import { type DetectedModel, detectActiveModel, detectVisionSupport } from './model-detect.ts';
 import {
   type RepetitionOptions,
   createRepetitionGuard,
@@ -31,6 +31,7 @@ import {
 } from './repetition.ts';
 import { stripGrammarHostileKeywords } from './schema-sanitize.ts';
 import { parseToolArguments } from './tool-repair.ts';
+import { type ImageSupportMode, resolveImageSupport } from './vision.ts';
 
 export interface OpenAiCompatibleConfig {
   /** Endpoint root including the version segment, e.g. http://127.0.0.1:8080/v1 */
@@ -43,6 +44,8 @@ export interface OpenAiCompatibleConfig {
   contextWindow: number;
   modelTimeoutMs: number;
   modelIdleTimeoutMs: number;
+  /** Whether images may be sent: forced on, forced off, or worked out. */
+  imageSupport: ImageSupportMode;
   /** Thresholds for the runaway-repetition detector. Left at the defaults
    *  unless a caller has a reason; see providers/repetition.ts. */
   repetition?: RepetitionOptions;
@@ -56,6 +59,7 @@ export const OPENAI_COMPATIBLE_DEFAULTS: OpenAiCompatibleConfig = {
   contextWindow: 0,
   modelTimeoutMs: Number(process.env['OPENAI_MODEL_TIMEOUT_MS'] ?? 300_000),
   modelIdleTimeoutMs: Number(process.env['OPENAI_MODEL_IDLE_TIMEOUT_MS'] ?? 90_000),
+  imageSupport: 'auto',
 };
 
 // --- wire types ----------------------------------------------------------
@@ -420,6 +424,30 @@ export function createOpenAiCompatibleProvider(
       // undefined means "unknown"; compaction falls back to its own default.
       const window = detected?.contextWindow ?? cfg.contextWindow;
       return window && window > 0 ? window : undefined;
+    },
+    /**
+     * Asked before a turn carrying an image, not during one.
+     *
+     * It has to go to the server rather than read `detected`: that field is
+     * only populated once `send()` has run, so a sync answer would be a
+     * name-only guess for the first image of every process — and the name is
+     * the tier that gets an mmproj-backed model like `qwen3.8-27b-abliterated`
+     * wrong. Both lookups are cached for a minute, so this costs at most one
+     * small GET per minute and never touches the generation path.
+     */
+    async supportsImages(): Promise<boolean> {
+      // A forced mode is the whole answer, so it must not send the user's
+      // machine looking for a server that may not even be running.
+      if (cfg.imageSupport !== 'auto') {
+        return resolveImageSupport({ mode: cfg.imageSupport, modelId: '' });
+      }
+      const listed = await detectActiveModel(root, cfg.apiKey);
+      const reported = await detectVisionSupport(root, cfg.apiKey);
+      return resolveImageSupport({
+        mode: 'auto',
+        modelId: listed?.id || detected?.id || cfg.model,
+        detected: reported,
+      });
     },
     async send(req: ProviderRequest): Promise<ProviderResponse> {
       const streaming = !!req.onText;

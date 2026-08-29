@@ -87,5 +87,19 @@ export interface Provider {
    * fired. The local provider reports the server's own n_ctx.
    */
   contextWindow?: number | undefined;
+  /**
+   * Whether an image block may be sent to this backend.
+   *
+   * Async, not a getter, because on the local path the honest answer needs the
+   * server: whether the loaded model has an mmproj attached is published by
+   * llama.cpp and guessable from nothing else (see providers/vision.ts). The
+   * result is cached for a minute, so asking is cheap.
+   *
+   * Optional, and its absence means "no". A provider that has not thought
+   * about images is one that should not be sent any — failing closed here
+   * costs a caller one clear refusal, where failing open costs a mid-turn
+   * provider error that names neither images nor the setting that fixes it.
+   */
+  supportsImages?(): Promise<boolean>;
   send(request: ProviderRequest): Promise<ProviderResponse>;
 }

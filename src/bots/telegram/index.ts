@@ -21,9 +21,18 @@ import {
 import { BOT_COMMAND_LIST } from '../commands.ts';
 import { createApprovalController } from './approval.ts';
 import { balanceOpenTags, chunkHtml, escapeHtml, markdownToTelegramHtml } from './format.ts';
+import { downloadImage, isSupportedImageMime } from './image.ts';
 import { downloadVoice } from './voice.ts';
 
 const MAX_TELEGRAM_CHARS = 4096;
+/**
+ * Cap on an inbound image when the caller names none.
+ *
+ * The daemon passes `vision.maxBytes` so the transport and the agent loop
+ * refuse the same files; this is only the floor for an adapter built without
+ * config, and it matches that setting's own default.
+ */
+const DEFAULT_MAX_IMAGE_BYTES = 4_000_000;
 // 10-frame braille spinner — same glyphs CLIs like cargo / yarn use. Looks
 // like a real "rotating" indicator across one cell, no emoji-rendering quirks.
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -45,6 +54,8 @@ export interface TelegramAdapterOptions {
   streamThrottleMs?: number;
   /** plain | html — render markdown emphasis / code / links / etc. */
   parseMode?: TelegramParseMode;
+  /** Largest inbound image accepted. Anything bigger is refused, not resized. */
+  maxImageBytes?: number;
 }
 
 export interface TelegramAdapter extends BotAdapter {
@@ -66,6 +77,7 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): TelegramAda
   const streamMode: TelegramStreamMode = opts.streamMode ?? 'final';
   const throttleMs = Math.max(opts.streamThrottleMs ?? 1000, 250);
   const parseMode: TelegramParseMode = opts.parseMode ?? 'html';
+  const maxImageBytes = opts.maxImageBytes ?? DEFAULT_MAX_IMAGE_BYTES;
   const bot = new Bot(opts.token);
   const approvals = createApprovalController(allowed);
   /** Turns running outside the update stream — see the handler below. */
@@ -145,6 +157,45 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): TelegramAda
           timestamp: Date.now(),
           voice: downloaded.voice,
         });
+      });
+
+      /** Shared by both image-bearing update types — they differ only in what
+       *  makes them an image, which the callers have already settled. */
+      const startImageTurn = async (ctx: Context, userId: number): Promise<void> => {
+        const downloaded = await downloadImage(ctx, opts.token, maxImageBytes);
+        if (!downloaded.ok) {
+          await ctx.reply(`Could not read that image: ${downloaded.error}`);
+          return;
+        }
+
+        startTurn(ctx, {
+          chatId: String(ctx.chat?.id ?? userId),
+          userId: String(userId),
+          // Telegram puts a picture's text in `caption`, not `text`. An empty
+          // one is ordinary — plenty of people send a screenshot and nothing
+          // else — and the intake supplies the words in that case.
+          text: ctx.message?.caption ?? '',
+          timestamp: Date.now(),
+          image: { path: downloaded.path },
+        });
+      };
+
+      // A photo, i.e. the compressed thing the Telegram app sends by default.
+      // An album arrives as several separate updates; each is handled on its
+      // own rather than batched, so the model sees one picture per turn.
+      bot.on('message:photo', async (ctx: Context) => {
+        const userId = await authorise(ctx);
+        if (userId === null) return;
+        await startImageTurn(ctx, userId);
+      });
+
+      // "Send as file" — how anyone sends a screenshot they want kept sharp.
+      // Documents that are not images are ignored exactly as they always were.
+      bot.on('message:document', async (ctx: Context) => {
+        if (!isSupportedImageMime(ctx.message?.document?.mime_type)) return;
+        const userId = await authorise(ctx);
+        if (userId === null) return;
+        await startImageTurn(ctx, userId);
       });
 
       // Register slash commands with Telegram so users see autocomplete

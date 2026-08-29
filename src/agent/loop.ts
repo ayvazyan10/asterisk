@@ -178,6 +178,17 @@ export interface RunOptions {
    *  model call. Sub-agents and tests generally want false. */
   summariseDropped?: boolean;
   signal?: AbortSignal;
+  /**
+   * Image files to show the model alongside `userInput`.
+   *
+   * Paths rather than blocks: reading and encoding them is this module's job,
+   * and it applies the same `vision.*` caps a tool's screenshot goes through
+   * (agent/images.ts) — one place decides how many images a turn may carry and
+   * how big they may be. Callers are responsible for checking the provider can
+   * take images at all; sending them to one that cannot is a provider error,
+   * not a loop error.
+   */
+  images?: readonly string[];
   rules?: readonly Rule[];
   /** SOUL.md content — persona + user-context block prepended to the
    *  system prompt so the agent knows who it is and who it's talking to. */
@@ -253,7 +264,7 @@ async function runAgentTurnInner(
     .filter((s) => s && s.length > 0)
     .join('\n\n');
 
-  pushUserText(state.history, userInput);
+  await pushUserTurn(state.history, userInput, opts.images ?? []);
 
   // before_turn hooks fire-and-log; failures don't abort the turn.
   if (hooks.length > 0) {
@@ -759,8 +770,31 @@ function unknownToolMessage(name: string, available: readonly string[]): string 
 }
 
 /**
- * Adds the user's message, merging into the previous one when that is also a
- * user turn.
+ * Adds the user's message, plus any images attached to this turn.
+ *
+ * Images ride in the *user's own* message rather than a synthetic one after
+ * it, which is what makes "what's wrong in this screenshot?" a single coherent
+ * turn. They go through `collectImageBlocks` — the same path a tool's
+ * screenshot takes — so the `vision.*` caps apply identically whether the
+ * picture came from BrowserScreenshot or from a chat, and a file that cannot
+ * be read leaves a note the model can see rather than vanishing.
+ */
+async function pushUserTurn(
+  history: Message[],
+  text: string,
+  images: readonly string[],
+): Promise<void> {
+  const blocks: ContentBlock[] = [{ type: 'text', text } satisfies TextBlock];
+  if (images.length > 0) {
+    const { blocks: imageBlocks, notes } = await collectImageBlocks(images);
+    for (const note of notes) blocks.push({ type: 'text', text: note });
+    blocks.push(...imageBlocks);
+  }
+  pushUserBlocks(history, blocks);
+}
+
+/**
+ * Appends to the previous message when that is also a user turn.
  *
  * A turn that ended on `aborted` or `max-turns` leaves tool results — a user
  * message — as the last thing in the history, and the next turn used to push a
@@ -769,14 +803,13 @@ function unknownToolMessage(name: string, available: readonly string[]): string 
  * folds image blocks into the tool-result message for, and this was the other
  * path that broke it.
  */
-function pushUserText(history: Message[], text: string): void {
-  const block: TextBlock = { type: 'text', text };
+function pushUserBlocks(history: Message[], blocks: readonly ContentBlock[]): void {
   const last = history[history.length - 1];
   if (last?.role === 'user') {
-    history[history.length - 1] = { ...last, content: [...last.content, block] };
+    history[history.length - 1] = { ...last, content: [...last.content, ...blocks] };
     return;
   }
-  history.push({ role: 'user', content: [block] });
+  history.push({ role: 'user', content: [...blocks] });
 }
 
 /** Build a stub final reply when the model finished a turn without

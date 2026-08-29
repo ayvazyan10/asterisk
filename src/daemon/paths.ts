@@ -20,6 +20,8 @@ export interface AsteriskPaths {
   webStateFile: string;
   /** Voice messages downloaded for transcription, deleted once read. */
   audioDir: string;
+  /** Images a user sent a bot, deleted once the turn that saw them is done. */
+  imageDir: string;
 }
 
 export function asteriskPaths(): AsteriskPaths {
@@ -38,6 +40,7 @@ export function asteriskPaths(): AsteriskPaths {
     webLog: join(root, 'logs', 'web.log'),
     webStateFile: join(root, 'web.json'),
     audioDir: join(root, 'audio'),
+    imageDir: join(root, 'images'),
   };
 }
 

@@ -21,6 +21,21 @@ export interface IncomingMessage {
     /** Length reported by the transport, for the message the agent sees. */
     seconds?: number;
   };
+  /**
+   * A picture the transport downloaded, for the core to show the model.
+   *
+   * Same split as `voice`: the transport fetched the bytes and stopped there.
+   * Whether the active model can look at an image at all, and what the user is
+   * told when it cannot, is policy — see bots/image-intake.ts. The file is
+   * temporary and the handler deletes it once the turn is over.
+   *
+   * One image per message. An album arrives as several updates and each is
+   * handled on its own; batching them would mean holding a turn open waiting
+   * for updates that may never come.
+   */
+  image?: {
+    path: string;
+  };
 }
 
 export type AttachmentKind = 'image' | 'video' | 'audio' | 'document';

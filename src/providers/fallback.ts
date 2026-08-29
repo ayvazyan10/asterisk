@@ -19,6 +19,7 @@
 
 import type { Provider, ProviderRequest, ProviderResponse } from '../types/messages.ts';
 import { ProviderError, type ProviderErrorKind } from './errors.ts';
+import { providerAcceptsImages } from './vision.ts';
 
 /**
  * Failures that mean the backend is unavailable rather than the request being
@@ -104,6 +105,19 @@ export function createFallbackProvider(
     },
     get contextWindow(): number | undefined {
       return smallestWindow(links);
+    },
+
+    /**
+     * Every link, not the first one — the same reasoning as `smallestWindow`.
+     *
+     * The message carrying the image is built once and then offered to
+     * whichever link ends up answering, so a chain that says yes because its
+     * head is multimodal turns a failover into a rejected request. A link that
+     * never declared the capability counts as a no.
+     */
+    async supportsImages(): Promise<boolean> {
+      const answers = await Promise.all(links.map((l) => providerAcceptsImages(l.provider)));
+      return answers.every(Boolean);
     },
 
     async send(req: ProviderRequest): Promise<ProviderResponse> {

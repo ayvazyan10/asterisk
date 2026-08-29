@@ -102,5 +102,6 @@ function buildOpenAiCompatible(loaded: LoadedConfig): Provider {
     contextWindow: cfg.contextWindow,
     modelTimeoutMs: cfg.modelTimeoutMs,
     modelIdleTimeoutMs: cfg.modelIdleTimeoutMs,
+    imageSupport: cfg.imageSupport,
   });
 }

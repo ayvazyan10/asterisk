@@ -14,6 +14,11 @@ import { z } from 'zod';
 // `anthropic` is the opt-in hosted alternative.
 const ProviderSchema = z.enum(['openai-compatible', 'anthropic']);
 
+// The three states of `openaiCompatible.imageSupport`. `/v1/models` names the
+// model but not its modalities, so `auto` has real work to do — see
+// providers/vision.ts for the tiers and why an unknown model refuses.
+export const ImageSupportSchema = z.enum(['auto', 'on', 'off']);
+
 const OpenAiCompatibleSchema = z.object({
   baseUrl: z
     .string()
@@ -56,6 +61,9 @@ const OpenAiCompatibleSchema = z.object({
     .max(300000)
     .default(90_000)
     .describe('Abort a generation that stops emitting tokens for this long.'),
+  imageSupport: ImageSupportSchema.default('auto').describe(
+    'Whether this endpoint can be sent images. auto asks the server (llama.cpp reports its modalities) and falls back to reading the model name, refusing when it cannot tell. Set on for a vision model the server does not advertise, off to never send images.',
+  ),
 });
 
 const AnthropicSchema = z.object({
