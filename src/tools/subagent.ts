@@ -142,7 +142,11 @@ export async function runSubAgent(
   try {
     const allowedTools = agentType?.allowedTools;
     const runOpts: Parameters<typeof runAgentTurn>[3] = {
-      session: { id: parent.id, scope: 'sub-agent' },
+      // Spread first so a sub-agent inherits every per-session field the
+      // parent carries (today just headlessOverride, from `asterisk run
+      // --allow-tools`) without this file having to know each one by name —
+      // only `scope` is deliberately different from the parent's.
+      session: { ...parent, scope: 'sub-agent' },
       maxTurns,
       maxRetries: DEFAULT_SUB_MAX_RETRIES,
       rules,

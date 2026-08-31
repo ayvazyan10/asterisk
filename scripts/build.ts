@@ -1,5 +1,5 @@
 // Bun bundler entry — produces
-// dist/{cli,daemon,control,configure,update,web,acp,eval,mcp-server}.js.
+// dist/{cli,daemon,control,configure,update,web,acp,eval,mcp-server,run}.js.
 // Reference: https://bun.sh/docs/bundler
 
 import { mkdir, rm } from 'node:fs/promises';
@@ -53,6 +53,7 @@ const result = await Bun.build({
     resolve(root, 'src/entrypoints/acp.ts'),
     resolve(root, 'src/entrypoints/eval.ts'),
     resolve(root, 'src/entrypoints/mcp-server.ts'),
+    resolve(root, 'src/entrypoints/run.ts'),
   ],
   outdir,
   // Pinned, not inferred. Bun derives the output root from the entrypoints,
@@ -60,12 +61,14 @@ const result = await Bun.build({
   // and mirrors the source tree instead — dist/src/entrypoints/cli.js rather
   // than dist/cli.js, which is every path in bin/asterisk missing at once.
   // Naming it makes the layout a property of this file instead of a property
-  // of how many entrypoints happen to be listed above.
+  // of how many entrypoints happen to be listed above. Still true with a
+  // tenth entrypoint added here — this is exactly what `root` exists to pin
+  // down regardless of count.
   root: resolve(root, 'src/entrypoints'),
   target: 'bun',
   format: 'esm',
   minify,
-  // The nine entrypoints share nearly all of their graph — ink, React, the
+  // The entrypoints share nearly all of their graph — ink, React, the
   // tool registry, the MCP SDK — and without splitting each one inlined its
   // own copy: four bundles of ~5 MB that were mostly the same bytes. Shared
   // code moves into hashed chunks the entrypoints import, which took the

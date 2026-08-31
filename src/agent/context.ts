@@ -13,6 +13,17 @@ export interface AgentSession {
   /** Source channel — informational, used by tools that want to behave
    *  differently in bot vs REPL contexts. */
   scope: 'repl' | 'telegram' | 'sub-agent' | 'scheduled' | 'unknown';
+  /**
+   * Per-run override of `permissions.headless` (tools/bash-gate.ts), scoped to
+   * this session only — never written to the stored config.
+   *
+   * `asterisk run --allow-tools` is the one caller that sets this today: an
+   * explicit, process-lifetime-only flag rather than a config edit, so the
+   * grant is visible in the run's own argv instead of hiding in a file, and
+   * never widens what the REPL, the daemon or a bot transport does with an
+   * unattended prompt. See src/run/cli.ts for the reasoning.
+   */
+  headlessOverride?: 'deny' | 'allow';
 }
 
 const store = new AsyncLocalStorage<AgentSession>();

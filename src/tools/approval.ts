@@ -61,6 +61,35 @@ interface Subscriber {
 const subscribers = new Set<Subscriber>();
 const pending = new Map<string, (result: ApprovalResult) => void>();
 
+// Per-session count of requests that resolved to an automatic denial —
+// nobody could be asked, or nobody answered in time. Kept separate from the
+// ordinary refusal path (a person saying no) because a caller like
+// `asterisk run` (src/run/cli.ts) needs to tell "refused by policy, and the
+// model can work around that" apart from "refused only because this run had
+// nobody to ask", and the tool_result text the model sees is not a contract
+// any other module should be parsing to recover that distinction.
+const autoDenials = new Map<string, number>();
+
+/** How many approval requests in `sessionId` resolved automatically-denied
+ *  since the counter was last cleared for it. */
+export function automaticDenialCount(sessionId: string): number {
+  return autoDenials.get(sessionId) ?? 0;
+}
+
+/** Drops the counter for one session. Callers that read it once per run
+ *  should clear it afterwards so a long-lived process (the daemon) never
+ *  accumulates counts for session ids it will never look at again. */
+export function clearAutomaticDenials(sessionId: string): void {
+  autoDenials.delete(sessionId);
+}
+
+function recordIfAutomaticDenial(sessionId: string, result: ApprovalResult): ApprovalResult {
+  if (result.automatic && result.outcome === 'deny') {
+    autoDenials.set(sessionId, (autoDenials.get(sessionId) ?? 0) + 1);
+  }
+  return result;
+}
+
 /** Subscribe a UI. Returns an unsubscribe function. */
 export function onApprovalRequest(
   handler: (req: ApprovalRequest) => void,
@@ -105,10 +134,15 @@ export async function requestApproval(
 ): Promise<ApprovalResult> {
   const sessionId = currentSessionId();
   if (!hasApprover(sessionId)) {
-    return { outcome: opts.headless === 'allow' ? 'allow-once' : 'deny', automatic: true };
+    return recordIfAutomaticDenial(sessionId, {
+      outcome: opts.headless === 'allow' ? 'allow-once' : 'deny',
+      automatic: true,
+    });
   }
 
-  if (opts.signal?.aborted) return { outcome: 'deny', automatic: true };
+  if (opts.signal?.aborted) {
+    return recordIfAutomaticDenial(sessionId, { outcome: 'deny', automatic: true });
+  }
 
   const id = `perm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const answered = new Promise<ApprovalResult>((resolve) => {
@@ -144,15 +178,20 @@ export async function requestApproval(
   }
 
   try {
-    return await Promise.race(aborted ? [answered, timedOut, aborted] : [answered, timedOut]);
+    const result = await Promise.race(
+      aborted ? [answered, timedOut, aborted] : [answered, timedOut],
+    );
+    return recordIfAutomaticDenial(sessionId, result);
   } finally {
     if (timer) clearTimeout(timer);
     pending.delete(id);
   }
 }
 
-/** Test-only: drop any request left pending by a failed assertion. */
+/** Test-only: drop any request left pending by a failed assertion, and any
+ *  automatic-denial counters a test run left behind. */
 export function _resetApprovalsForTesting(): void {
   pending.clear();
   subscribers.clear();
+  autoDenials.clear();
 }

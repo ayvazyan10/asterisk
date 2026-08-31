@@ -5,6 +5,7 @@
 // testable without a database, and separate from bash.ts so the tool body
 // stays about running commands.
 
+import { currentSession } from '../agent/context.ts';
 import { loadConfig } from '../config/load.ts';
 import { getDb } from '../db/index.ts';
 import { grantRules, grantedAllowRules } from '../db/permissions.ts';
@@ -36,6 +37,13 @@ interface Resolved extends PolicyInput {
 }
 
 function resolvePolicy(): Resolved {
+  // A session-scoped override — set only by `asterisk run --allow-tools`
+  // (src/run/cli.ts) — beats the stored config's `headless` for calls made
+  // inside that session, and only that session. Nothing else in the process
+  // (a concurrent REPL, another session's turn) sees it: AsyncLocalStorage
+  // scopes it the same way it already scopes tasks, plan mode and worktrees.
+  const override = currentSession().headlessOverride;
+
   try {
     const { config } = loadConfig();
     const p = config.permissions;
@@ -44,7 +52,7 @@ function resolvePolicy(): Resolved {
       mode: p.mode,
       allow: [...p.allow, ...granted],
       deny: p.deny,
-      headless: p.headless,
+      headless: override ?? p.headless,
       timeoutMs: p.timeoutSeconds * 1000,
     };
   } catch {
@@ -52,7 +60,7 @@ function resolvePolicy(): Resolved {
       mode: FALLBACK.mode,
       allow: [...FALLBACK.allow],
       deny: [...FALLBACK.deny],
-      headless: FALLBACK.headless,
+      headless: override ?? FALLBACK.headless,
       timeoutMs: FALLBACK.timeoutSeconds * 1000,
     };
   }
