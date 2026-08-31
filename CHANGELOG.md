@@ -5,6 +5,62 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-31
+
+### Added
+
+- **`asterisk run "the prompt"` — one turn, one exit code, for callers that are
+  not a person.** Every existing way in assumed someone was there: the REPL
+  needs a terminal, the daemon needs to be running, ACP and MCP need a client
+  that speaks them. Nothing let another program hand over a prompt, get an
+  answer and read an exit code, which is what a build script, a cron line or an
+  orchestrator actually needs. The run happens in the current working
+  directory. Final assistant text goes to stdout and nothing else, so a caller
+  can capture it without parsing around progress; tool activity goes to stderr,
+  where a human watching gets it for free. Ten distinct exit codes rather than
+  one catch-all, because a caller that cannot tell "the model refused" from
+  "the model crashed" has to guess. The prompt also comes from stdin when no
+  argument is given — unless stdin is a terminal, which is a usage error rather
+  than an invitation to hang. A one-shot run is detached from the conversation
+  store: fresh state, nothing loaded, nothing saved, following the daemon's
+  scheduled dispatch rather than the REPL, so a caller running hundreds of
+  these does not silently grow the user's history. Rules, souls and hooks still
+  load.
+- **`--allow-tools`, a flag rather than a config change.** It grants the run
+  what `permissions.headless` would grant, for that session only — an
+  AsyncLocalStorage override read by the bash gate, the same mechanism that
+  already scopes tasks, plan mode and worktrees. Setting `headless: allow` in
+  the stored config instead would have made every bot turn unattended too, a
+  far wider change than one subcommand needs; and a flag is visible in the
+  process's own argv, so anything that spawns Asterisk and later reports what
+  it ran shows the grant in the command line rather than hiding it in a file.
+  It moves only `headless`: `mode`, `allow` and `deny` are standing policy the
+  user set deliberately, and an allowlist refusal stays a refusal even here.
+
+### Changed
+
+- **An unattended run that keeps being refused now stops instead of grinding.**
+  Measured against a real local model: one run with no flag spent four minutes
+  on `echo >`, `printf | tee`, `bash -c`, `touch`, `sort -o`, `curl -o` and a
+  `data:` URL, then went reading this repository's own permission source and
+  grepping the database for the rules. Nothing got through — the Bash policy
+  refused every attempt and named its reason — but nothing stopped it either,
+  so it died to an external timeout instead of its own exit code. Three
+  consecutive automatic denials now end the run: one refusal is ordinary
+  exploration, two already looks like guessing at the policy, three is certain.
+  The streak resets on any allowed call, so a run that is denied, works, and is
+  denied again is exploring rather than stuck. The same run afterwards takes
+  7.5 seconds and exits 3.
+
+### Fixed
+
+- **A sub-agent inherited only its parent's session id**, so per-session state
+  did not reach it. Found while tracing the permission path end to end: under
+  `--allow-tools` a sub-agent's Bash calls would have fallen back to the stored
+  config's `headless` instead of the parent's grant. It now spreads the parent
+  session and overrides `scope` alone, so every per-session field travels
+  without this file having to know each one by name.
+
 ## [0.5.0] - 2026-08-29
 
 ### Added
