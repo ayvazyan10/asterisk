@@ -19,7 +19,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 describe('scheduler — cron dedup across a dispatch that outlives one tick', () => {
   let home: string;
@@ -43,7 +43,118 @@ describe('scheduler — cron dedup across a dispatch that outlives one tick', ()
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     writeCronJobs([]);
+  });
+
+  it('fires once for matching minutes missed during a long dispatch', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 19, 9, 0));
+    writeCronJobs([
+      { id: 'slow', cron: '0,1,2 9 * * *', prompt: 'work', enabled: true, createdAt: Date.now() },
+    ]);
+    let releaseDispatch: (() => void) | undefined;
+    const dispatch = vi.fn().mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDispatch = resolve;
+        }),
+    );
+    const scheduler = createScheduler({ dispatch, log: () => {} });
+    scheduler.start();
+    try {
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      releaseDispatch?.();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(dispatch).toHaveBeenCalledTimes(2);
+      expect(readCronJobs()[0]?.lastRunAt).toBe(new Date(2026, 9, 19, 9, 4).getTime());
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(dispatch).toHaveBeenCalledTimes(2);
+    } finally {
+      scheduler.stop();
+      releaseDispatch?.();
+    }
+  });
+
+  it('evaluates only the current minute on the first tick', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 19, 9, 30));
+    writeCronJobs(
+      ['29', '30'].map((minute) => ({
+        id: minute,
+        cron: `${minute} 9 * * *`,
+        prompt: minute,
+        enabled: true,
+        createdAt: new Date(2026, 9, 18).getTime(),
+      })),
+    );
+    const dispatch = vi.fn();
+    const scheduler = createScheduler({ dispatch, log: () => {} });
+    scheduler.start();
+    try {
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(dispatch.mock.calls).toEqual([['30', 'cron:30']]);
+    } finally {
+      scheduler.stop();
+    }
+  });
+
+  it('does not catch up minutes more than 60 minutes back', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 19, 9, 0));
+    writeCronJobs(
+      ['59 9 * * *', '0 10 * * *', '0 11 * * *'].map((cron) => ({
+        id: cron,
+        cron,
+        prompt: cron,
+        enabled: true,
+        createdAt: Date.now(),
+      })),
+    );
+    const dispatch = vi.fn();
+    const scheduler = createScheduler({ dispatch, log: () => {} });
+    scheduler.start();
+    try {
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(dispatch).not.toHaveBeenCalled();
+      vi.setSystemTime(new Date(2026, 9, 19, 11, 0));
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(dispatch.mock.calls).toEqual([
+        ['0 10 * * *', 'cron:0 10 * * *'],
+        ['0 11 * * *', 'cron:0 11 * * *'],
+      ]);
+    } finally {
+      scheduler.stop();
+    }
+  });
+
+  it('deduplicates the current local minute using persisted lastRunAt', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 19, 9, 0));
+    writeCronJobs([
+      {
+        id: 'already-ran',
+        cron: '* * * * *',
+        prompt: 'work',
+        enabled: true,
+        createdAt: Date.now(),
+        lastRunAt: Date.now(),
+      },
+    ]);
+    const dispatch = vi.fn();
+    const scheduler = createScheduler({ dispatch, log: () => {} });
+    scheduler.start();
+    try {
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(dispatch).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(dispatch).toHaveBeenCalledTimes(1);
+    } finally {
+      scheduler.stop();
+    }
   });
 
   it('does not re-fire a "* * * * *" job while its dispatch is still running', async () => {

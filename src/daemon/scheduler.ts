@@ -40,6 +40,7 @@ export function createScheduler(opts: SchedulerOptions): Scheduler {
   // again, even though its previous firing never returned. Serialising ticks
   // here caps concurrent dispatches at one, system-wide.
   let ticking = false;
+  let lastEvaluatedMinute: number | undefined;
 
   async function tick(): Promise<void> {
     if (ticking) return;
@@ -77,9 +78,20 @@ export function createScheduler(opts: SchedulerOptions): Scheduler {
   async function runCronJobs(): Promise<void> {
     try {
       const now = new Date();
+      const currentMinute = Math.floor(now.getTime() / 60_000) * 60_000;
+      const firstMinute = Math.max(
+        lastEvaluatedMinute === undefined ? currentMinute : lastEvaluatedMinute + 60_000,
+        currentMinute - 60 * 60_000,
+      );
+      const minutes: Date[] = [];
+      for (let minute = firstMinute; minute <= currentMinute; minute += 60_000) {
+        minutes.push(new Date(minute));
+      }
       const cronJobs = readCronJobs();
       const due = cronJobs.filter(
-        (job) => job.enabled && cronMatches(job.cron, now) && shouldFireCron(job, now),
+        (job) =>
+          job.enabled &&
+          minutes.some((minute) => cronMatches(job.cron, minute) && shouldFireCron(job, minute)),
       );
       // Persisted before dispatch, same as the one-shot branch above: a
       // dispatch that runs long must not leave a stale lastRunAt on disk for
@@ -89,6 +101,7 @@ export function createScheduler(opts: SchedulerOptions): Scheduler {
         for (const job of due) job.lastRunAt = now.getTime();
         writeCronJobs(cronJobs);
       }
+      lastEvaluatedMinute = currentMinute;
       for (const job of due) {
         opts.log({ type: 'cron_fire', id: job.id, cron: job.cron });
         try {
@@ -123,11 +136,11 @@ function shouldFireCron(job: CronJob, now: Date): boolean {
   if (!job.lastRunAt) return true;
   const last = new Date(job.lastRunAt);
   return (
-    last.getUTCFullYear() !== now.getUTCFullYear() ||
-    last.getUTCMonth() !== now.getUTCMonth() ||
-    last.getUTCDate() !== now.getUTCDate() ||
-    last.getUTCHours() !== now.getUTCHours() ||
-    last.getUTCMinutes() !== now.getUTCMinutes()
+    last.getFullYear() !== now.getFullYear() ||
+    last.getMonth() !== now.getMonth() ||
+    last.getDate() !== now.getDate() ||
+    last.getHours() !== now.getHours() ||
+    last.getMinutes() !== now.getMinutes()
   );
 }
 
@@ -176,13 +189,14 @@ export function cronMatches(expr: string, when: Date): boolean {
   const hours = expandCronField(hour, 0, 23);
   const doms = expandCronField(dom, 1, 31);
   const months = expandCronField(month, 1, 12);
-  const dows = expandCronField(dow, 0, 6); // 0=Sunday
+  const dows = expandCronField(dow, 0, 7); // 0 and 7 = Sunday
+  if (dows.has(7)) dows.add(0);
 
   return (
-    minutes.has(when.getUTCMinutes()) &&
-    hours.has(when.getUTCHours()) &&
-    doms.has(when.getUTCDate()) &&
-    months.has(when.getUTCMonth() + 1) &&
-    dows.has(when.getUTCDay())
+    minutes.has(when.getMinutes()) &&
+    hours.has(when.getHours()) &&
+    doms.has(when.getDate()) &&
+    months.has(when.getMonth() + 1) &&
+    dows.has(when.getDay())
   );
 }

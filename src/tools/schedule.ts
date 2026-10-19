@@ -143,7 +143,7 @@ export const scheduleWakeupTool: Tool = {
 export const cronCreateTool: Tool = {
   name: 'CronCreate',
   description:
-    'Schedule a recurring agent prompt using a 5-field cron expression (minute hour dom month dow). Examples: "0 9 * * 1-5" weekday 9am, "*/15 * * * *" every 15 minutes.',
+    'Schedule a recurring agent prompt using a 5-field cron expression (minute hour dom month dow) in the daemon machine\'s local time. Examples: "0 9 * * 1-5" weekday 9am, "*/15 * * * *" every 15 minutes.',
   input_schema: {
     type: 'object',
     properties: {
