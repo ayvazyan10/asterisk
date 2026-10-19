@@ -18,7 +18,13 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import type { LifecycleResult } from '../daemon/lifecycle.ts';
 import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
-import { clearPid, statusFromPidFile, writePid, writePidExclusive } from '../daemon/pidfile.ts';
+import {
+  clearPid,
+  clearPidIfUnchanged,
+  statusFromPidFile,
+  writePid,
+  writePidExclusive,
+} from '../daemon/pidfile.ts';
 import { PROJECT_ROOT, entrypointPath } from '../daemon/project-root.ts';
 import { touchOwnerOnly } from '../utils/fs-safe.ts';
 import { type WebFlags, childArgv } from './cli-args.ts';
@@ -58,7 +64,7 @@ export async function startWebPanel(flags: WebFlags): Promise<StartWebResult> {
     const where = running ? ` — ${running.url}` : '';
     return { ok: false, message: `control panel already running (pid ${status.pid})${where}` };
   }
-  if (status.stale) clearPid(paths.webPidFile);
+  if (status.stale) clearPidIfUnchanged(paths.webPidFile, status.pid);
 
   // Reserve the pid file before spawning, so a second `asterisk web` in the
   // same instant loses cleanly instead of starting a server nothing can stop.

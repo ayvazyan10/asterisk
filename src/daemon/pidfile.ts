@@ -125,3 +125,16 @@ export function writePidExclusive(pidFile: string, pid: number): boolean {
 export function clearPid(pidFile: string): void {
   if (existsSync(pidFile)) unlinkSync(pidFile);
 }
+
+/**
+ * Removes the pidfile only if it still holds the record that was inspected.
+ *
+ * A plain clear-then-reserve is a race: two starters both see the same stale
+ * file, the first clears it and writes its reservation, and the second's clear
+ * deletes that fresh reservation. Comparing the pid closes the window.
+ */
+export function clearPidIfUnchanged(pidFile: string, expectedPid: number | null): void {
+  const record = readRecord(pidFile);
+  if (record === null || record.pid !== expectedPid) return;
+  clearPid(pidFile);
+}

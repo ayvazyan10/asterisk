@@ -1,12 +1,12 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { asteriskPaths } from '../src/daemon/paths.ts';
-import { statusFromPidFile } from '../src/daemon/pidfile.ts';
+import { clearPidIfUnchanged, statusFromPidFile } from '../src/daemon/pidfile.ts';
 import { type SqliteDriver, openDriver } from '../src/db/driver.ts';
 import { migrate } from '../src/db/migrations.ts';
 import { openBrowserForPanel } from '../src/entrypoints/web.ts';
@@ -75,6 +75,36 @@ describe('parseWebArgs', () => {
     expect(argv.join(' ')).toContain('--host 127.0.0.1');
     expect(argv.join(' ')).toContain('--port 4444');
     expect(argv).toContain('--no-auth');
+  });
+});
+
+describe('clearPidIfUnchanged', () => {
+  let dir: string;
+  let pidFile: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'asterisk-pid-'));
+    pidFile = join(dir, 'asterisk.pid');
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('removes a stale file whose record still matches', async () => {
+    await writeFile(pidFile, '999999\n12345\n');
+    clearPidIfUnchanged(pidFile, 999999);
+    expect(existsSync(pidFile)).toBe(false);
+  });
+
+  it('leaves a file that was replaced after the status read', async () => {
+    await writeFile(pidFile, '4242\n');
+    clearPidIfUnchanged(pidFile, 999999);
+    expect(await readFile(pidFile, 'utf8')).toBe('4242\n');
+  });
+
+  it('is a no-op when the file is already gone', () => {
+    expect(() => clearPidIfUnchanged(pidFile, 999999)).not.toThrow();
   });
 });
 

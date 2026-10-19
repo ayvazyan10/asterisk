@@ -6,7 +6,13 @@ import { existsSync, openSync, readFileSync, statSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { asteriskPaths, ensurePaths } from './paths.ts';
-import { clearPid, statusFromPidFile, writePid, writePidExclusive } from './pidfile.ts';
+import {
+  clearPid,
+  clearPidIfUnchanged,
+  statusFromPidFile,
+  writePid,
+  writePidExclusive,
+} from './pidfile.ts';
 import { PROJECT_ROOT, entrypointPath } from './project-root.ts';
 
 function daemonEntry(): string {
@@ -26,7 +32,7 @@ export async function start(): Promise<LifecycleResult> {
   if (status.running) {
     return { ok: false, message: `daemon already running (pid ${status.pid})` };
   }
-  if (status.stale) clearPid(paths.pidFile);
+  if (status.stale) clearPidIfUnchanged(paths.pidFile, status.pid);
 
   // Reserve the pidfile before spawning. Checking the status and then spawning
   // left a window in which two `asterisk start` calls both passed the check and
