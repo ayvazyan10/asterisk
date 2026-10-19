@@ -1,6 +1,6 @@
 // Read tool — reads a file (text only), with optional line range.
 
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { type Tool, err, ok } from './types.ts';
 
@@ -30,9 +30,14 @@ export const readTool: Tool = {
 
     try {
       const abs = resolve(path);
+      const st = await stat(abs);
+      if (!st.isFile()) return err(`not a regular file: ${path}`);
+      if (st.size > MAX_BYTES) {
+        return err(`file too large (${st.size} bytes); refuse to read >1MB`);
+      }
       const buf = await readFile(abs);
-      if (buf.byteLength > MAX_BYTES) {
-        return err(`file too large (${buf.byteLength} bytes); refuse to read >1MB`);
+      if (buf.subarray(0, 8192).includes(0)) {
+        return err('binary file (contains NUL bytes); refusing to read as text');
       }
       // Split on any of \r\n, \r or \n rather than \n alone: a CRLF file
       // split only on \n leaves a trailing \r on every line — invisible in
@@ -40,8 +45,13 @@ export const readTool: Tool = {
       // model. An agent composing a multi-line Edit oldString from what it
       // "saw" here naturally leaves that \r out, which used to make Edit's
       // exact-match search fail against every CRLF file. See edit.ts.
-      const lines = buf.toString('utf8').split(/\r\n|\r|\n/);
+      const text = buf.toString('utf8');
+      const lines = text.split(/\r\n|\r|\n/);
+      if (/[\r\n]$/.test(text)) lines.pop();
       const slice = lines.slice(offset - 1, offset - 1 + limit);
+      if (slice.length === 0 && offset > 1) {
+        return ok(`(offset ${offset} is past end of file; file has ${lines.length} lines)`);
+      }
       const numbered = slice
         .map((line, i) => `${String(offset + i).padStart(5, ' ')}\t${line}`)
         .join('\n');

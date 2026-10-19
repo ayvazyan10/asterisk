@@ -111,7 +111,7 @@ export const writeTool: Tool = {
       } finally {
         await handle.close();
       }
-      return ok(`wrote ${content.length} bytes to ${abs}${note}`);
+      return ok(`wrote ${Buffer.byteLength(content, 'utf8')} bytes to ${abs}${note}`);
     } catch (e) {
       return err(`Write failed: ${(e as Error).message}`);
     }

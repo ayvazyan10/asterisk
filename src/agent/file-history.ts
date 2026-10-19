@@ -1,4 +1,4 @@
-import { chmodSync, copyFileSync, existsSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -13,6 +13,8 @@ interface FileSnapshot {
 
 const snapshots: FileSnapshot[] = [];
 let seqCounter = 0;
+const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+let prunedOnce = false;
 
 function historyDir(): string {
   const dir = join(process.env['ASTERISK_HOME'] ?? join(homedir(), '.asterisk'), 'file-history');
@@ -23,6 +25,21 @@ function historyDir(): string {
 export function recordFileChange(filePath: string, tool: string): void {
   if (!existsSync(filePath)) return;
   const dir = historyDir();
+  if (!prunedOnce) {
+    prunedOnce = true;
+    try {
+      for (const name of readdirSync(dir)) {
+        try {
+          const backup = join(dir, name);
+          if (Date.now() - statSync(backup).mtimeMs > RETENTION_MS) unlinkSync(backup);
+        } catch {
+          // best-effort — one unreadable or busy file doesn't stop the sweep
+        }
+      }
+    } catch {
+      // best-effort — the history dir may not exist yet
+    }
+  }
   const ts = Date.now();
   const safe = basename(filePath).replace(/[^a-zA-Z0-9._-]/g, '_');
   const backupPath = join(dir, `${ts}-${seqCounter++}-${safe}`);
@@ -33,7 +50,16 @@ export function recordFileChange(filePath: string, tool: string): void {
     copyFileSync(filePath, backupPath);
     chmodSync(backupPath, OWNER_ONLY_FILE);
     snapshots.push({ path: filePath, timestamp: ts, tool, backupPath });
-    if (snapshots.length > 200) snapshots.shift();
+    if (snapshots.length > 200) {
+      const evicted = snapshots.shift();
+      if (evicted) {
+        try {
+          unlinkSync(evicted.backupPath);
+        } catch {
+          // best-effort — an orphaned backup is harmless
+        }
+      }
+    }
   } catch {
     // best-effort — don't fail the tool if backup fails
   }

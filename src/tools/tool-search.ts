@@ -49,12 +49,23 @@ export const toolSearchTool: Tool = {
     const max = clampMax(input['maxResults']);
 
     const tools = listTools();
-    const matches = raw.toLowerCase().startsWith('select:')
-      ? selectByName(tools, raw.slice('select:'.length))
-      : rankByKeyword(tools, raw.toLowerCase()).slice(0, max);
+    let matches: Tool[];
+    let missing: string[] = [];
+    if (raw.toLowerCase().startsWith('select:')) {
+      const picked = selectByName(tools, raw.slice('select:'.length));
+      matches = picked.matches;
+      missing = picked.missing;
+    } else {
+      matches = rankByKeyword(tools, raw.toLowerCase()).slice(0, max);
+    }
 
-    if (matches.length === 0) return ok('no tools matched the query');
-    return ok(renderDefinitions(matches));
+    if (matches.length === 0) {
+      return ok(
+        missing.length > 0 ? `not found: ${missing.join(', ')}` : 'no tools matched the query',
+      );
+    }
+    const body = renderDefinitions(matches);
+    return ok(missing.length > 0 ? `${body}\nnot found: ${missing.join(', ')}` : body);
   },
 };
 
@@ -64,12 +75,19 @@ function clampMax(value: unknown): number {
 }
 
 /** Exact-name form. Deterministic, and the cheapest way back to a known tool. */
-function selectByName(tools: readonly Tool[], list: string): Tool[] {
+function selectByName(
+  tools: readonly Tool[],
+  list: string,
+): { matches: Tool[]; missing: string[] } {
   const wanted = list
     .split(',')
-    .map((n) => n.trim().toLowerCase())
+    .map((n) => n.trim())
     .filter(Boolean);
-  return tools.filter((t) => wanted.includes(t.name.toLowerCase()));
+  const wantedLower = wanted.map((n) => n.toLowerCase());
+  const matches = tools.filter((t) => wantedLower.includes(t.name.toLowerCase()));
+  const known = new Set(matches.map((t) => t.name.toLowerCase()));
+  const missing = [...new Set(wanted.filter((n) => !known.has(n.toLowerCase())))];
+  return { matches, missing };
 }
 
 function rankByKeyword(tools: readonly Tool[], query: string): Tool[] {

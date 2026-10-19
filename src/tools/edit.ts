@@ -115,6 +115,9 @@ export const editTool: Tool = {
     const replaceAll = input['replaceAll'] === true;
     if (!path) return err('path is required');
     if (!oldString) return err('oldString is required (and must be non-empty)');
+    if (oldString === newString) {
+      return err('oldString and newString are identical; nothing to change');
+    }
     const guard = checkWritable(path);
     if (guard) return err(guard);
 

@@ -34,7 +34,11 @@ export const globTool: Tool = {
       });
       const limited = found.slice(0, 1000);
       if (limited.length === 0) return ok('(no matches)');
-      return ok(limited.join('\n'));
+      const body = limited.join('\n');
+      if (found.length > limited.length) {
+        return ok(`${body}\n[truncated: showing ${limited.length} of ${found.length} matches]`);
+      }
+      return ok(body);
     } catch (e) {
       return err(`Glob failed: ${(e as Error).message}`);
     }
