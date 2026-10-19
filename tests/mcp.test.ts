@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { saveConfig } from '../src/config/load.ts';
 import { ConfigSchema, type McpServerConfig } from '../src/config/schema.ts';
-import { connectMcpServer } from '../src/mcp/client.ts';
+import { asLocalTool, connectMcpServer } from '../src/mcp/client.ts';
 import { createMcpManager } from '../src/mcp/manager.ts';
 
 describe('McpManager', () => {
@@ -115,5 +115,16 @@ describe('connectMcpServer tool discovery', () => {
 
     await expect(connectMcpServer(config)).rejects.toThrow('boom');
     expect(close).toHaveBeenCalled();
+  });
+
+  it('passes the abort signal through to callTool', async () => {
+    const callTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
+    const server = { config, client: { callTool } } as unknown as Parameters<typeof asLocalTool>[0];
+    const tool = asLocalTool(server, { name: 'slow', inputSchema: { type: 'object' } });
+    const ctrl = new AbortController();
+
+    await tool.execute({}, { signal: ctrl.signal });
+
+    expect(callTool.mock.calls[0]?.[2]).toEqual({ signal: ctrl.signal });
   });
 });

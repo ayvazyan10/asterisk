@@ -202,12 +202,15 @@ export function asLocalTool(server: ConnectedMcpServer, remote: RemoteToolDefini
             properties: {},
             additionalProperties: true,
           },
-    async execute(input) {
+    async execute(input, opts) {
       try {
-        const res = await server.client.callTool({
-          name: remote.name,
-          arguments: input as Record<string, unknown>,
-        });
+        // The signal lets ESC / /stop cancel the request (and tells the
+        // server so) instead of waiting out the SDK's 60s request timeout.
+        const res = await server.client.callTool(
+          { name: remote.name, arguments: input as Record<string, unknown> },
+          undefined,
+          opts?.signal ? { signal: opts.signal } : undefined,
+        );
         const text = formatToolContent(res.content);
         if (res.isError) return err(text || 'mcp tool returned error');
         return ok(text);
