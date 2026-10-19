@@ -425,6 +425,13 @@ export function createOpenAiCompatibleProvider(
       const window = detected?.contextWindow ?? cfg.contextWindow;
       return window && window > 0 ? window : undefined;
     },
+    async refresh(): Promise<void> {
+      try {
+        await resolveModel();
+      } catch {
+        // Metadata is best-effort; send() surfaces connection failures.
+      }
+    },
     /**
      * Asked before a turn carrying an image, not during one.
      *
@@ -568,6 +575,7 @@ async function readStream(
   let finish: string | null | undefined;
   const toolCalls = new ToolCallBuffer();
   const repetition = createRepetitionGuard(cfg.repetition ?? {});
+  const reasoningRepetition = createRepetitionGuard(cfg.repetition ?? {});
   let runaway = false;
 
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -597,6 +605,9 @@ async function readStream(
       return; // a truncated frame is not worth failing the turn over
     }
 
+    if (event.error) {
+      throw new ProviderError('bad-request', event.error.message ?? 'stream error');
+    }
     const choice = event.choices?.[0];
     if (!choice) return;
     if (choice.finish_reason) finish = choice.finish_reason;
@@ -613,6 +624,7 @@ async function readStream(
       }
     }
     if (delta.reasoning_content) {
+      if (reasoningRepetition.push(delta.reasoning_content)) runaway = true;
       try {
         req.onThinking?.(delta.reasoning_content);
       } catch {

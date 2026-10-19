@@ -72,7 +72,7 @@ const ELLIPSIS = '…';
  * in summarise.ts — under-reserving would put the compacted history back over
  * budget and make compaction fire again on the very next turn.
  */
-const SUMMARY_TOKEN_RESERVE = 700;
+export const SUMMARY_TOKEN_RESERVE = 700;
 
 /**
  * Per-message cost, memoised on the message object.

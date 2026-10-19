@@ -168,6 +168,28 @@ describe('createFallbackProvider', () => {
     expect(chain.contextWindow).toBe(32_768);
   });
 
+  it('refreshes every link used to compute the context window', async () => {
+    const first = working('first');
+    const second = working('second');
+    first.refresh = vi.fn(async () => {
+      first.contextWindow = 16_384;
+    });
+    second.refresh = vi.fn(async () => {
+      second.contextWindow = 8_192;
+    });
+    const chain = createFallbackProvider([
+      { provider: first, label: 'first' },
+      { provider: second, label: 'second' },
+      { provider: working('fixed', 32_768), label: 'fixed' },
+    ]);
+
+    expect(chain.contextWindow).toBeUndefined();
+    await chain.refresh?.();
+    expect(first.refresh).toHaveBeenCalledTimes(1);
+    expect(second.refresh).toHaveBeenCalledTimes(1);
+    expect(chain.contextWindow).toBe(8_192);
+  });
+
   it('reports no window when any link does not declare one', () => {
     const chain = createFallbackProvider([
       { provider: working('known', 200_000), label: 'known' },
@@ -442,8 +464,7 @@ describe('a local server that goes quiet', () => {
 
   it('stays put once a token is already on screen', async () => {
     // The other half of the rule, unchanged: a partial answer cannot be
-    // unsent, so the failure is reported rather than answered twice. It is
-    // still classified as an availability failure, so the loop may retry it.
+    // unsent, so the failure is reported rather than answered twice.
     serveThenStall(['{"choices":[{"delta":{"content":"Hel"}}]}']);
     const second = vi.fn();
 
@@ -506,8 +527,8 @@ describe('a local server that goes quiet', () => {
     // the silent-server one.
     const { createAgentState, runAgentTurn } = await import('../src/agent/loop.ts');
     let attempts = 0;
-    globalThis.fetch = (async () => {
-      attempts++;
+    globalThis.fetch = (async (url: string) => {
+      if (!String(url).endsWith('/models')) attempts++;
       throw new TypeError('fetch failed');
     }) as unknown as typeof fetch;
 
@@ -522,7 +543,7 @@ describe('a local server that goes quiet', () => {
 
     expect(failed).toBeInstanceOf(ProviderError);
     expect((failed as ProviderError).kind).toBe('network');
-    // Two send attempts; the /models probe is cached, so this counts sends.
-    expect(attempts).toBeGreaterThan(1);
+    // Count sends separately from refresh and uncached failed model probes.
+    expect(attempts).toBe(2);
   });
 });

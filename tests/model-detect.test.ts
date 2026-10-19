@@ -221,6 +221,20 @@ describe('detectVisionSupport', () => {
 });
 
 describe('detectActiveModel', () => {
+  it('re-asks after a failed detection while the server is loading', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: 'ready' }] })));
+    vi.stubGlobal('fetch', fetch);
+
+    expect(await detectActiveModel(BASE)).toBeNull();
+    expect(await detectActiveModel(BASE)).toEqual({ id: 'ready' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(await detectActiveModel(BASE)).toEqual({ id: 'ready' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it('asks the endpoint and caches the answer', async () => {
     const served = serveModels({ data: [{ id: 'gemma-4-26b', meta: { n_ctx: 262144 } }] });
 

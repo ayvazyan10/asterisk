@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ProviderError, isAbort, isRetryable } from '../src/providers/errors.ts';
+import { clearDetectedModels } from '../src/providers/model-detect.ts';
 import {
   createOpenAiCompatibleProvider,
   toOpenAiMessages,
@@ -15,6 +16,7 @@ import type { Message, TextBlock, ToolUseBlock } from '../src/types/messages.ts'
 const realFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = realFetch;
+  clearDetectedModels();
 });
 
 let lastRequest: { url: string; init: RequestInit } | null = null;
@@ -26,22 +28,38 @@ function respond(body: BodyInit | null, status = 200): void {
   }) as unknown as typeof fetch;
 }
 
-function sse(frames: string[]): void {
+function sse(frames: string[], repeatLast = false): { cancelled: () => boolean } {
+  let cancelled = false;
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     lastRequest = { url: String(url), init: init ?? {} };
+    if (String(url).endsWith('/models')) return new Response('{}');
     const enc = new TextEncoder();
     let i = 0;
     const stream = new ReadableStream<Uint8Array>({
-      pull(ctrl) {
+      start(ctrl) {
+        init?.signal?.addEventListener('abort', () => ctrl.error(init.signal?.reason), {
+          once: true,
+        });
+      },
+      async pull(ctrl) {
+        if (repeatLast) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          if (cancelled || init?.signal?.aborted) return;
+          i = Math.min(i, frames.length - 1);
+        }
         if (i >= frames.length) {
           ctrl.close();
           return;
         }
         ctrl.enqueue(enc.encode(`data: ${frames[i++]}\n\n`));
       },
+      cancel() {
+        cancelled = true;
+      },
     });
     return new Response(stream, { status: 200 });
   }) as unknown as typeof fetch;
+  return { cancelled: () => cancelled };
 }
 
 /**
@@ -87,6 +105,27 @@ function stalls(frames: string[]): void {
 }
 
 const base = { system: 'sys', messages: [], tools: [] };
+
+describe('refresh', () => {
+  it('resolves the server context window before the first send', async () => {
+    respond(JSON.stringify({ data: [{ id: 'loaded', meta: { n_ctx: 8192 } }] }));
+    const provider = createOpenAiCompatibleProvider({ model: '', contextWindow: 0 });
+    expect(provider.contextWindow).toBeUndefined();
+    await provider.refresh?.();
+    expect(lastRequest?.url).toMatch(/\/models$/);
+    expect(provider.contextWindow).toBe(8192);
+    expect(provider.name).toBe('openai-compatible:loaded');
+  });
+
+  it('does not throw when the server is unreachable and no model is pinned', async () => {
+    globalThis.fetch = (async () => {
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof fetch;
+    const provider = createOpenAiCompatibleProvider({ model: '', contextWindow: 0 });
+    await expect(provider.refresh?.()).resolves.toBeUndefined();
+    expect(provider.contextWindow).toBeUndefined();
+  });
+});
 
 describe('message conversion', () => {
   it('prepends the system prompt', () => {
@@ -428,6 +467,52 @@ describe('requests', () => {
 });
 
 describe('streaming', () => {
+  it('rejects a mid-stream error frame after forwarding partial text', async () => {
+    sse([
+      '{"choices":[{"delta":{"content":"partial answer"}}]}',
+      '{"error":{"message":"generation failed"}}',
+      '[DONE]',
+    ]);
+    const seen: string[] = [];
+    const pending = createOpenAiCompatibleProvider({ model: 'm' }).send({
+      ...base,
+      onText: (delta) => seen.push(delta),
+    });
+    await expect(pending).rejects.toBeInstanceOf(ProviderError);
+    await expect(pending).rejects.toMatchObject({
+      kind: 'bad-request',
+      message: 'generation failed',
+    });
+    expect(seen).toEqual(['partial answer']);
+  });
+
+  it.each(['content', 'reasoning_content'])('stops endlessly repeating %s', async (field) => {
+    const chunk = 'ha ha ha ha ha ha ha ha ';
+    const stream = sse(
+      [
+        '{"choices":[{"delta":{"content":"An opening answer. "}}]}',
+        JSON.stringify({ choices: [{ delta: { [field]: chunk } }] }),
+      ],
+      true,
+    );
+    const thinking: string[] = [];
+    const res = await createOpenAiCompatibleProvider({
+      model: 'm',
+      modelTimeoutMs: 1000,
+      repetition: { minSpan: 120, minRepeats: 4, maxUnit: 32 },
+    }).send({ ...base, onText: () => {}, onThinking: (delta) => thinking.push(delta) });
+
+    expect(stream.cancelled()).toBe(true);
+    expect(res.stopReason).toBe('stop_sequence');
+    const answer = (res.content[0] as TextBlock).text;
+    expect(answer).toMatch(/^An opening answer\./);
+    expect(answer.length).toBeLessThan(400);
+    if (field === 'reasoning_content') {
+      expect(thinking.length).toBeGreaterThan(4);
+      expect(answer).toBe('An opening answer.');
+    }
+  });
+
   it('forwards text deltas and assembles the final text', async () => {
     sse([
       '{"choices":[{"delta":{"role":"assistant","content":null}}]}',

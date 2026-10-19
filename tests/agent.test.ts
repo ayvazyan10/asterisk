@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { compactionThreshold, estimateTokens } from '../src/agent/compaction.ts';
 import { createAgentState, runAgentTurn } from '../src/agent/loop.ts';
-import type { Provider, ProviderResponse } from '../src/types/messages.ts';
+import { ProviderError } from '../src/providers/errors.ts';
+import type { Provider, ProviderRequest, ProviderResponse } from '../src/types/messages.ts';
 
 function fakeProvider(responses: ProviderResponse[]): Provider {
   let i = 0;
@@ -16,6 +18,53 @@ function fakeProvider(responses: ProviderResponse[]): Provider {
 }
 
 describe('agent loop', () => {
+  it('refreshes the context window before compacting the first request', async () => {
+    const state = createAgentState();
+    state.history = Array.from({ length: 40 }, (_, i) => ({
+      role: i % 2 === 0 ? 'user' : 'assistant',
+      content: [{ type: 'text', text: 'history '.repeat(100) }],
+    }));
+    const before = estimateTokens(state.history);
+    const seen: number[] = [];
+    const provider: Provider = {
+      name: 'refreshing',
+      refresh: vi.fn(async () => {
+        provider.contextWindow = 8_192;
+      }),
+      async send(req) {
+        seen.push(estimateTokens(req.messages));
+        return { content: [{ type: 'text', text: 'done' }], stopReason: 'end_turn' };
+      },
+    };
+
+    expect(before).toBeGreaterThan(compactionThreshold(8_192));
+    expect(before).toBeLessThan(compactionThreshold());
+    await runAgentTurn(provider, state, 'continue', { summariseDropped: false });
+    expect(provider.refresh).toHaveBeenCalledTimes(1);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBeLessThanOrEqual(compactionThreshold(8_192));
+  });
+
+  it('surfaces a network error without retrying after a text delta', async () => {
+    const error = new ProviderError('network', 'connection lost mid-stream');
+    const send = vi.fn(async (req: ProviderRequest): Promise<ProviderResponse> => {
+      req.onText?.('Here is the ans');
+      throw error;
+    });
+    const onAssistantDelta = vi.fn();
+    const onRetry = vi.fn();
+    await expect(
+      runAgentTurn({ name: 'fake', send }, createAgentState(), 'hello', {
+        maxRetries: 3,
+        onAssistantDelta,
+        onRetry,
+      }),
+    ).rejects.toBe(error);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(onAssistantDelta).toHaveBeenCalledExactlyOnceWith('Here is the ans');
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
   it('returns final text on a single end_turn response', async () => {
     const provider = fakeProvider([
       {

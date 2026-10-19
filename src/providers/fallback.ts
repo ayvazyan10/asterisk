@@ -106,6 +106,9 @@ export function createFallbackProvider(
     get contextWindow(): number | undefined {
       return smallestWindow(links);
     },
+    async refresh(): Promise<void> {
+      await Promise.all(links.map((link) => link.provider.refresh?.()));
+    },
 
     /**
      * Every link, not the first one — the same reasoning as `smallestWindow`.

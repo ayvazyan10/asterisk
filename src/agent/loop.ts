@@ -301,6 +301,10 @@ async function runAgentTurnInner(
   let reason: TerminalReason = 'unknown-error';
 
   try {
+    // Before the first compaction: the local provider only learns the server's
+    // real context window from a request, and budgeting the first turn of a
+    // restored or resumed chat against the 128k default overflowed n_ctx.
+    await provider.refresh?.();
     for (let turn = 0; turn < maxTurns; turn++) {
       if (signal?.aborted) {
         reason = 'aborted';
@@ -331,16 +335,26 @@ async function runAgentTurnInner(
       );
 
       let response: ProviderResponse;
+      // Set once a text delta has reached the caller. A retry after that would
+      // stream the whole reply again on top of the partial one — the same rule
+      // fallback.ts follows before switching links.
+      let emitted = false;
       try {
         response = await retry(
           () => {
+            emitted = false;
             const sendOpts: {
               signal?: AbortSignal;
               onText?: (delta: string) => void;
               onThinking?: (delta: string) => void;
             } = {};
             if (signal) sendOpts.signal = signal;
-            if (opts.onAssistantDelta) sendOpts.onText = opts.onAssistantDelta;
+            if (opts.onAssistantDelta) {
+              sendOpts.onText = (delta) => {
+                emitted = true;
+                opts.onAssistantDelta?.(delta);
+              };
+            }
             if (opts.onAssistantThinking) sendOpts.onThinking = opts.onAssistantThinking;
             // An allow-list is already explicit and small, and deferring
             // inside it would hide a tool the caller deliberately granted, so
@@ -360,6 +374,7 @@ async function runAgentTurnInner(
             maxAttempts: maxRetries,
             ...(signal !== undefined ? { signal } : {}),
             classifier: (error) => {
+              if (emitted) return { retry: false };
               const result: { retry: boolean; retryAfterMs?: number } = {
                 retry: isRetryable(error),
               };

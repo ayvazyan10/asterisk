@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { compactHistory, compactHistoryWithSummary } from '../src/agent/compaction.ts';
 import { summariseMessages } from '../src/agent/summarise.ts';
+import { estimateTextTokens } from '../src/agent/tokens.ts';
 import type { Message, Provider, ProviderRequest } from '../src/types/messages.ts';
 
 /** A history long enough that shortening alone cannot save it. */
@@ -124,7 +125,29 @@ describe('summariseMessages', () => {
     });
     await summariseMessages(history, p);
     expect(seen?.tools).toEqual([]);
-    expect(seen?.maxTokens).toBeGreaterThan(0);
+    expect(seen?.maxTokens).toBe(4096);
+  });
+
+  it('clips an over-long summary to a prefix that fits the 700-token reserve', async () => {
+    const text = 'summary '.repeat(1000);
+    const p = provider(async () => ({
+      content: [{ type: 'text', text }],
+      stopReason: 'end_turn',
+    }));
+    const summary = (await summariseMessages(history, p)) ?? '';
+    expect(text.startsWith(summary)).toBe(true);
+    expect(summary.length).toBeGreaterThan(1000);
+    expect(estimateTextTokens(summary)).toBeLessThanOrEqual(700);
+  });
+
+  it('also keeps token-dense summaries within the 700-token reserve', async () => {
+    const p = provider(async () => ({
+      content: [{ type: 'text', text: '漢'.repeat(3000) }],
+      stopReason: 'end_turn',
+    }));
+    const summary = await summariseMessages(history, p);
+    expect(summary).toBe('漢'.repeat(700));
+    expect(estimateTextTokens(summary ?? '')).toBeLessThanOrEqual(700);
   });
 
   it('returns null when the provider throws', async () => {

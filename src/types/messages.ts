@@ -87,6 +87,8 @@ export interface Provider {
    * fired. The local provider reports the server's own n_ctx.
    */
   contextWindow?: number | undefined;
+  /** Refresh model metadata before budgeting a turn's history. */
+  refresh?(): Promise<void>;
   /**
    * Whether an image block may be sent to this backend.
    *

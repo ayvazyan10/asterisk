@@ -15,6 +15,8 @@
 // it: an unreachable model must not be able to fail a turn.
 
 import type { Message, Provider } from '../types/messages.ts';
+import { SUMMARY_TOKEN_RESERVE } from './compaction.ts';
+import { estimateTextTokens } from './tokens.ts';
 
 /** Characters of each message fed to the summariser. */
 const PER_MESSAGE_CAP = 2_000;
@@ -22,8 +24,12 @@ const PER_MESSAGE_CAP = 2_000;
 /** Total characters of transcript fed to the summariser. */
 const TRANSCRIPT_CAP = 24_000;
 
-/** Ceiling on the summary itself, so it cannot undo the compaction. */
-const SUMMARY_MAX_TOKENS = 600;
+/**
+ * Generation ceiling. Generous on purpose: on llama.cpp `max_tokens` also
+ * counts reasoning, and a thinking model given 600 spent all of it there and
+ * returned no summary at all. The summary's own size is bounded below instead.
+ */
+const SUMMARY_MAX_TOKENS = 4096;
 
 const SYSTEM = `You compress a conversation transcript so an assistant can keep working after the original messages are gone.
 
@@ -94,11 +100,20 @@ export async function summariseMessages(
       ...(signal ? { signal } : {}),
     });
 
-    const text = response.content
+    let text = response.content
       .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
       .map((b) => b.text)
       .join('\n')
       .trim();
+    // The drop point was chosen assuming the summary fits the reserve, so a
+    // longer one would refire compaction next turn. Shrink proportionally —
+    // a non-Latin summary costs more tokens per character than English.
+    while (estimateTextTokens(text) > SUMMARY_TOKEN_RESERVE) {
+      text = text.slice(
+        0,
+        Math.floor((text.length * SUMMARY_TOKEN_RESERVE) / estimateTextTokens(text)),
+      );
+    }
 
     return text.length > 0 ? text : null;
   } catch {

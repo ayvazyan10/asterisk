@@ -39,7 +39,7 @@ export interface DetectedModel {
 
 interface CacheEntry {
   at: number;
-  value: DetectedModel | null;
+  value: DetectedModel;
 }
 
 const cache = new Map<string, CacheEntry>();
@@ -197,7 +197,7 @@ export async function detectActiveModel(
     value = null;
   }
 
-  cache.set(key, { at: Date.now(), value });
+  if (value !== null) cache.set(key, { at: Date.now(), value });
   return value;
 }
 
