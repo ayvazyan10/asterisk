@@ -5,6 +5,67 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-10-19
+
+A bug sweep. Nothing new to learn, one behaviour to know about: **cron jobs now
+fire in the daemon machine's local time**, not UTC.
+
+### Changed
+
+- **Cron is evaluated in local time.** `CronCreate`'s own example reads
+  `"0 9 * * 1-5"` as "weekday 9am", and every user read it that way; the
+  scheduler then fired it at 09:00 UTC. A job written for UTC will now fire at
+  that hour local time — rewrite it if that is not what you meant. Day-of-week
+  `7` is Sunday, as in standard cron (it used to match nothing), and a job whose
+  minute passed while another job was still running is caught up on the next
+  tick instead of being skipped (capped at 60 minutes, and not after a restart).
+
+### Fixed
+
+- **Secrets:** saving one key from `/config` or the wizard wrote every key
+  that existed only in the environment into `asterisk.db` in plaintext. Only
+  the key that changed is saved now.
+- **Control panel:** the browser opened on first run was logged out about four
+  seconds later, when its handoff token was revoked. A `?token=` link now gets
+  a session token of its own.
+- **WebFetch** returned an empty success for any redirect; it now follows up to
+  five, re-running the SSRF guard on every hop. It also decodes the response's
+  declared charset and HTML entities correctly (`&amp;lt;`, hex and astral
+  references).
+- **Grep** never fell back to `grep -r` on a machine without ripgrep, so every
+  search failed there. Matches are kept when one file is unreadable, and the
+  fallback honours `glob`.
+- **Read** loaded a file before checking the 1 MB cap, so `/dev/zero` or a FIFO
+  never returned. It now refuses non-regular files and binary content first,
+  no longer shows a phantom last line, and says when an offset is past the end.
+- **File history** was never pruned (8,418 backups on one install). Backups
+  older than seven days are removed. An Edit whose old and new strings are
+  identical is refused instead of reporting a replacement.
+- **Providers:** an error sent inside the stream (llama.cpp, vLLM,
+  OpenRouter) was dropped and the partial reply returned as complete. A retry
+  after part of a reply had streamed showed it twice. The first turn of a
+  restored or resumed chat, and every ACP prompt, was compacted against a 128k
+  guess instead of the server's real window. A failed model detection was
+  cached for a minute, so retries while llama-server loaded never asked again.
+  A looping reasoning stream now trips the repetition guard, and the
+  summariser no longer starves thinking models of tokens. The Anthropic SDK's
+  own retries no longer nest inside the loop's (up to 15 requests per send).
+- **Telegram and `/stop`:** a /stop during voice transcription or image intake
+  left the stopped message in history, to be answered with the next one. A
+  queued voice note dropped by /stop was never deleted. In `status`/`stream`
+  mode a failed turn left the placeholder spinner editing forever. Image
+  documents of an unsupported type now get a reply.
+- **`asterisk run`:** provider errors exit 5–8 as documented instead of 9;
+  `run ""` is a usage error rather than reading stdin; SIGINT/SIGTERM abort
+  the turn and clean up; `--` ends flag parsing.
+- **MCP:** a server without tools (resources- or prompts-only) leaked a child
+  process on every reload and could never connect. ESC and /stop now cancel a
+  running MCP tool call.
+- **Lifecycle:** two concurrent starts could both clear the same stale pid
+  file and both spawn.
+- **Token estimate:** non-Latin scripts are split into three measured classes;
+  an Armenian history used to be estimated at under half its real size.
+
 ## [0.6.0] - 2026-08-31
 
 ### Added
