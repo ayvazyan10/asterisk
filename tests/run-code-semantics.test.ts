@@ -236,6 +236,114 @@ describe('RunCode never throws out of runProgram', () => {
 });
 
 describe('RunCode matches JavaScript semantics', () => {
+  it('uses the JSON.stringify space slot and positions serialization errors', async () => {
+    expect(await value('return JSON.stringify({a:1}, null, 2);')).toContain(
+      `return: ${JSON.stringify({ a: 1 }, null, 2)}`,
+    );
+    expect(await value("return JSON.stringify({a:1}, null, '--');")).toContain(
+      `return: ${JSON.stringify({ a: 1 }, null, '--')}`,
+    );
+    expect(await value('return JSON.stringify({a:1}, null);')).toContain('return: {"a":1}');
+    for (const replacer of ['2', '[]', '(k, v) => v']) {
+      const r = await run(`return JSON.stringify({a:1}, ${replacer});`);
+      expect(r.isError).toBe(true);
+      expect(r.output).toContain('replacer is not supported');
+      expect(r.output).toContain('line 1');
+    }
+    const r = await run('const a = {}; a.self = a;\nreturn JSON.stringify(a);');
+    expect(r.isError).toBe(true);
+    expect(r.output).toContain('JSON.stringify failed');
+    expect(r.output).toContain('line 2');
+  });
+
+  it('honours search positions and finds every occurrence in a while loop', async () => {
+    const out = await value(`
+      const s = 'a.b.a.b';
+      const a = [1, 2, 1, 2];
+      const positions = [];
+      let pos = s.indexOf('a');
+      while (pos !== -1) { positions.push(pos); pos = s.indexOf('a', pos + 1); }
+      return [s.indexOf('a', 1), s.lastIndexOf('b', 4), s.lastIndexOf('b'),
+        s.includes('a', 5), s.startsWith('a', 4), s.endsWith('a', 5),
+        a.indexOf(1, 1), a.lastIndexOf(2, 2), a.lastIndexOf(2),
+        a.includes(1, 3), a.indexOf(1, -2), a.lastIndexOf(2, -2),
+        a.includes(1, -2), positions.join(',')].join('|');
+    `);
+    expect(out).toContain('return: 4|2|6|false|true|true|2|1|3|false|2|1|true|0,4');
+  });
+
+  it('reports undefined for the single nullish value in typeof', async () => {
+    const out = await value(`
+      return [typeof ({}).missing, typeof undefined, typeof null,
+        typeof 1, typeof 'x', typeof [], typeof (() => 1)].join('|');
+    `);
+    expect(out).toContain('return: undefined|undefined|undefined|number|string|object|function');
+  });
+
+  it('concatenates every argument and honours split limits', async () => {
+    const out = await value(`
+      const a = [1].concat([2], 3, [4, [5]]);
+      return [JSON.stringify(a), String(a), 'a'.concat('b', 'c', 4),
+        [1].concat().join(','), 'a'.concat(), 'a,b,c'.split(',', 2).join('|'),
+        'abc'.split('', 0).length, 'abc'.split('', 1.9).join(''),
+        'abc'.split('', -1).join(''), 'x'.repeat(100001).split('', 2).length].join('/');
+    `);
+    expect(out).toContain('return: [1,2,3,4,[5]]/1,2,3,4,5/abc4/1/a/a|b/0/a/abc/2');
+  });
+
+  it('honours number toString radices and positions invalid radix errors', async () => {
+    const out = await value(`
+      return [(255).toString(16), (10).toString(2), (35).toString(36),
+        (255).toString(), (255).toString(16.9)].join('|');
+    `);
+    expect(out).toContain('return: ff|1010|z|255|ff');
+    for (const radix of ['1', '37', '0 / 0']) {
+      const r = await run(`return (255).toString(${radix});`);
+      expect(r.isError).toBe(true);
+      expect(r.output).toContain('radix must be between 2 and 36');
+      expect(r.output).toContain('line 1');
+    }
+  });
+
+  it('joins nullish and nested array elements without changing display', async () => {
+    const out = await value(`
+      const a = [1, null, [2, 3]];
+      log(a);
+      const cycle = [1]; cycle.push(cycle);
+      return [a.join(','), [1, [2, [3, null]], null].join('/'),
+        cycle.join(','), [null, undefined].join('/')].join('|');
+    `);
+    expect(out).toContain('[1, null, [2, 3]]');
+    expect(out).toContain('return: 1,,2,3|1/2,3,/|1,|/');
+  });
+
+  it('names unsupported methods and supports string localeCompare', async () => {
+    for (const [receiver, type] of [
+      ["'a'", 'string'],
+      ['[]', 'array'],
+      ['1', 'number'],
+      ['{}', 'object'],
+    ]) {
+      const r = await run(`return (${receiver}).missing();`);
+      expect(r.isError).toBe(true);
+      expect(r.output).toContain(`"missing" is not a method of ${type} in this language`);
+      expect(r.output).toContain('line 1');
+    }
+    const r = await run(`
+      const pick = () => { log('receiver'); return {}; };
+      const key = () => { log('key'); return 'missing'; };
+      pick()[key()]();
+    `);
+    expect(r.isError).toBe(true);
+    expect(r.output.match(/receiver/g)).toHaveLength(1);
+    expect(r.output.match(/key/g)).toHaveLength(1);
+    const out = await value(`
+      return ['a'.localeCompare('b'), 'a'.localeCompare('a'), 'b'.localeCompare('a'),
+        typeof ({}).missing?.(), typeof null?.missing()].join('|');
+    `);
+    expect(out).toContain('return: -1|0|1|undefined|undefined');
+  });
+
   it('short-circuits a whole optional chain', async () => {
     const r = await run('const r = null; return r?.data.items;');
     expect(r.isError).toBe(false);
@@ -246,7 +354,7 @@ describe('RunCode matches JavaScript semantics', () => {
       const o = { deep: { list: [7] } };
       return [r?.data.items, r?.f(), r?.['k'], o?.deep.list[0]].join('/');
     `);
-    expect(out).toContain('return: null/null/null/7');
+    expect(out).toContain('return: ///7');
   });
 
   it('reduces without an initial value by starting from the first element', async () => {

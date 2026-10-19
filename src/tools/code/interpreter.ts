@@ -578,13 +578,23 @@ class Interpreter {
       const base = await this.evalChainBase(node.object, env);
       if (base.short || (node.optional && base.value === null)) return SHORT_CIRCUIT;
       const key = await this.memberKey(node, env);
-      return { value: getMember(base.value, key, node), short: false };
+      return {
+        value: getMember(base.value, key, node),
+        short: false,
+        member: { object: base.value, key },
+      };
     }
     if (node.type === 'Call') {
       const callee = await this.evalChainBase(node.callee, env);
       if (callee.short || (node.optional && callee.value === null)) return SHORT_CIRCUIT;
       const args: Value[] = [];
       for (const a of node.args) args.push(await this.evalExpr(a, env));
+      if (callee.value === null && callee.member) {
+        throw new CodeRuntimeError(
+          `"${callee.member.key}" is not a method of ${typeName(callee.member.object)} in this language`,
+          node,
+        );
+      }
       return { value: await this.callValue(callee.value, args, node), short: false };
     }
     throw new CodeRuntimeError('unsupported expression', node);
@@ -639,9 +649,6 @@ class Interpreter {
     const plain = (input === null ? {} : toPlain(input)) as Record<string, unknown>;
 
     const result = await this.bridge(name, plain);
-    // Re-check afterwards so a program whose deadline expired *during* a call
-    // stops here rather than starting more work.
-    this.budget.checkClock();
 
     const output =
       result.output.length > this.limits.maxToolOutputChars
@@ -655,6 +662,9 @@ class Interpreter {
       line: node.line,
       detail: result.ok ? '' : output.slice(0, 300).trim(),
     });
+    // Re-check afterwards so a program whose deadline expired *during* a call
+    // stops here rather than starting more work.
+    this.budget.checkClock();
 
     const value = makeObject();
     value['ok'] = result.ok;
@@ -671,6 +681,7 @@ type Ref = { kind: 'var'; name: string } | { kind: 'member'; object: Value; key:
 interface Chain {
   value: Value;
   short: boolean;
+  member?: { object: Value; key: string };
 }
 
 const SHORT_CIRCUIT: Chain = { value: null, short: true };
@@ -695,7 +706,8 @@ function compare(op: string, a: number | string, b: number | string): boolean {
 }
 
 function jsTypeof(v: Value): string {
-  if (v === null) return 'object';
+  // One nullish value means typeof null also reports 'undefined'.
+  if (v === null) return 'undefined';
   if (isCallable(v)) return 'function';
   if (Array.isArray(v)) return 'object';
   if (v instanceof Namespace) return 'object';

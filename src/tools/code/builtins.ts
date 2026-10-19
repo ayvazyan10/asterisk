@@ -22,6 +22,7 @@ import {
   isCallable,
   truthy,
   typeName,
+  yieldIfDue,
 } from './values.ts';
 
 const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -49,11 +50,6 @@ function optNumber(v: Value, fallback: number, node: Node, what: string): number
   return asNumber(v, node, what);
 }
 
-function asArray(v: Value, node: Node, what: string): Value[] {
-  if (!Array.isArray(v)) fail(`${what} expects an array, got ${typeName(v)}`, node);
-  return v;
-}
-
 /** Creates the plain, prototype-less object the language uses for `{}`. */
 export function makeObject(): ValueObject {
   return Object.create(null) as ValueObject;
@@ -71,8 +67,9 @@ function stringMember(recv: string, key: string, node: Node): Value | undefined 
         // The empty separator produces one entry per character, so the cap can
         // be applied before the array exists rather than after — which is the
         // difference between refusing 1.2M entries and allocating them first.
-        if (sep === '') c.budget.checkArray(recv.length);
-        const parts = recv.split(sep);
+        const limit = optNumber(arg(a, 1), 0xffffffff, n, 'split') >>> 0;
+        if (sep === '') c.budget.checkArray(Math.min(recv.length, limit));
+        const parts = recv.split(sep, limit);
         c.budget.checkArray(parts.length);
         c.budget.chargeWork(parts.length);
         return parts;
@@ -92,22 +89,37 @@ function stringMember(recv: string, key: string, node: Node): Value | undefined 
         ),
       );
     case 'indexOf':
-      return new NativeFn('indexOf', (a, _c, n) => recv.indexOf(asString(arg(a, 0), n, 'indexOf')));
+      return new NativeFn('indexOf', (a, _c, n) =>
+        recv.indexOf(asString(arg(a, 0), n, 'indexOf'), optNumber(arg(a, 1), 0, n, 'indexOf')),
+      );
     case 'lastIndexOf':
       return new NativeFn('lastIndexOf', (a, _c, n) =>
-        recv.lastIndexOf(asString(arg(a, 0), n, 'lastIndexOf')),
+        recv.lastIndexOf(
+          asString(arg(a, 0), n, 'lastIndexOf'),
+          optNumber(arg(a, 1), Number.POSITIVE_INFINITY, n, 'lastIndexOf'),
+        ),
       );
     case 'includes':
       return new NativeFn('includes', (a, _c, n) =>
-        recv.includes(asString(arg(a, 0), n, 'includes')),
+        recv.includes(asString(arg(a, 0), n, 'includes'), optNumber(arg(a, 1), 0, n, 'includes')),
       );
     case 'startsWith':
       return new NativeFn('startsWith', (a, _c, n) =>
-        recv.startsWith(asString(arg(a, 0), n, 'startsWith')),
+        recv.startsWith(
+          asString(arg(a, 0), n, 'startsWith'),
+          optNumber(arg(a, 1), 0, n, 'startsWith'),
+        ),
       );
     case 'endsWith':
       return new NativeFn('endsWith', (a, _c, n) =>
-        recv.endsWith(asString(arg(a, 0), n, 'endsWith')),
+        recv.endsWith(
+          asString(arg(a, 0), n, 'endsWith'),
+          optNumber(arg(a, 1), recv.length, n, 'endsWith'),
+        ),
+      );
+    case 'localeCompare':
+      return new NativeFn('localeCompare', (a, _c, n) =>
+        Math.sign(recv.localeCompare(asString(arg(a, 0), n, 'localeCompare'))),
       );
     case 'toUpperCase':
       return new NativeFn('toUpperCase', () => recv.toUpperCase());
@@ -126,10 +138,14 @@ function stringMember(recv: string, key: string, node: Node): Value | undefined 
     case 'at':
       return new NativeFn('at', (a, _c, n) => recv.at(optNumber(arg(a, 0), 0, n, 'at')) ?? null);
     case 'concat':
-      return new NativeFn('concat', (a, c, n) => {
-        const other = asString(arg(a, 0), n, 'concat');
-        c.budget.checkString(recv.length + other.length);
-        return recv + other;
+      return new NativeFn('concat', (a, c) => {
+        let out = recv;
+        for (const v of a) {
+          const part = Array.isArray(v) ? joinArray(v, ',', c.budget) : display(v);
+          c.budget.checkString(out.length + part.length);
+          out += part;
+        }
+        return out;
       });
     case 'repeat':
       return new NativeFn('repeat', (a, c, n) => {
@@ -176,6 +192,36 @@ function stringMember(recv: string, key: string, node: Node): Value | undefined 
 
 // ------------------------------------------------------------- array members
 
+/** Array string conversion uses commas for nested arrays, independently of display(). */
+function joinArray(
+  items: Value[],
+  sep: string,
+  budget: Budget,
+  seen: Set<Value[]> = new Set(),
+): string {
+  if (seen.has(items)) return '';
+  budget.enterCall();
+  seen.add(items);
+  try {
+    budget.chargeWork(items.length);
+    let out = '';
+    for (let i = 0; i < items.length; i += 1) {
+      const v = items[i] ?? null;
+      const part = Array.isArray(v)
+        ? joinArray(v, ',', budget, seen)
+        : v === null
+          ? ''
+          : display(v);
+      budget.checkString(out.length + (i === 0 ? 0 : sep.length) + part.length);
+      out += (i === 0 ? '' : sep) + part;
+    }
+    return out;
+  } finally {
+    seen.delete(items);
+    budget.exitCall();
+  }
+}
+
 async function mapLike(
   recv: Value[],
   fn: Value,
@@ -187,6 +233,8 @@ async function mapLike(
   const out: Value[] = [];
   for (let i = 0; i < recv.length; i += 1) {
     ctx.budget.tick();
+    const pause = yieldIfDue(ctx.budget);
+    if (pause) await pause;
     out.push(await ctx.callValue(fn, [recv[i] ?? null, i], node));
   }
   return out;
@@ -212,6 +260,8 @@ async function firstMatch(
   if (!isCallable(fn)) fail(`${what} expects a function, got ${typeName(fn)}`, node);
   for (let i = 0; i < recv.length; i += 1) {
     ctx.budget.tick();
+    const pause = yieldIfDue(ctx.budget);
+    if (pause) await pause;
     const item = recv[i] ?? null;
     if (truthy(await ctx.callValue(fn, [item, i], node)) === want) return { index: i, value: item };
   }
@@ -247,22 +297,28 @@ function arrayMember(recv: Value[], key: string, node: Node): Value | undefined 
     case 'join':
       return new NativeFn('join', (a, c, n) => {
         const sep = arg(a, 0) === null ? ',' : asString(arg(a, 0), n, 'join');
-        c.budget.chargeWork(recv.length);
-        const out = recv.map((v) => display(v)).join(sep);
-        c.budget.checkString(out.length);
-        return out;
+        return joinArray(recv, sep, c.budget);
       });
     case 'indexOf':
-      return new NativeFn('indexOf', (a) => recv.indexOf(arg(a, 0)));
+      return new NativeFn('indexOf', (a, _c, n) =>
+        recv.indexOf(arg(a, 0), optNumber(arg(a, 1), 0, n, 'indexOf')),
+      );
+    case 'lastIndexOf':
+      return new NativeFn('lastIndexOf', (a, _c, n) =>
+        recv.lastIndexOf(arg(a, 0), optNumber(arg(a, 1), recv.length - 1, n, 'lastIndexOf')),
+      );
     case 'includes':
-      return new NativeFn('includes', (a) => recv.includes(arg(a, 0)));
+      return new NativeFn('includes', (a, _c, n) =>
+        recv.includes(arg(a, 0), optNumber(arg(a, 1), 0, n, 'includes')),
+      );
     case 'reverse':
       return new NativeFn('reverse', () => recv.reverse());
     case 'concat':
-      return new NativeFn('concat', (a, c, n) => {
-        const other = asArray(arg(a, 0), n, 'concat');
-        c.budget.checkArray(recv.length + other.length);
-        return [...recv, ...other];
+      return new NativeFn('concat', (a, c) => {
+        let length = recv.length;
+        for (const v of a) length += Array.isArray(v) ? v.length : 1;
+        c.budget.checkArray(length);
+        return recv.concat(...a);
       });
     case 'map':
       return new NativeFn('map', async (a, c, n) => mapLike(recv, arg(a, 0), c, n, 'map'));
@@ -308,6 +364,8 @@ function arrayMember(recv: Value[], key: string, node: Node): Value | undefined 
         let acc = seeded ? arg(a, 1) : (recv[0] ?? null);
         for (let i = seeded ? 0 : 1; i < recv.length; i += 1) {
           c.budget.tick();
+          const pause = yieldIfDue(c.budget);
+          if (pause) await pause;
           acc = await c.callValue(fn, [acc, recv[i] ?? null, i], n);
         }
         return acc;
@@ -337,7 +395,11 @@ function numberMember(recv: number, key: string): Value | undefined {
         recv.toFixed(Math.min(20, Math.max(0, optNumber(arg(a, 0), 0, n, 'toFixed')))),
       );
     case 'toString':
-      return new NativeFn('toString', () => String(recv));
+      return new NativeFn('toString', (a, _c, n) => {
+        const radix = Math.trunc(optNumber(arg(a, 0), 10, n, 'toString'));
+        if (!(radix >= 2 && radix <= 36)) fail('toString radix must be between 2 and 36', n);
+        return recv.toString(radix);
+      });
     default:
       return undefined;
   }
@@ -498,8 +560,18 @@ const JSON_NS = namespace('JSON', [
   [
     'stringify',
     new NativeFn('JSON.stringify', (a, c, n) => {
-      const indent = arg(a, 1) === null ? undefined : asNumber(arg(a, 1), n, 'JSON.stringify');
-      const out = JSON.stringify(arg(a, 0), jsonReplacer, indent);
+      if (arg(a, 1) !== null) fail('replacer is not supported', n);
+      const space = arg(a, 2);
+      const indent =
+        space === null || typeof space === 'string'
+          ? (space ?? undefined)
+          : asNumber(space, n, 'JSON.stringify');
+      let out: string | undefined;
+      try {
+        out = JSON.stringify(arg(a, 0), jsonReplacer, indent);
+      } catch (e) {
+        fail(`JSON.stringify failed: ${(e as Error).message}`, n);
+      }
       if (out === undefined) return null;
       c.budget.checkString(out.length);
       c.budget.chargeWork(out.length / CHARS_PER_STEP);
@@ -573,7 +645,13 @@ export function globalBindings(): Array<[string, Value]> {
     ['Object', OBJECT_NS],
     ['Math', MATH_NS],
     ['Array', ARRAY_NS],
-    ['String', new NativeFn('String', (a) => display(arg(a, 0)))],
+    [
+      'String',
+      new NativeFn('String', (a, c) => {
+        const v = arg(a, 0);
+        return Array.isArray(v) ? joinArray(v, ',', c.budget) : display(v);
+      }),
+    ],
     [
       'Number',
       new NativeFn('Number', (a) => {

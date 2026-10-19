@@ -105,7 +105,7 @@ describe('RunCode language', () => {
       const i = 1;
       return [parts[0], parts[2], arr[0], arr[i], arr[9], 'abc'[1]].join('/');
     `);
-    expect(out).toContain('return: src/a.ts/hit/10/20/null/b');
+    expect(out).toContain('return: src/a.ts/hit/10/20//b');
   });
 
   it('assigns into an array by index', async () => {
@@ -576,6 +576,60 @@ describe('RunCode execution bounds', () => {
 });
 
 describe('RunCode abort', () => {
+  it.each(['deadline', 'abort'])('reports a completed tool call after %s', async (stop) => {
+    const controller = new AbortController();
+    let calls = 0;
+    setExtraTools([
+      {
+        name: 'TestCompleted',
+        description: 'completes as execution is stopped',
+        input_schema: { type: 'object', properties: {}, additionalProperties: true },
+        execute: async () => {
+          calls += 1;
+          if (stop === 'abort') controller.abort();
+          else await new Promise((resolve) => setTimeout(resolve, 1100));
+          return { output: 'side effect completed', isError: false };
+        },
+      } satisfies Tool,
+    ]);
+    const r = await run(
+      "tool('TestCompleted', {}); tool('TestCompleted', {});",
+      { timeoutSeconds: 1 },
+      controller.signal,
+    );
+    expect(r.isError).toBe(true);
+    expect(r.output).toContain(stop === 'abort' ? 'cancelled' : 'time budget');
+    expect(r.output).toContain('1 tool call, all ok');
+    expect(r.output).toContain('that work is done');
+    expect(calls).toBe(1);
+  });
+
+  it.each([
+    'map((x) => x)',
+    'filter((x) => true)',
+    'forEach((x) => x)',
+    'reduce((acc, x) => acc + 1, 0)',
+    'find((x) => false)',
+    'findIndex((x) => false)',
+    'some((x) => false)',
+    'every((x) => true)',
+  ])('allows a timer to abort a callback builtin: %s', async (method) => {
+    const controller = new AbortController();
+    const timer = setInterval(() => controller.abort(), 1);
+    try {
+      const r = await run(
+        `const a = 'x'.repeat(100000).split(''); a.${method}; return 'finished';`,
+        { timeoutSeconds: 60 },
+        controller.signal,
+      );
+      expect(r.isError).toBe(true);
+      expect(r.output).toContain('cancelled');
+      expect(r.output).not.toContain('return: finished');
+    } finally {
+      clearInterval(timer);
+    }
+  });
+
   it('returns immediately for a signal that is already aborted', async () => {
     const controller = new AbortController();
     controller.abort();
