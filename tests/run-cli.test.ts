@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { closeDb } from '../src/db/index.ts';
 import type { McpManager } from '../src/mcp/manager.ts';
+import { ProviderError } from '../src/providers/errors.ts';
 import {
   EXIT_CODES,
   MAX_CONSECUTIVE_AUTO_DENIALS,
@@ -209,6 +210,32 @@ describe('runRunCli — invocation', () => {
     expect(stdinCalled).toBe(false);
   });
 
+  it('rejects an empty positional prompt without reading stdin', async () => {
+    const { streams, err } = captureStreams();
+    const deps = baseDeps({
+      readStdinPrompt: async () => {
+        throw new Error('stdin must not be read');
+      },
+    });
+
+    const code = await runRunCli([''], streams, deps);
+
+    expect(code).toBe(EXIT_CODES.USAGE);
+    expect(err.join('')).toContain('no prompt given');
+  });
+
+  it('passes arguments after -- to the provider as prompt words', async () => {
+    const provider = scriptedProvider([textReply('done')]);
+    const { streams } = captureStreams();
+    const deps = baseDeps({ createProvider: () => provider });
+
+    const code = await runRunCli(['--', '-v is broken'], streams, deps);
+
+    expect(code).toBe(EXIT_CODES.OK);
+    const firstRequest = provider.requests[0] as { messages: { content: unknown }[] };
+    expect(firstRequest.messages[0]?.content).toEqual([{ type: 'text', text: '-v is broken' }]);
+  });
+
   it('prints help and exits OK without constructing a provider', async () => {
     const { streams, out } = captureStreams();
     const deps = baseDeps({
@@ -251,6 +278,58 @@ describe('runRunCli — invocation', () => {
 // --- exit codes from the turn's TerminalReason ---------------------------
 
 describe('runRunCli — turn outcomes', () => {
+  it.each([
+    ['auth', EXIT_CODES.AUTH_ERROR],
+    ['bad-request', EXIT_CODES.BAD_REQUEST],
+    ['context-overflow', EXIT_CODES.CONTEXT_OVERFLOW],
+    ['aborted', EXIT_CODES.ABORTED],
+  ] as const)('maps provider error %s to exit code %i', async (kind, expected) => {
+    const provider: Provider = {
+      name: 'fake-provider-error',
+      async send() {
+        throw new ProviderError(kind, `provider ${kind}`);
+      },
+    };
+    const { streams } = captureStreams();
+    const deps = baseDeps({ createProvider: () => provider });
+
+    expect(await runRunCli(['hi'], streams, deps)).toBe(expected);
+  });
+
+  it('aborts on SIGTERM and cleans up the signal listeners and MCP manager', async () => {
+    const sigintListeners = process.listeners('SIGINT');
+    const sigtermListeners = process.listeners('SIGTERM');
+    let shutdownCalled = false;
+    const provider: Provider = {
+      name: 'fake-signal',
+      async send(req) {
+        process.emit('SIGTERM');
+        req.signal?.throwIfAborted();
+        return textReply('signal did not abort');
+      },
+    };
+    const { streams } = captureStreams();
+    const deps = baseDeps({
+      createProvider: () => provider,
+      createMcpManager: () => ({
+        ...stubMcpManager(),
+        async shutdown() {
+          shutdownCalled = true;
+        },
+      }),
+    });
+
+    const code = await runRunCli(['hi'], streams, deps);
+
+    expect(code).toBe(EXIT_CODES.ABORTED);
+    expect(shutdownCalled).toBe(true);
+    expect(process.listeners('SIGINT')).toEqual(sigintListeners);
+    // Emitting SIGTERM also consumes any pre-existing once listeners.
+    expect(
+      process.listeners('SIGTERM').filter((listener) => !sigtermListeners.includes(listener)),
+    ).toEqual([]);
+  });
+
   it('exits UNKNOWN_ERROR when the turn throws', async () => {
     const deps = baseDeps({ createProvider: () => throwingProvider('provider exploded') });
     const { streams, err } = captureStreams();

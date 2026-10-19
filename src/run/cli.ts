@@ -6,6 +6,7 @@
 // and a real process, this module does the work and returns an exit code.
 
 import { randomUUID } from 'node:crypto';
+import type { EventEmitter } from 'node:events';
 
 import type { AgentSession } from '../agent/context.ts';
 import {
@@ -17,6 +18,7 @@ import {
 import { loadConfig } from '../config/load.ts';
 import { closeDb, dbPath } from '../db/index.ts';
 import { type McpManager, createMcpManager } from '../mcp/manager.ts';
+import { ProviderError, type ProviderErrorKind } from '../providers/errors.ts';
 import { chooseProvider } from '../providers/factory.ts';
 import { loadRules } from '../rules/loader.ts';
 import { loadSouls } from '../soul/loader.ts';
@@ -43,6 +45,7 @@ Flags:
                   Without this flag the run follows permissions.headless
                   from config (default: deny), and such a call is refused.
   -h, --help      Show this help
+  --             End flags; treat all remaining arguments as prompt words
 
 The prompt is the positional argument (quote it if it has spaces; several
 positional words are joined with a single space). With no argument, the
@@ -87,9 +90,14 @@ export interface RunFlags {
 export function parseArgs(argv: readonly string[]): RunFlags {
   let allowTools = false;
   let help = false;
+  let endOfFlags = false;
   const words: string[] = [];
   for (const arg of argv) {
-    if (arg === '--allow-tools') {
+    if (endOfFlags) {
+      words.push(arg);
+    } else if (arg === '--') {
+      endOfFlags = true;
+    } else if (arg === '--allow-tools') {
       allowTools = true;
     } else if (arg === '--help' || arg === '-h') {
       help = true;
@@ -202,7 +210,7 @@ function summariseInput(input: Record<string, unknown>): string {
  */
 export const MAX_CONSECUTIVE_AUTO_DENIALS = 3;
 
-function exitCodeForReason(reason: TerminalReason): number {
+function exitCodeForReason(reason: TerminalReason | ProviderErrorKind): number {
   switch (reason) {
     case 'end-turn':
       return EXIT_CODES.OK;
@@ -212,6 +220,7 @@ function exitCodeForReason(reason: TerminalReason): number {
       return EXIT_CODES.ABORTED;
     case 'context-overflow':
       return EXIT_CODES.CONTEXT_OVERFLOW;
+    case 'auth':
     case 'auth-error':
       return EXIT_CODES.AUTH_ERROR;
     case 'bad-request':
@@ -247,7 +256,7 @@ export async function runRunCli(
   }
 
   let prompt = flags.prompt?.trim();
-  if (!prompt) {
+  if (flags.prompt === undefined) {
     const piped = await deps.readStdinPrompt();
     prompt = piped?.trim() || undefined;
   }
@@ -300,6 +309,9 @@ export async function runRunCli(
     let consecutiveAutoDenials = 0;
 
     let result: AgentTurnResult;
+    const onSig = () => ctrl.abort();
+    process.once('SIGINT', onSig);
+    process.once('SIGTERM', onSig);
     try {
       result = await runAgentTurn(provider, state, prompt, {
         session,
@@ -337,7 +349,13 @@ export async function runRunCli(
       });
     } catch (error) {
       streams.err(`asterisk run: turn failed — ${describeError(error)}\n`);
-      return EXIT_CODES.UNKNOWN_ERROR;
+      return error instanceof ProviderError
+        ? exitCodeForReason(error.kind)
+        : EXIT_CODES.UNKNOWN_ERROR;
+    } finally {
+      // Bun's Process augmentation narrows removeListener to memoryPressure.
+      (process as EventEmitter).removeListener('SIGINT', onSig);
+      (process as EventEmitter).removeListener('SIGTERM', onSig);
     }
 
     // Printed even when a permission refusal follows below: the model's own
