@@ -242,6 +242,8 @@ describe('compactHistory convergence', () => {
     expect(findUnpaired(after)).toEqual([]);
   });
 
+  // Several 500k-character histories: ~3s under coverage instrumentation,
+  // which overran the 5s default on a loaded machine.
   it('keeps every history it is given inside the budget it was given', () => {
     for (const window of [4_096, 8_192, 16_384, 32_768]) {
       for (const history of [
@@ -253,7 +255,7 @@ describe('compactHistory convergence', () => {
         expect(estimateTokens(after)).toBeLessThanOrEqual(compactionThreshold(window));
       }
     }
-  });
+  }, 30_000);
 });
 
 // ─── role alternation ──────────────────────────────────────────────────

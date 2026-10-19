@@ -16,6 +16,10 @@ import {
 } from '../src/tools/registry.ts';
 import { writeTool } from '../src/tools/write.ts';
 
+// The TypeScript language service takes seconds to start, and under a full
+// coverage run on a loaded machine that exceeded the 5s default.
+const LANGUAGE_SERVICE_TIMEOUT_MS = 30_000;
+
 describe('tool registry', () => {
   it('exposes the full set of built-in tools', () => {
     const names = BUILTIN_TOOLS.map((t) => t.name).sort();
@@ -253,46 +257,54 @@ describe('Read / Write / Edit / Glob', () => {
     expect(g.output.split('\n').sort()).toEqual(['one.ts', 'two.ts']);
   });
 
-  it('CodeIntel uses TypeScript language service for file symbols and diagnostics', async () => {
-    const path = join(dir, 'sample.ts');
-    await writeFile(
-      path,
-      [
-        'export function add(a: number, b: number): number {',
-        '  return a + b;',
-        '}',
-        'const result = add(1, 2);',
-      ].join('\n'),
-    );
+  it(
+    'CodeIntel uses TypeScript language service for file symbols and diagnostics',
+    async () => {
+      const path = join(dir, 'sample.ts');
+      await writeFile(
+        path,
+        [
+          'export function add(a: number, b: number): number {',
+          '  return a + b;',
+          '}',
+          'const result = add(1, 2);',
+        ].join('\n'),
+      );
 
-    const symbols = await codeIntelTool.execute({ action: 'symbols', file: path });
-    expect(symbols.isError).toBe(false);
-    expect(symbols.output).toContain('function add');
+      const symbols = await codeIntelTool.execute({ action: 'symbols', file: path });
+      expect(symbols.isError).toBe(false);
+      expect(symbols.output).toContain('function add');
 
-    const diagnostics = await codeIntelTool.execute({ action: 'diagnostics', file: path });
-    expect(diagnostics.isError).toBe(false);
-    expect(diagnostics.output).toContain('diagnostics passed');
-  });
+      const diagnostics = await codeIntelTool.execute({ action: 'diagnostics', file: path });
+      expect(diagnostics.isError).toBe(false);
+      expect(diagnostics.output).toContain('diagnostics passed');
+    },
+    LANGUAGE_SERVICE_TIMEOUT_MS,
+  );
 
-  it('CodeIntel uses TypeScript language service for definitions', async () => {
-    const path = join(dir, 'defs.ts');
-    await writeFile(
-      path,
-      [
-        'export function add(a: number, b: number): number {',
-        '  return a + b;',
-        '}',
-        'const result = add(1, 2);',
-      ].join('\n'),
-    );
+  it(
+    'CodeIntel uses TypeScript language service for definitions',
+    async () => {
+      const path = join(dir, 'defs.ts');
+      await writeFile(
+        path,
+        [
+          'export function add(a: number, b: number): number {',
+          '  return a + b;',
+          '}',
+          'const result = add(1, 2);',
+        ].join('\n'),
+      );
 
-    const result = await codeIntelTool.execute({
-      action: 'definition',
-      file: path,
-      line: 4,
-      character: 16,
-    });
-    expect(result.isError).toBe(false);
-    expect(result.output).toContain('defs.ts:1:17');
-  });
+      const result = await codeIntelTool.execute({
+        action: 'definition',
+        file: path,
+        line: 4,
+        character: 16,
+      });
+      expect(result.isError).toBe(false);
+      expect(result.output).toContain('defs.ts:1:17');
+    },
+    LANGUAGE_SERVICE_TIMEOUT_MS,
+  );
 });

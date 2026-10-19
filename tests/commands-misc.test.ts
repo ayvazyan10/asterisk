@@ -34,6 +34,10 @@ import {
   withTempHome,
 } from './commands-harness.ts';
 
+// The TypeScript language service takes seconds to start, and under a full
+// coverage run on a loaded machine that exceeded the 5s default.
+const LANGUAGE_SERVICE_TIMEOUT_MS = 30_000;
+
 const config = () => loadConfig().config;
 
 const say = (text: string): Message[] => [{ role: 'user', content: [{ type: 'text', text }] }];
@@ -281,18 +285,22 @@ describe('/code', () => {
     expect(out).toContain('export function loadThing');
   });
 
-  it('a positional def/refs query goes through the language service', async () => {
-    // "def <file> <line> <character>" is the precise form; the loose form is
-    // the ripgrep search above.
-    // The call site on line 5 resolves back to the declaration on line 1.
-    const def = await runText(makeContext(), '/code', 'def app.ts 5 1');
-    expect(def).toContain('app.ts:1:17');
-    expect(def).not.toContain('app.ts:5:1');
+  it(
+    'a positional def/refs query goes through the language service',
+    async () => {
+      // "def <file> <line> <character>" is the precise form; the loose form is
+      // the ripgrep search above.
+      // The call site on line 5 resolves back to the declaration on line 1.
+      const def = await runText(makeContext(), '/code', 'def app.ts 5 1');
+      expect(def).toContain('app.ts:1:17');
+      expect(def).not.toContain('app.ts:5:1');
 
-    const refs = await runText(makeContext(), '/code', 'references app.ts 5 1');
-    expect(refs).toContain('app.ts:1:17');
-    expect(refs).toContain('app.ts:5:1');
-  });
+      const refs = await runText(makeContext(), '/code', 'references app.ts 5 1');
+      expect(refs).toContain('app.ts:1:17');
+      expect(refs).toContain('app.ts:5:1');
+    },
+    LANGUAGE_SERVICE_TIMEOUT_MS,
+  );
 
   it('symbols with a plain query searches for that declaration', async () => {
     const out = await runText(makeContext(), '/code', 'symbols loadThing');
@@ -300,23 +308,31 @@ describe('/code', () => {
     expect(out).not.toContain('./app.ts:5:');
   });
 
-  it('symbols with a file argument uses the language service, not ripgrep', async () => {
-    const out = await runText(makeContext(), '/code', 'symbols app.ts');
-    expect(out).toContain('function loadThing');
-    // The ripgrep path would print "./app.ts:1:" line prefixes; this one does not.
-    expect(out).not.toContain('./app.ts:1:');
-  });
+  it(
+    'symbols with a file argument uses the language service, not ripgrep',
+    async () => {
+      const out = await runText(makeContext(), '/code', 'symbols app.ts');
+      expect(out).toContain('function loadThing');
+      // The ripgrep path would print "./app.ts:1:" line prefixes; this one does not.
+      expect(out).not.toContain('./app.ts:1:');
+    },
+    LANGUAGE_SERVICE_TIMEOUT_MS,
+  );
 
-  it("diagnostics on one file reports that file's errors", async () => {
-    expect(await runText(makeContext(), '/code', 'diagnostics app.ts')).toContain(
-      'diagnostics passed',
-    );
+  it(
+    "diagnostics on one file reports that file's errors",
+    async () => {
+      expect(await runText(makeContext(), '/code', 'diagnostics app.ts')).toContain(
+        'diagnostics passed',
+      );
 
-    writeFileSync(join(dir, 'broken.ts'), 'export const n: number = "not a number";\n');
-    const out = await runText(makeContext(), '/code', 'diag broken.ts');
-    expect(out).toContain('broken.ts');
-    expect(out).toMatch(/not assignable/);
-  });
+      writeFileSync(join(dir, 'broken.ts'), 'export const n: number = "not a number";\n');
+      const out = await runText(makeContext(), '/code', 'diag broken.ts');
+      expect(out).toContain('broken.ts');
+      expect(out).toMatch(/not assignable/);
+    },
+    LANGUAGE_SERVICE_TIMEOUT_MS,
+  );
 
   it('a search that matches nothing still comes back as text', async () => {
     // rg exits non-zero when it matches nothing, so this lands in the catch
