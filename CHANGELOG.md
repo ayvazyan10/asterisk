@@ -5,6 +5,62 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-10-19
+
+A second bug sweep — RunCode, the REPL and the ACP server — plus one thing an
+editor could not do before: approve a command.
+
+### Added
+
+- **ACP asks the editor before running a Bash command.** A command outside
+  the allowlist used to be refused as if nobody were there, with a message
+  saying the daemon and the bots have no prompt — while an editor was
+  attached that could have asked. It now goes to the editor as
+  `session/request_permission` with allow once / always / deny. A cancelled
+  turn or `session/cancel` denies whatever is still pending.
+
+### Changed
+
+- **ACP refuses a `session/new` cwd it cannot honour.** The tools work in the
+  directory the agent was launched in; a cwd that is not absolute and inside
+  it is now refused with a message naming that directory, instead of being
+  stored and silently ignored.
+- **Esc on an approval or question prompt answers it** (deny / cancel) and the
+  turn continues. It used to cancel the whole turn and drop queued messages
+  as well. Esc with no prompt up still cancels the turn.
+
+### Fixed
+
+- **REPL approval prompt:** control bytes in a command were rendered raw, so
+  an escape such as `ESC[8m` could conceal part of the command from the person
+  approving it. Control characters, bidi overrides and zero-width characters
+  are now shown as escapes.
+- **REPL:** raw `<tool_call>` markup from a small model no longer lingers on
+  screen and merges two turns; a two-block reply is no longer shown twice; the
+  cursor lands at the end after Tab completion and `/skill`; messages queued
+  behind `/provider` or `/model` go to the new provider; a pasted `\r` becomes
+  a newline; `snake_case`, paths and `2 * 3` are no longer turned into
+  italics; fences indented in list items render as code; `[+N more]` counts
+  are exact.
+- **RunCode** now matches JavaScript where it did not:
+  `JSON.stringify(x, null, 2)` indents; `indexOf`, `includes`, `startsWith`
+  and friends honour their position argument (a find-every-occurrence loop
+  used to spin to the step limit); `typeof` of a missing value is
+  `'undefined'`; `concat` takes every argument, `split` its limit, number
+  `toString` its radix; `join` renders missing values as empty. A tool call
+  that finishes after the deadline or an abort is still reported, so the
+  model is not told an edit that happened did not. Calling a method the
+  language lacks names it instead of saying `null is not a function`.
+- **ACP:** `initialize` now carries `agentInfo.version`, without which the
+  official client rejected the handshake. A non-object frame no longer
+  crashes the process. Editor sessions no longer share plan mode, tasks and
+  worktrees. Tool calls are completed with their output instead of showing
+  as running forever. A second prompt on a busy session is refused rather
+  than stealing the first one's cancel. `resource_link` blocks reach the
+  model and reasoning is forwarded as `agent_thought_chunk`.
+- **Lifecycle:** clearing a stale pid file now also compares the process
+  start time, so a fresh reservation that reuses a recycled pid survives.
+
 ## [0.6.1] - 2026-10-19
 
 A bug sweep. Nothing new to learn, one behaviour to know about: **cron jobs now
