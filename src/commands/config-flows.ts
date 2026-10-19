@@ -182,7 +182,7 @@ const CONFIG_SECTIONS: ConfigSection[] = [
           saveConfig(next.config);
           const newKey = (v['apiKey'] ?? '').trim();
           if (newKey) {
-            saveSecrets({ ...next.secrets, ANTHROPIC_API_KEY: newKey });
+            saveSecrets({ ANTHROPIC_API_KEY: newKey });
             return '✓ Anthropic settings saved (key updated)';
           }
           return '✓ Anthropic settings saved';
@@ -270,7 +270,7 @@ const CONFIG_SECTIONS: ConfigSection[] = [
           saveConfig(next.config);
           const token = (v['token'] ?? '').trim();
           if (token) {
-            saveSecrets({ ...next.secrets, ASTERISK_TELEGRAM_BOT_TOKEN: token });
+            saveSecrets({ ASTERISK_TELEGRAM_BOT_TOKEN: token });
             return '✓ Telegram settings saved (token updated; restart daemon to apply)';
           }
           return '✓ Telegram settings saved (restart daemon to apply)';

@@ -153,12 +153,20 @@ export async function connectMcpServer(config: McpServerConfig): Promise<Connect
     }
   }
 
-  const listed = await client.listTools();
-  const remoteTools: RemoteToolDefinition[] = listed.tools.map((t) => ({
-    name: t.name,
-    ...(t.description !== undefined ? { description: t.description } : {}),
-    inputSchema: t.inputSchema,
-  }));
+  let remoteTools: RemoteToolDefinition[] = [];
+  if (client.getServerCapabilities()?.tools) {
+    try {
+      const listed = await client.listTools();
+      remoteTools = listed.tools.map((t) => ({
+        name: t.name,
+        ...(t.description !== undefined ? { description: t.description } : {}),
+        inputSchema: t.inputSchema,
+      }));
+    } catch (e) {
+      await client.close().catch(() => {});
+      throw e;
+    }
+  }
 
   return {
     config,

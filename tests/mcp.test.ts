@@ -1,10 +1,12 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { saveConfig } from '../src/config/load.ts';
-import { ConfigSchema } from '../src/config/schema.ts';
+import { ConfigSchema, type McpServerConfig } from '../src/config/schema.ts';
+import { connectMcpServer } from '../src/mcp/client.ts';
 import { createMcpManager } from '../src/mcp/manager.ts';
 
 describe('McpManager', () => {
@@ -75,5 +77,43 @@ describe('McpManager', () => {
     expect(result.connected).toEqual([]);
     expect(result.failed).toEqual([]);
     await m.shutdown();
+  });
+});
+
+describe('connectMcpServer tool discovery', () => {
+  const config: McpServerConfig = {
+    name: 'fake',
+    transport: 'stdio',
+    command: 'fake-server',
+    args: [],
+    env: {},
+    enabled: true,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('connects with zero tools when the server reports no tools capability', async () => {
+    vi.spyOn(Client.prototype, 'connect').mockResolvedValue(undefined);
+    vi.spyOn(Client.prototype, 'getServerCapabilities').mockReturnValue({});
+    const listTools = vi.spyOn(Client.prototype, 'listTools');
+    vi.spyOn(Client.prototype, 'close').mockResolvedValue(undefined);
+
+    const connected = await connectMcpServer(config);
+
+    expect(connected.remoteTools).toEqual([]);
+    expect(listTools).not.toHaveBeenCalled();
+    await connected.close();
+  });
+
+  it('closes the client and rethrows when listTools fails', async () => {
+    vi.spyOn(Client.prototype, 'connect').mockResolvedValue(undefined);
+    vi.spyOn(Client.prototype, 'getServerCapabilities').mockReturnValue({ tools: {} });
+    vi.spyOn(Client.prototype, 'listTools').mockRejectedValue(new Error('boom'));
+    const close = vi.spyOn(Client.prototype, 'close').mockResolvedValue(undefined);
+
+    await expect(connectMcpServer(config)).rejects.toThrow('boom');
+    expect(close).toHaveBeenCalled();
   });
 });

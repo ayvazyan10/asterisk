@@ -190,7 +190,12 @@ export function ConfigureWizard() {
     if (stepIndex + 1 >= STEPS.length) {
       try {
         saveConfig(nextState.config);
-        saveSecrets(nextState.secrets);
+        const before = initial.secrets as Record<string, string>;
+        saveSecrets(
+          Object.fromEntries(
+            Object.entries(nextState.secrets).filter(([key, value]) => before[key] !== value),
+          ),
+        );
         next.push('saved to ~/.asterisk/asterisk.db');
       } catch (e) {
         next.push(`SAVE FAILED: ${(e as Error).message}`);

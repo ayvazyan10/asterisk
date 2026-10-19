@@ -10,7 +10,14 @@ import { statusFromPidFile } from '../src/daemon/pidfile.ts';
 import { type SqliteDriver, openDriver } from '../src/db/driver.ts';
 import { migrate } from '../src/db/migrations.ts';
 import { openBrowserForPanel } from '../src/entrypoints/web.ts';
-import { hasAnyToken, issueToken, verifyToken } from '../src/web/auth.ts';
+import {
+  authenticate,
+  hasAnyToken,
+  issueToken,
+  listTokens,
+  revokeToken,
+  verifyToken,
+} from '../src/web/auth.ts';
 import { type WebFlags, childArgv, parseWebArgs } from '../src/web/cli-args.ts';
 import { startWebPanel, stopWebPanel } from '../src/web/lifecycle.ts';
 import { clearWebState, readWebState } from '../src/web/runtime-state.ts';
@@ -234,5 +241,51 @@ describe('opening the browser never puts the durable token in argv', () => {
     expect(Date.now() - start).toBeLessThan(1000);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.args).toEqual(['http://127.0.0.1:4321']);
+  });
+});
+
+describe('browser sessions outlive the handoff token', () => {
+  let db: SqliteDriver;
+
+  beforeEach(() => {
+    db = openDriver(':memory:');
+    migrate(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('authorises the cookie after the token that minted it is revoked', () => {
+    const handoff = issueToken(db, 'first-run');
+    const first = authenticate(db, new Request(`http://127.0.0.1:4321/?token=${handoff}`), {
+      required: true,
+      secure: false,
+    });
+    expect(first.ok).toBe(true);
+
+    const cookie = first.setCookie?.split(';')[0] ?? '';
+    expect(cookie).not.toContain(handoff);
+
+    const row = listTokens(db).find((token) => token.label === 'first-run');
+    expect(row).toBeDefined();
+    if (!row) return;
+    expect(revokeToken(db, row.id)).toBe(true);
+    expect(verifyToken(db, handoff)).toBe(false);
+
+    const second = authenticate(
+      db,
+      new Request('http://127.0.0.1:4321/', { headers: { cookie } }),
+      { required: true, secure: false },
+    );
+    expect(second.ok).toBe(true);
+  });
+
+  it('does not mint a session per request for a bearer caller', () => {
+    const token = issueToken(db, 'script');
+    const req = () =>
+      new Request('http://127.0.0.1:4321/api/x', { headers: { authorization: `Bearer ${token}` } });
+    for (let i = 0; i < 3; i++) authenticate(db, req(), { required: true, secure: false });
+    expect(listTokens(db)).toHaveLength(1);
   });
 });

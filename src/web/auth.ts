@@ -124,8 +124,13 @@ export function authenticate(
   const supplied = bearer || query;
 
   if (supplied && verifyToken(db, supplied)) {
+    // A `?token=` link may be a short-lived handoff token that is revoked
+    // seconds later, so the browser gets a session token of its own. A bearer
+    // caller keeps its own token: minting one per request would grow
+    // web_tokens without bound, since tokens never expire.
+    const session = bearer ? supplied : issueToken(db, 'browser-session');
     const attrs = [
-      `${COOKIE_NAME}=${supplied}`,
+      `${COOKIE_NAME}=${session}`,
       'Path=/',
       'HttpOnly',
       'SameSite=Strict',
