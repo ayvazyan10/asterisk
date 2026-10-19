@@ -64,7 +64,7 @@ export async function startWebPanel(flags: WebFlags): Promise<StartWebResult> {
     const where = running ? ` — ${running.url}` : '';
     return { ok: false, message: `control panel already running (pid ${status.pid})${where}` };
   }
-  if (status.stale) clearPidIfUnchanged(paths.webPidFile, status.pid);
+  if (status.stale) clearPidIfUnchanged(paths.webPidFile, status);
 
   // Reserve the pid file before spawning, so a second `asterisk web` in the
   // same instant loses cleanly instead of starting a server nothing can stop.

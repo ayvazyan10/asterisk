@@ -32,7 +32,7 @@ export async function start(): Promise<LifecycleResult> {
   if (status.running) {
     return { ok: false, message: `daemon already running (pid ${status.pid})` };
   }
-  if (status.stale) clearPidIfUnchanged(paths.pidFile, status.pid);
+  if (status.stale) clearPidIfUnchanged(paths.pidFile, status);
 
   // Reserve the pidfile before spawning. Checking the status and then spawning
   // left a window in which two `asterisk start` calls both passed the check and

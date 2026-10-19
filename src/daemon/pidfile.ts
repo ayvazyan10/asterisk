@@ -22,6 +22,8 @@ export interface PidStatus {
   running: boolean;
   pid: number | null;
   stale: boolean;
+  /** The inspected record's start-time token; what clearPidIfUnchanged compares. */
+  startTime?: string | null;
 }
 
 interface PidRecord {
@@ -88,14 +90,16 @@ export function readPid(pidFile: string): number | null {
 export function statusFromPidFile(pidFile: string): PidStatus {
   const record = readRecord(pidFile);
   if (record === null) return { running: false, pid: null, stale: false };
-  if (!isAlive(record.pid)) return { running: false, pid: record.pid, stale: true };
+  if (!isAlive(record.pid)) {
+    return { running: false, pid: record.pid, stale: true, startTime: record.startTime };
+  }
 
   // The pid is live — but is it still the process we started? A mismatch means
   // the pid was recycled and this file is stale, not that a daemon is running.
   if (record.startTime !== null) {
     const current = processStartTime(record.pid);
     if (current !== null && current !== record.startTime) {
-      return { running: false, pid: record.pid, stale: true };
+      return { running: false, pid: record.pid, stale: true, startTime: record.startTime };
     }
   }
   return { running: true, pid: record.pid, stale: false };
@@ -131,10 +135,13 @@ export function clearPid(pidFile: string): void {
  *
  * A plain clear-then-reserve is a race: two starters both see the same stale
  * file, the first clears it and writes its reservation, and the second's clear
- * deletes that fresh reservation. Comparing the pid closes the window.
+ * deletes that fresh reservation. The start time is compared as well as the
+ * pid: the fresh reservation can carry the very pid the stale record named,
+ * once the OS has recycled it.
  */
-export function clearPidIfUnchanged(pidFile: string, expectedPid: number | null): void {
+export function clearPidIfUnchanged(pidFile: string, inspected: PidStatus): void {
   const record = readRecord(pidFile);
-  if (record === null || record.pid !== expectedPid) return;
+  if (record === null || record.pid !== inspected.pid) return;
+  if (record.startTime !== (inspected.startTime ?? null)) return;
   clearPid(pidFile);
 }

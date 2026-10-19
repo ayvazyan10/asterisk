@@ -93,18 +93,31 @@ describe('clearPidIfUnchanged', () => {
 
   it('removes a stale file whose record still matches', async () => {
     await writeFile(pidFile, '999999\n12345\n');
-    clearPidIfUnchanged(pidFile, 999999);
+    clearPidIfUnchanged(pidFile, statusFromPidFile(pidFile));
     expect(existsSync(pidFile)).toBe(false);
   });
 
   it('leaves a file that was replaced after the status read', async () => {
+    await writeFile(pidFile, '999999\n12345\n');
+    const inspected = statusFromPidFile(pidFile);
     await writeFile(pidFile, '4242\n');
-    clearPidIfUnchanged(pidFile, 999999);
+    clearPidIfUnchanged(pidFile, inspected);
     expect(await readFile(pidFile, 'utf8')).toBe('4242\n');
   });
 
   it('is a no-op when the file is already gone', () => {
-    expect(() => clearPidIfUnchanged(pidFile, 999999)).not.toThrow();
+    expect(() =>
+      clearPidIfUnchanged(pidFile, { running: false, pid: 999999, stale: true }),
+    ).not.toThrow();
+  });
+
+  it('leaves a fresh reservation that reuses the stale pid with a new start time', async () => {
+    await writeFile(pidFile, '999999\n12345\n');
+    const inspected = statusFromPidFile(pidFile);
+    // The OS recycled 999999 and a concurrent starter reserved the file with it.
+    await writeFile(pidFile, '999999\n67890\n');
+    clearPidIfUnchanged(pidFile, inspected);
+    expect(await readFile(pidFile, 'utf8')).toBe('999999\n67890\n');
   });
 });
 
