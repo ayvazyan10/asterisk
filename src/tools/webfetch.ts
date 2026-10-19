@@ -38,7 +38,7 @@ export const webFetchTool: Tool = {
     if (!url) return err('url is required');
     // The URL can originate from a page the agent just read or a message a
     // stranger sent the bot, so it is untrusted input aimed at the host's own
-    // network. See ssrf-guard.ts.
+    // network. See ssrf-guard.ts. Every redirect hop is checked again below.
     const guard = checkOutboundUrl(url);
     if (guard.reason) return err(guard.reason);
 
@@ -62,18 +62,7 @@ export const webFetchTool: Tool = {
     }
 
     try {
-      const res = await request(url, {
-        method: 'GET',
-        headers: {
-          'user-agent': 'asterisk/0.1 (+https://github.com/ayvazyan10/asterisk)',
-          accept: 'text/html,text/plain,application/json,*/*;q=0.5',
-        },
-        signal: ctrl.signal,
-      });
-      const status = res.statusCode;
-      const ctype = (res.headers['content-type'] as string | undefined) ?? '';
-      const buf = await readUpTo(res.body as unknown as AsyncIterable<Uint8Array>, MAX_BYTES);
-      const raw = Buffer.from(buf).toString('utf8');
+      const { url: finalUrl, status, ctype, raw } = await fetchText(url, ctrl.signal);
 
       if (status >= 400) {
         return err(`HTTP ${status}: ${truncate(raw, 400)}`);
@@ -87,7 +76,7 @@ export const webFetchTool: Tool = {
           ? `${focused.slice(0, MAX_RETURN_CHARS)}\n[truncated · ${focused.length - MAX_RETURN_CHARS} chars]`
           : focused;
       return ok(
-        `URL: ${url}\nStatus: ${status}  ·  ${ctype || 'unknown content-type'}\n---\n${final}`,
+        `URL: ${finalUrl}\nStatus: ${status}  ·  ${ctype || 'unknown content-type'}\n---\n${final}`,
       );
     } catch (e) {
       return err(`WebFetch failed: ${(e as Error).message}`);
@@ -96,6 +85,42 @@ export const webFetchTool: Tool = {
     }
   },
 };
+
+async function fetchText(url: string, signal: AbortSignal) {
+  let currentUrl = url;
+  for (let hops = 0; ; hops++) {
+    const res = await request(currentUrl, {
+      method: 'GET',
+      headers: {
+        'user-agent': 'asterisk/0.1 (+https://github.com/ayvazyan10/asterisk)',
+        accept: 'text/html,text/plain,application/json,*/*;q=0.5',
+      },
+      signal,
+    });
+    const status = res.statusCode;
+    const location = res.headers['location'];
+    if (status >= 300 && status < 400 && typeof location === 'string') {
+      // Not `body.dump()`: Bun's built-in undici, which production resolves,
+      // does not have it. Breaking out of the iteration releases the socket.
+      await readUpTo(res.body as unknown as AsyncIterable<Uint8Array>, 1);
+      if (hops >= 5) throw new Error('Too many redirects (maximum 5 hops)');
+      currentUrl = new URL(location, currentUrl).href;
+      const guard = checkOutboundUrl(currentUrl);
+      if (guard.reason) throw new Error(guard.reason);
+      continue;
+    }
+    const ctype = (res.headers['content-type'] as string | undefined) ?? '';
+    const buf = await readUpTo(res.body as unknown as AsyncIterable<Uint8Array>, MAX_BYTES);
+    const charset = /\bcharset\s*=\s*["']?([^\s;"']+)/i.exec(ctype)?.[1] ?? 'utf-8';
+    let raw: string;
+    try {
+      raw = new TextDecoder(charset).decode(buf);
+    } catch {
+      raw = new TextDecoder('utf-8').decode(buf);
+    }
+    return { url: currentUrl, status, ctype, raw };
+  }
+}
 
 async function readUpTo(stream: AsyncIterable<Uint8Array>, max: number): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
@@ -128,12 +153,16 @@ export function htmlToText(html: string): string {
     .replace(/<\/(p|li|tr|h[1-6]|div)>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&#(\d+);/g, (_, c) => String.fromCharCode(Number(c)))
+    .replace(/&#(x[\da-f]+|\d+);/gi, (entity: string, value: string) => {
+      const point = /^x/i.test(value) ? Number.parseInt(value.slice(1), 16) : Number(value);
+      return point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff)
+        ? String.fromCodePoint(point)
+        : entity;
+    })
+    .replace(/&amp;/gi, '&')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

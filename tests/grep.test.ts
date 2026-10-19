@@ -2,10 +2,10 @@
 // as options) and exit-code handling (a real search error must not come
 // back as ok()).
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildGrepArgs, grepTool } from '../src/tools/grep.ts';
 
@@ -29,6 +29,17 @@ describe('buildGrepArgs', () => {
     expect(args).toEqual(['-rn', '-E', '--', '-foo', '/some/path']);
   });
 
+  it('passes the glob as --include before -- for the grep fallback', () => {
+    expect(buildGrepArgs(false, '-foo', '/some/path', '*.ts')).toEqual([
+      '-rn',
+      '-E',
+      '--include=*.ts',
+      '--',
+      '-foo',
+      '/some/path',
+    ]);
+  });
+
   it('keeps -- after --glob for ripgrep', () => {
     const args = buildGrepArgs(true, '-foo', '/some/path', '*.ts');
     expect(args).toEqual([
@@ -42,6 +53,87 @@ describe('buildGrepArgs', () => {
       '/some/path',
     ]);
   });
+});
+
+describe('Grep binary detection and partial results', () => {
+  let dir: string;
+  let savedPath: string | undefined;
+
+  beforeEach(async () => {
+    savedPath = process.env['PATH'];
+    dir = await mkdtemp(join(tmpdir(), 'asterisk-grep-path-'));
+    process.env['PATH'] = dir;
+    vi.resetModules();
+  });
+
+  afterEach(async () => {
+    if (savedPath === undefined) delete process.env['PATH'];
+    else process.env['PATH'] = savedPath;
+    await rm(dir, { recursive: true, force: true });
+    vi.resetModules();
+  });
+
+  it('uses grep when rg is missing and passes the include glob', async () => {
+    await writeFile(join(dir, 'grep'), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
+    const { grepTool: freshGrep } = await import('../src/tools/grep.ts');
+
+    const result = await freshGrep.execute({ pattern: 'hello', path: '.', glob: '*.ts' });
+
+    expect(result.isError).toBe(false);
+    expect(result.output.split('\n')).toEqual(['-rn', '-E', '--include=*.ts', '--', 'hello', '.']);
+  });
+
+  it.each([0, 1])('caches the rg availability probe with exit code %s', async (exitCode) => {
+    const probes = join(dir, 'probes');
+    await writeFile(
+      join(dir, 'rg'),
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf 'probe\\n' >> '${probes}'
+  exit ${exitCode}
+fi
+printf 'matched\\n'
+`,
+      { mode: 0o755 },
+    );
+    await writeFile(join(dir, 'grep'), "#!/bin/sh\nprintf 'matched\\n'\n", { mode: 0o755 });
+    const { grepTool: freshGrep } = await import('../src/tools/grep.ts');
+
+    const first = await freshGrep.execute({ pattern: 'matched' });
+    const second = await freshGrep.execute({ pattern: 'matched' });
+
+    expect(first.isError).toBe(false);
+    expect(second.isError).toBe(false);
+    expect(await readFile(probes, 'utf8')).toBe('probe\n');
+  });
+
+  it.each([false, true])(
+    'keeps partial matches and bounds warnings (long output: %s)',
+    async (long) => {
+      const matches = long ? 'm'.repeat(30001) : 'sample.txt:1:matched';
+      const warning = long ? 'w'.repeat(1001) : 'private.txt: Permission denied';
+      await writeFile(
+        join(dir, 'rg'),
+        `#!/bin/sh
+if [ "$1" = "--version" ]; then exit 0; fi
+printf '%s' '${matches}'
+printf '%s' '${warning}' >&2
+exit 2
+`,
+        { mode: 0o755 },
+      );
+      const { grepTool: freshGrep } = await import('../src/tools/grep.ts');
+
+      const result = await freshGrep.execute({ pattern: 'matched' });
+
+      expect(result.isError).toBe(false);
+      expect(result.output).toBe(
+        long
+          ? `${matches.slice(0, 30000)}\n[truncated]\n[warnings: ${warning.slice(0, 1000)}…]`
+          : `${matches}\n[warnings: ${warning}]`,
+      );
+    },
+  );
 });
 
 describe('Grep tool', () => {

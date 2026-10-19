@@ -3,13 +3,13 @@
 import { execa } from 'execa';
 import { type Tool, err, ok } from './types.ts';
 
-async function hasRipgrep(): Promise<boolean> {
-  try {
-    await execa('rg', ['--version'], { reject: false });
-    return true;
-  } catch {
-    return false;
-  }
+let ripgrepAvailable: Promise<boolean> | undefined;
+
+function hasRipgrep(): Promise<boolean> {
+  ripgrepAvailable ??= execa('rg', ['--version'], { reject: false }).then(
+    (result) => result.exitCode === 0,
+  );
+  return ripgrepAvailable;
 }
 
 /**
@@ -32,7 +32,9 @@ export function buildGrepArgs(
     a.push('--', pattern, path);
     return a;
   }
-  return ['-rn', '-E', '--', pattern, path];
+  const args = ['-rn', '-E'];
+  if (glob) args.push(`--include=${glob}`);
+  return [...args, '--', pattern, path];
 }
 
 export const grepTool: Tool = {
@@ -66,8 +68,13 @@ export const grepTool: Tool = {
       const stdout = typeof result.stdout === 'string' ? result.stdout : '';
       const stderr = typeof result.stderr === 'string' ? result.stderr : '';
 
-      if (result.exitCode === 0) {
-        return ok(stdout.length > 30000 ? `${stdout.slice(0, 30000)}\n[truncated]` : stdout);
+      if (result.exitCode === 0 || (result.exitCode === 2 && stdout)) {
+        const matches = stdout.length > 30000 ? `${stdout.slice(0, 30000)}\n[truncated]` : stdout;
+        const warnings =
+          result.exitCode === 2
+            ? `\n[warnings: ${stderr.length > 1000 ? `${stderr.slice(0, 1000)}…` : stderr}]`
+            : '';
+        return ok(matches + warnings);
       }
       // Exit 1 with nothing on stderr is the shared "no matches" convention
       // for both rg and grep. The same code WITH stderr — or any other
