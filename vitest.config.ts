@@ -41,9 +41,9 @@ export default defineConfig({
       // 0%; that was wrong even when written — it has had HTTP-level tests all
       // along, and the render layer joined them.
       thresholds: {
-        lines: 83,
-        functions: 85,
-        branches: 74,
+        lines: 84,
+        functions: 86,
+        branches: 75,
         statements: 82,
       },
     },
