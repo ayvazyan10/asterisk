@@ -799,6 +799,27 @@ describe('stream mode', () => {
 });
 
 describe('the placeholder spinner', () => {
+  it.each(['status', 'stream'] as const)(
+    'stops the %s writer when the handler throws',
+    async (streamMode) => {
+      vi.useFakeTimers();
+      const onMessage = await start({ streamMode, streamThrottleMs: 1000 }, async (_msg, opts) => {
+        opts?.sink?.({ type: 'status', text: 'working' });
+        opts?.sink?.({ type: 'status', text: 'pending update' });
+        throw new Error('turn failed');
+      });
+      const ctx = new FakeCtx();
+
+      await onMessage(ctx);
+
+      expect(ctx.texts('reply').at(-1)).toBe('asterisk error: turn failed');
+      expect(vi.getTimerCount()).toBe(0);
+      const calls = [...ctx.calls];
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(ctx.calls).toEqual(calls);
+    },
+  );
+
   it('keeps animating and counting while the turn produces nothing', async () => {
     // A turn can spend a minute in one tool call with no status and no text.
     // Without the self-tick the placeholder would sit frozen and read as a
@@ -1065,7 +1086,7 @@ describe('images', () => {
     expect(seen[0]?.image?.path.endsWith('.jpg')).toBe(true);
   });
 
-  it.each(['application/pdf', 'text/plain', 'video/mp4', 'image/heic', undefined])(
+  it.each(['application/pdf', 'text/plain', 'video/mp4', undefined])(
     'still ignores a %s document, exactly as before',
     async (mime) => {
       let fetched = false;
@@ -1075,15 +1096,45 @@ describe('images', () => {
       });
       const { bot, seen, idle } = await startCollecting();
 
-      await bot.documentHandler?.(new DocumentCtx(mime as string));
+      const ctx = new DocumentCtx(mime as string);
+      await bot.documentHandler?.(ctx);
       await idle();
 
       // No turn, no download, and no reply — a non-image attachment is not an
       // error, it is simply not for us.
       expect(seen).toHaveLength(0);
       expect(fetched).toBe(false);
+      expect(ctx.texts('reply')).toEqual([]);
     },
   );
+
+  it.each([
+    [
+      'image/bmp',
+      7,
+      "Can't read image/bmp images — send it as a photo, or as PNG, JPEG, WebP or GIF.",
+    ],
+    [
+      'image/heic',
+      7,
+      "Can't read image/heic images — send it as a photo, or as PNG, JPEG, WebP or GIF.",
+    ],
+    ['image/bmp', 999, undefined],
+    ['text/plain', 7, undefined],
+  ] as const)('handles a %s document from user %s', async (mime, userId, reply) => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    const { bot, seen, idle } = await startCollecting();
+    const ctx = new DocumentCtx(mime);
+    ctx.from = { id: userId };
+
+    await bot.documentHandler?.(ctx);
+    await idle();
+
+    expect(ctx.texts('reply')).toEqual(reply === undefined ? [] : [reply]);
+    expect(seen).toHaveLength(0);
+    expect(fetch).not.toHaveBeenCalled();
+  });
 
   it('refuses an image over the cap instead of resizing it', async () => {
     let fetched = false;

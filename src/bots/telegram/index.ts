@@ -112,10 +112,14 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): TelegramAda
       };
 
       /** Shared gate: only allowlisted users reach the agent at all. */
-      const authorise = async (ctx: Context): Promise<number | null> => {
+      const authorise = async (ctx: Context, silent = false): Promise<number | null> => {
         const userId = ctx.from?.id;
         if (userId === undefined || !allowed.has(userId)) {
-          await ctx.reply('This Asterisk bot is restricted. Your user id is not on the allowlist.');
+          if (!silent) {
+            await ctx.reply(
+              'This Asterisk bot is restricted. Your user id is not on the allowlist.',
+            );
+          }
           return null;
         }
         return userId;
@@ -192,7 +196,14 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): TelegramAda
       // "Send as file" — how anyone sends a screenshot they want kept sharp.
       // Documents that are not images are ignored exactly as they always were.
       bot.on('message:document', async (ctx: Context) => {
-        if (!isSupportedImageMime(ctx.message?.document?.mime_type)) return;
+        const mime = ctx.message?.document?.mime_type;
+        if (!isSupportedImageMime(mime)) {
+          if (!mime?.startsWith('image/') || (await authorise(ctx, true)) === null) return;
+          await ctx.reply(
+            `Can't read ${mime} images — send it as a photo, or as PNG, JPEG, WebP or GIF.`,
+          );
+          return;
+        }
         const userId = await authorise(ctx);
         if (userId === null) return;
         await startImageTurn(ctx, userId);
@@ -309,11 +320,15 @@ async function handleTurn(
     }
   };
 
-  const result = await handler(msg, { sink });
-  const out = asOutgoingMessage(result);
+  let out: ReturnType<typeof asOutgoingMessage>;
+  try {
+    const result = await handler(msg, { sink });
+    out = asOutgoingMessage(result);
+  } finally {
+    await writer.flush();
+  }
 
   // Final delivery: replace placeholder with the canonical final text.
-  await writer.flush();
   if (out.text) {
     const rendered = parseMode === 'html' ? markdownToTelegramHtml(out.text) : out.text;
     const chunks = chunkText(rendered, MAX_TELEGRAM_CHARS, parseMode);

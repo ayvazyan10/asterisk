@@ -175,8 +175,7 @@ manager
       // the model call: intakeVoice below can spend tens of seconds
       // transcribing on a local model, and a /stop typed during that window
       // used to be answered "nothing to stop" — and then the turn ran anyway.
-      // The loop checks the signal at the top of its first iteration, so a
-      // turn aborted in here ends without issuing a single provider request.
+      // Check the signal after intake so a stopped message never enters history.
       const ctrl = new AbortController();
       registerTurn(msg.chatId, ctrl);
       try {
@@ -209,6 +208,10 @@ manager
         // see one must say so rather than answering the caption alone, and the
         // file is deleted on that path here rather than left behind.
         const images = await intakeImage({ ...msg, text: userText }, provider);
+        if (ctrl.signal.aborted) {
+          sink?.({ type: 'final' });
+          return { text: '' };
+        }
         if (images.kind === 'refused') {
           log.info({ chatId: msg.chatId, why: images.reason }, 'image refused');
           sink?.({ type: 'final' });
@@ -387,6 +390,7 @@ manager
       return await queued;
     } finally {
       if (msg.image) await discardImages([msg.image.path]);
+      if (msg.voice) await discardImages([msg.voice.path]);
     }
   })
   .then((started) => log.info({ adapters: started }, 'adapters started'))
