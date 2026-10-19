@@ -9,11 +9,29 @@
 // here proves an editor can drive Asterisk; it proves the shapes match what the
 // schema says.
 
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type JsonRpcMessage, PROTOCOL_VERSION, createAcpServer } from '../src/acp/server.ts';
+import * as agentLoop from '../src/agent/loop.ts';
+import { closeDb } from '../src/db/index.ts';
 import { ProviderError } from '../src/providers/errors.ts';
 import type { Provider, ProviderResponse } from '../src/types/messages.ts';
+
+let testHome: string;
+beforeEach(() => {
+  testHome = mkdtempSync(join(tmpdir(), 'asterisk-acp-'));
+  vi.stubEnv('ASTERISK_HOME', testHome);
+});
+afterEach(() => {
+  closeDb();
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+  rmSync(testHome, { recursive: true, force: true });
+});
 
 function textReply(text: string): ProviderResponse {
   return { content: [{ type: 'text', text }], stopReason: 'end_turn' };
@@ -77,6 +95,9 @@ describe('initialize', () => {
     // Advertising loadSession would be a lie — session/load is not implemented.
     expect(result['agentCapabilities']).toMatchObject({ loadSession: false });
     expect(result['agentInfo']).toMatchObject({ name: 'asterisk' });
+    expect((result['agentInfo'] as { version: string }).version).toEqual(
+      expect.stringMatching(/\S/),
+    );
   });
 });
 
@@ -102,6 +123,167 @@ describe('session/new', () => {
 });
 
 describe('session/prompt', () => {
+  it('passes distinct session contexts to the turn runner', async () => {
+    const run = vi.spyOn(agentLoop, 'runAgentTurn');
+    const h = harness();
+    const a = await openSession(h);
+    const b = await openSession(h);
+    for (const sessionId of [a, b]) {
+      await h.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] });
+    }
+    expect(run.mock.calls.map((call) => call[3]?.session)).toEqual([
+      { id: `acp:${a}`, scope: 'unknown' },
+      { id: `acp:${b}`, scope: 'unknown' },
+    ]);
+  });
+
+  it('sends a non-streamed final reply before the prompt response', async () => {
+    const h = harness();
+    const sessionId = await openSession(h);
+    const res = await h.call('session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text: 'hi' }],
+    });
+    expect(res?.error).toBeUndefined();
+    expect(h.updates()).toHaveLength(1);
+    expect(h.updates()[0]?.params).toEqual({
+      sessionId,
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'hello from the agent' },
+      },
+    });
+    expect(h.sent.at(-1)).toBe(res);
+  });
+
+  it('forwards thinking deltas separately from the final reply', async () => {
+    const h = harness({
+      name: 'thinker',
+      async send(req) {
+        req.onThinking?.('consider');
+        req.onThinking?.(' this');
+        return textReply('answer');
+      },
+    });
+    const sessionId = await openSession(h);
+    await h.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] });
+    expect(h.updates().map((m) => m.params?.['update'])).toEqual([
+      { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'consider' } },
+      { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: ' this' } },
+      { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'answer' } },
+    ]);
+  });
+
+  it('completes repeated tool names in FIFO order and reports errors', async () => {
+    vi.spyOn(agentLoop, 'runAgentTurn').mockImplementationOnce(async (_p, _s, _t, opts) => {
+      opts?.onToolUse?.('Read', { path: 'one' });
+      opts?.onToolUse?.('Read', { path: 'two' });
+      opts?.onToolUse?.('Grep', { pattern: 'x' });
+      opts?.onToolResult?.('Grep', 'match', false);
+      opts?.onToolResult?.('Read', 'first output', false);
+      opts?.onToolResult?.('Read', 'second failed', true);
+      return { finalText: '', reason: 'end-turn' };
+    });
+    const h = harness();
+    const sessionId = await openSession(h);
+    await h.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'read' }] });
+    const updates = h.updates().map((m) => m.params?.['update'] as Record<string, unknown>);
+    expect(updates).toHaveLength(6);
+    expect(new Set(updates.slice(0, 3).map((u) => u['toolCallId'])).size).toBe(3);
+    for (const [resultIndex, callIndex, status, output] of [
+      [3, 2, 'completed', 'match'],
+      [4, 0, 'completed', 'first output'],
+      [5, 1, 'failed', 'second failed'],
+    ] as const) {
+      expect(updates[callIndex]).toMatchObject({
+        sessionUpdate: 'tool_call',
+        status: 'in_progress',
+      });
+      expect(updates[resultIndex]).toEqual({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: updates[callIndex]?.['toolCallId'],
+        status,
+        content: [{ type: 'content', content: { type: 'text', text: output } }],
+      });
+    }
+  });
+
+  it('truncates long tool output with an explicit marker', async () => {
+    vi.spyOn(agentLoop, 'runAgentTurn').mockImplementationOnce(async (_p, _s, _t, opts) => {
+      opts?.onToolUse?.('Read', {});
+      opts?.onToolResult?.('Read', 'x'.repeat(40000), false);
+      return { finalText: '', reason: 'end-turn' };
+    });
+    const h = harness();
+    const sessionId = await openSession(h);
+    await h.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'read' }] });
+    expect(h.updates()[1]?.params?.['update']).toMatchObject({
+      content: [
+        { type: 'content', content: { type: 'text', text: `${'x'.repeat(30000)}\n[truncated]` } },
+      ],
+    });
+  });
+
+  it('rejects overlapping prompts without changing history and accepts the next turn', async () => {
+    let release: (() => void) | undefined;
+    const send = vi
+      .fn<Provider['send']>()
+      .mockImplementationOnce(async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return textReply('first reply');
+      })
+      .mockResolvedValue(textReply('next reply'));
+    const h = harness({ name: 'slow', send });
+    const sessionId = await openSession(h);
+    const running = h.call('session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text: 'first' }],
+    });
+    await vi.waitFor(() => expect(release).toBeDefined());
+    const rejected = await h.call('session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text: 'overlap' }],
+    });
+    expect(rejected?.error).toMatchObject({
+      code: -32602,
+      message: expect.stringMatching(/in progress/),
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+    release?.();
+    expect((await running)?.result).toEqual({ stopReason: 'end_turn' });
+    const accepted = await h.call('session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text: 'next' }],
+    });
+    expect(accepted?.result).toEqual({ stopReason: 'end_turn' });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(send.mock.calls[1]?.[0].messages)).not.toContain('overlap');
+  });
+
+  it('accepts a link-only prompt and includes named and unnamed resource links', async () => {
+    const seen: string[] = [];
+    const h = harness({
+      name: 'recorder',
+      async send(req) {
+        const first = req.messages[0]?.content[0];
+        if (first?.type === 'text') seen.push(first.text);
+        return textReply('ok');
+      },
+    });
+    const sessionId = await openSession(h);
+    const res = await h.call('session/prompt', {
+      sessionId,
+      prompt: [
+        { type: 'resource_link', uri: 'file:///tmp/one.ts', name: 'one.ts' },
+        { type: 'resource_link', uri: 'file:///tmp/two.ts' },
+      ],
+    });
+    expect(res?.result).toEqual({ stopReason: 'end_turn' });
+    expect(seen).toEqual(['@one.ts (file:///tmp/one.ts)\n@file:///tmp/two.ts']);
+  });
+
   it('runs a turn and reports a stopReason', async () => {
     const h = harness();
     const sessionId = await openSession(h);
@@ -230,6 +412,11 @@ describe('session/cancel', () => {
     );
     // Let the turn reach the provider before cancelling it.
     await vi.waitFor(() => expect(release).toBeDefined());
+    const overlap = await h.call('session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text: 'overlap' }],
+    });
+    expect(overlap?.error?.code).toBe(-32602);
     await h.server.handle({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId } });
 
     const res = await running;
@@ -253,6 +440,18 @@ describe('session/cancel', () => {
 });
 
 describe('unimplemented and malformed', () => {
+  it.each([42, 'hello', null, [], [null], true])(
+    'ignores non-object frame %j and stays usable',
+    async (frame) => {
+      const h = harness();
+      await expect(h.server.handle(frame)).resolves.toBeUndefined();
+      expect(h.sent).toHaveLength(0);
+      expect((await h.call('initialize'))?.result).toMatchObject({
+        protocolVersion: PROTOCOL_VERSION,
+      });
+    },
+  );
+
   it.each(['session/load', 'session/resume', 'authenticate', 'session/list'])(
     'answers %s with method-not-found rather than pretending',
     async (method) => {

@@ -36,7 +36,9 @@ function main(): void {
       if (!line) continue;
 
       try {
-        void server.handle(JSON.parse(line));
+        void server.handle(JSON.parse(line)).catch((e: unknown) => {
+          process.stderr.write(`acp: failed to handle frame: ${String(e)}\n`);
+        });
       } catch (e) {
         // A frame that is not JSON cannot be answered — there is no id to
         // answer to — so it is reported and dropped rather than killing the

@@ -19,8 +19,10 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { type AgentState, createAgentState, runAgentTurn } from '../agent/loop.ts';
+import { type AgentState, type RunOptions, createAgentState, runAgentTurn } from '../agent/loop.ts';
+import { truncate } from '../commands/text.ts';
 import type { Provider } from '../types/messages.ts';
+import { getVersion } from '../version.ts';
 
 /** Highest protocol version this implementation understands. */
 export const PROTOCOL_VERSION = 1;
@@ -62,11 +64,46 @@ function promptText(prompt: unknown): string {
     .map((block) => {
       if (typeof block !== 'object' || block === null) return '';
       const b = block as Record<string, unknown>;
+      if (b['type'] === 'resource_link' && typeof b['uri'] === 'string') {
+        return typeof b['name'] === 'string' ? `@${b['name']} (${b['uri']})` : `@${b['uri']}`;
+      }
       return b['type'] === 'text' && typeof b['text'] === 'string' ? b['text'] : '';
     })
     .filter(Boolean)
     .join('\n')
     .trim();
+}
+
+function toolUpdates(
+  update: (payload: Record<string, unknown>) => void,
+): Pick<RunOptions, 'onToolUse' | 'onToolResult'> {
+  const pending = new Map<string, string[]>();
+  return {
+    onToolUse: (name, input) => {
+      const toolCallId = `${name}-${randomUUID()}`;
+      const ids = pending.get(name) ?? [];
+      ids.push(toolCallId);
+      pending.set(name, ids);
+      update({
+        sessionUpdate: 'tool_call',
+        toolCallId,
+        title: name,
+        status: 'in_progress',
+        rawInput: input,
+      });
+    },
+    onToolResult: (name, output, isError) => {
+      const toolCallId = pending.get(name)?.shift();
+      if (!toolCallId) return;
+      update({
+        sessionUpdate: 'tool_call_update',
+        toolCallId,
+        status: isError ? 'failed' : 'completed',
+        // Match the 30,000-character output ceiling used by Bash and Grep.
+        content: [{ type: 'content', content: { type: 'text', text: truncate(output, 30000) } }],
+      });
+    },
+  };
 }
 
 export function createAcpServer(opts: AcpServerOptions) {
@@ -87,10 +124,42 @@ export function createAcpServer(opts: AcpServerOptions) {
     notify('session/update', { sessionId, update: payload });
   };
 
+  async function runPrompt(session: Session, text: string, abort: AbortController) {
+    let sentMessage = false;
+    const result = await runAgentTurn(opts.createProvider(), session.state, text, {
+      session: { id: `acp:${session.id}`, scope: 'unknown' },
+      signal: abort.signal,
+      // Editors render their own streaming, so deltas go out as they arrive
+      // rather than being buffered into one message at the end.
+      onAssistantDelta: (delta) => {
+        sentMessage = true;
+        update(session.id, {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: delta },
+        });
+      },
+      onAssistantThinking: (delta) => {
+        update(session.id, {
+          sessionUpdate: 'agent_thought_chunk',
+          content: { type: 'text', text: delta },
+        });
+      },
+      ...toolUpdates((payload) => update(session.id, payload)),
+    });
+    if (!sentMessage && result.finalText) {
+      update(session.id, {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: result.finalText },
+      });
+    }
+    return result;
+  }
+
   async function handlePrompt(id: JsonRpcMessage['id'], params: Record<string, unknown>) {
     const sessionId = typeof params['sessionId'] === 'string' ? params['sessionId'] : '';
     const session = sessions.get(sessionId);
     if (!session) return fail(id, INVALID_PARAMS, `unknown sessionId: ${sessionId}`);
+    if (session.abort) return fail(id, INVALID_PARAMS, 'session already has a prompt in progress');
 
     const text = promptText(params['prompt']);
     if (!text) return fail(id, INVALID_PARAMS, 'prompt contained no text content');
@@ -99,27 +168,7 @@ export function createAcpServer(opts: AcpServerOptions) {
     session.abort = abort;
 
     try {
-      const provider = opts.createProvider();
-      const result = await runAgentTurn(provider, session.state, text, {
-        signal: abort.signal,
-        // Editors render their own streaming, so deltas go out as they arrive
-        // rather than being buffered into one message at the end.
-        onAssistantDelta: (delta) => {
-          update(sessionId, {
-            sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: delta },
-          });
-        },
-        onToolUse: (name, input) => {
-          update(sessionId, {
-            sessionUpdate: 'tool_call',
-            toolCallId: `${name}-${randomUUID()}`,
-            title: name,
-            status: 'in_progress',
-            rawInput: input,
-          });
-        },
-      });
+      const result = await runPrompt(session, text, abort);
 
       // The loop's terminal reasons map onto ACP's vocabulary; anything it
       // does not have a word for is reported as end_turn rather than invented.
@@ -134,15 +183,34 @@ export function createAcpServer(opts: AcpServerOptions) {
     } catch (e) {
       fail(id, INTERNAL_ERROR, (e as Error).message);
     } finally {
-      session.abort = undefined;
+      if (session.abort === abort) session.abort = undefined;
     }
+  }
+
+  function initialize(id: JsonRpcMessage['id'], params: Record<string, unknown>): void {
+    const requested = typeof params['protocolVersion'] === 'number' ? params['protocolVersion'] : 0;
+    reply(id, {
+      // "the protocol version the client specified if supported, or the
+      // latest version supported by the agent".
+      protocolVersion:
+        requested > 0 && requested <= PROTOCOL_VERSION ? requested : PROTOCOL_VERSION,
+      agentCapabilities: {
+        // Everything optional is off, and honestly so: session/load,
+        // session/resume and the rest are not implemented.
+        loadSession: false,
+      },
+      agentInfo: { name: 'asterisk', version: getVersion() },
+      authMethods: [],
+    });
   }
 
   return {
     /** Sessions currently open. Exposed for the entrypoint's shutdown path. */
     sessionCount: (): number => sessions.size,
 
-    async handle(message: JsonRpcMessage): Promise<void> {
+    async handle(frame: unknown): Promise<void> {
+      if (typeof frame !== 'object' || frame === null || Array.isArray(frame)) return;
+      const message = frame as JsonRpcMessage;
       const { id, method } = message;
       const params = message.params ?? {};
 
@@ -151,24 +219,9 @@ export function createAcpServer(opts: AcpServerOptions) {
       if (!method) return;
 
       switch (method) {
-        case 'initialize': {
-          const requested =
-            typeof params['protocolVersion'] === 'number' ? params['protocolVersion'] : 0;
-          reply(id, {
-            // "the protocol version the client specified if supported, or the
-            // latest version supported by the agent".
-            protocolVersion:
-              requested > 0 && requested <= PROTOCOL_VERSION ? requested : PROTOCOL_VERSION,
-            agentCapabilities: {
-              // Everything optional is off, and honestly so: session/load,
-              // session/resume and the rest are not implemented.
-              loadSession: false,
-            },
-            agentInfo: { name: 'asterisk' },
-            authMethods: [],
-          });
+        case 'initialize':
+          initialize(id, params);
           return;
-        }
 
         case 'session/new': {
           const cwd = typeof params['cwd'] === 'string' ? params['cwd'] : '';
