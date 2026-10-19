@@ -43,7 +43,9 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
     throw new Error('ANTHROPIC_API_KEY is required to use the Anthropic provider');
   }
   const model = overrides.model ?? DEFAULT_MODEL;
-  const client = new Anthropic({ apiKey });
+  // The agent loop owns retries (and reports each one); the SDK's own two
+  // would nest inside it — up to 15 requests per send, and slow failover.
+  const client = new Anthropic({ apiKey, maxRetries: 0 });
 
   return {
     name: `anthropic:${model}`,
