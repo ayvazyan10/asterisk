@@ -48,6 +48,7 @@ function main(): void {
     }
   });
 
+  process.on('exit', () => server.close());
   process.stdin.on('end', () => process.exit(0));
 }
 

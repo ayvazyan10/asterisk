@@ -16,19 +16,29 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type JsonRpcMessage, PROTOCOL_VERSION, createAcpServer } from '../src/acp/server.ts';
+import { runWithSession } from '../src/agent/context.ts';
 import * as agentLoop from '../src/agent/loop.ts';
 import { closeDb } from '../src/db/index.ts';
 import { ProviderError } from '../src/providers/errors.ts';
+import { _resetApprovalsForTesting, hasApprover, requestApproval } from '../src/tools/approval.ts';
+import { _resetWorkspaceForTesting, workspaceRoot } from '../src/tools/workspace.ts';
 import type { Provider, ProviderResponse } from '../src/types/messages.ts';
 
 let testHome: string;
+const servers: ReturnType<typeof createAcpServer>[] = [];
 beforeEach(() => {
   testHome = mkdtempSync(join(tmpdir(), 'asterisk-acp-'));
   vi.stubEnv('ASTERISK_HOME', testHome);
+  vi.stubEnv('ASTERISK_WORKSPACE', testHome);
+  _resetWorkspaceForTesting();
+  _resetApprovalsForTesting();
 });
 afterEach(() => {
+  for (const server of servers.splice(0)) server.close();
+  _resetApprovalsForTesting();
   closeDb();
   vi.unstubAllEnvs();
+  _resetWorkspaceForTesting();
   vi.restoreAllMocks();
   rmSync(testHome, { recursive: true, force: true });
 });
@@ -50,6 +60,7 @@ function harness(provider?: Provider) {
         },
       },
   });
+  servers.push(server);
   return {
     sent,
     server,
@@ -66,7 +77,7 @@ function harness(provider?: Provider) {
 }
 
 async function openSession(h: ReturnType<typeof harness>): Promise<string> {
-  const created = await h.call('session/new', { cwd: '/tmp/project', mcpServers: [] });
+  const created = await h.call('session/new', { cwd: workspaceRoot(), mcpServers: [] });
   return (created?.result as { sessionId: string }).sessionId;
 }
 
@@ -104,7 +115,7 @@ describe('initialize', () => {
 describe('session/new', () => {
   it('returns a session id', async () => {
     const h = harness();
-    const res = await h.call('session/new', { cwd: '/tmp/project', mcpServers: [] });
+    const res = await h.call('session/new', { cwd: workspaceRoot(), mcpServers: [] });
     expect((res?.result as { sessionId: string }).sessionId).toMatch(/[0-9a-f-]{36}/);
   });
 
@@ -114,11 +125,160 @@ describe('session/new', () => {
     expect(res?.error?.code).toBe(-32602);
   });
 
+  it('rejects relative paths, outside paths, prefix siblings and resolved escapes', async () => {
+    const h = harness();
+    for (const cwd of [
+      'relative',
+      tmpdir(),
+      `${workspaceRoot()}-other`,
+      `${workspaceRoot()}/../other`,
+    ]) {
+      const res = await h.call('session/new', { cwd });
+      expect(res?.error).toMatchObject({ code: -32602 });
+      expect(res?.error?.message).toContain('must be absolute');
+      expect(res?.error?.message).toContain(
+        `agent works in ${workspaceRoot()} and must be launched there`,
+      );
+    }
+    expect(h.server.sessionCount()).toBe(0);
+  });
+
+  it('accepts the workspace root and resolved subdirectories', async () => {
+    const h = harness();
+    for (const cwd of [
+      workspaceRoot(),
+      join(workspaceRoot(), 'sub'),
+      `${workspaceRoot()}/sub/..`,
+    ]) {
+      expect((await h.call('session/new', { cwd }))?.result).toEqual({
+        sessionId: expect.any(String),
+      });
+    }
+  });
+
   it('hands out distinct ids', async () => {
     const h = harness();
     const a = await openSession(h);
     const b = await openSession(h);
     expect(a).not.toBe(b);
+  });
+});
+
+function askPermission(sessionId: string, signal?: AbortSignal, timeoutMs = 5000) {
+  return runWithSession({ id: `acp:${sessionId}`, scope: 'unknown' }, () =>
+    requestApproval(
+      { command: 'npm ci', reason: 'not on the allowlist', rules: ['npm ci'] },
+      { timeoutMs, headless: 'deny', ...(signal ? { signal } : {}) },
+    ),
+  );
+}
+
+describe('session/request_permission', () => {
+  it.each([
+    ['allow_once', 'allow-once'],
+    ['allow_always', 'allow-always'],
+    ['reject_once', 'deny'],
+  ])('maps the selected %s option to %s', async (kind, outcome) => {
+    const h = harness();
+    const sessionId = await openSession(h);
+    const answer = askPermission(sessionId);
+    const request = h.sent.at(-1);
+    expect(request).toMatchObject({
+      jsonrpc: '2.0',
+      id: expect.any(String),
+      method: 'session/request_permission',
+      params: {
+        sessionId,
+        toolCall: {
+          toolCallId: expect.any(String),
+          title: 'Bash: npm ci',
+          rawInput: { command: 'npm ci' },
+        },
+      },
+    });
+    const options = request?.params?.['options'] as {
+      optionId: string;
+      name: string;
+      kind: string;
+    }[];
+    expect(options.map((option) => option.kind)).toEqual([
+      'allow_once',
+      'allow_always',
+      'reject_once',
+    ]);
+    expect(options.every((option) => option.name.length > 0)).toBe(true);
+    await h.server.handle({
+      jsonrpc: '2.0',
+      id: request?.id,
+      result: {
+        outcome: {
+          outcome: 'selected',
+          optionId: options.find((option) => option.kind === kind)?.optionId,
+        },
+      },
+    });
+    await expect(answer).resolves.toEqual({ outcome });
+  });
+
+  it('denies a cancelled permission response', async () => {
+    const h = harness();
+    const sessionId = await openSession(h);
+    const answer = askPermission(sessionId);
+    await h.server.handle({
+      jsonrpc: '2.0',
+      id: h.sent.at(-1)?.id,
+      result: { outcome: { outcome: 'cancelled' } },
+    });
+    await expect(answer).resolves.toEqual({ outcome: 'deny' });
+  });
+
+  it('denies pending permissions on session/cancel and ignores late approval', async () => {
+    const h = harness();
+    const sessionId = await openSession(h);
+    const otherSession = await openSession(h);
+    const answer = askPermission(sessionId);
+    const id = h.sent.at(-1)?.id;
+    const otherAnswer = askPermission(otherSession);
+    const otherId = h.sent.at(-1)?.id;
+    expect(id).not.toBe(otherId);
+    await h.server.handle({ method: 'session/cancel', params: { sessionId } });
+    await expect(answer).resolves.toEqual({ outcome: 'deny' });
+    await h.server.handle({
+      id,
+      result: { outcome: { outcome: 'selected', optionId: 'allow_once' } },
+    });
+    await h.server.handle({
+      id: otherId,
+      result: { outcome: { outcome: 'selected', optionId: 'allow_once' } },
+    });
+    await expect(otherAnswer).resolves.toEqual({ outcome: 'allow-once' });
+  });
+
+  it('keeps the approval module timeout and abort denial', async () => {
+    const h = harness();
+    const sessionId = await openSession(h);
+    const abort = new AbortController();
+    const answer = askPermission(sessionId, abort.signal);
+    abort.abort();
+    await expect(answer).resolves.toEqual({ outcome: 'deny', automatic: true });
+    await expect(askPermission(sessionId, undefined, 10)).resolves.toEqual({
+      outcome: 'deny',
+      automatic: true,
+    });
+  });
+
+  it('only handles owned ACP sessions and unsubscribes on close', async () => {
+    const h = harness();
+    const other = harness();
+    const sessionId = await openSession(h);
+    expect(hasApprover('repl')).toBe(false);
+    expect(hasApprover('acp:unknown')).toBe(false);
+    const answer = askPermission(sessionId);
+    expect(other.sent).toHaveLength(0);
+    h.server.close();
+    await expect(answer).resolves.toEqual({ outcome: 'deny' });
+    expect(hasApprover(`acp:${sessionId}`)).toBe(false);
+    await expect(askPermission(sessionId)).resolves.toEqual({ outcome: 'deny', automatic: true });
   });
 });
 

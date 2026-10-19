@@ -18,9 +18,12 @@
 // without spawning a process or touching stdio.
 
 import { randomUUID } from 'node:crypto';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { type AgentState, type RunOptions, createAgentState, runAgentTurn } from '../agent/loop.ts';
 import { truncate } from '../commands/text.ts';
+import { type ApprovalRequest, onApprovalRequest, resolveApproval } from '../tools/approval.ts';
+import { workspaceRoot } from '../tools/workspace.ts';
 import type { Provider } from '../types/messages.ts';
 import { getVersion } from '../version.ts';
 
@@ -108,6 +111,66 @@ function toolUpdates(
 
 export function createAcpServer(opts: AcpServerOptions) {
   const sessions = new Map<string, Session>();
+  const permissions = new Map<string, ApprovalRequest>();
+  const unsubscribe = onApprovalRequest(requestPermission, {
+    accepts: (id) => id.startsWith('acp:') && sessions.has(id.slice(4)),
+  });
+
+  function requestPermission(req: ApprovalRequest): void {
+    const id = randomUUID();
+    permissions.set(id, req);
+    try {
+      opts.send({
+        jsonrpc: '2.0',
+        id,
+        method: 'session/request_permission',
+        params: {
+          sessionId: req.sessionId.slice(4),
+          toolCall: {
+            toolCallId: req.id,
+            title: `Bash: ${req.command}`,
+            rawInput: { command: req.command },
+          },
+          options: [
+            { optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' },
+            {
+              optionId: 'allow_always',
+              name: req.rules.length > 0 ? `Always allow: ${req.rules.join(', ')}` : 'Always allow',
+              kind: 'allow_always',
+            },
+            { optionId: 'reject_once', name: 'Deny', kind: 'reject_once' },
+          ],
+        },
+      });
+    } catch {
+      permissions.delete(id);
+      resolveApproval(req.id, 'deny');
+    }
+  }
+
+  function permissionResponse(message: JsonRpcMessage): void {
+    if (typeof message.id !== 'string') return;
+    const req = permissions.get(message.id);
+    if (!req) return;
+    permissions.delete(message.id);
+    const result = message.result as { outcome?: { outcome?: string; optionId?: string } } | null;
+    const option =
+      !message.error && result?.outcome?.outcome === 'selected'
+        ? result.outcome.optionId
+        : undefined;
+    resolveApproval(
+      req.id,
+      option === 'allow_once' ? 'allow-once' : option === 'allow_always' ? 'allow-always' : 'deny',
+    );
+  }
+
+  function denyPermissions(sessionId: string): void {
+    for (const [id, req] of permissions) {
+      if (req.sessionId !== `acp:${sessionId}`) continue;
+      permissions.delete(id);
+      resolveApproval(req.id, 'deny');
+    }
+  }
 
   const reply = (id: JsonRpcMessage['id'], result: unknown): void => {
     opts.send({ jsonrpc: '2.0', id: id ?? null, result });
@@ -183,6 +246,7 @@ export function createAcpServer(opts: AcpServerOptions) {
     } catch (e) {
       fail(id, INTERNAL_ERROR, (e as Error).message);
     } finally {
+      denyPermissions(session.id);
       if (session.abort === abort) session.abort = undefined;
     }
   }
@@ -204,15 +268,43 @@ export function createAcpServer(opts: AcpServerOptions) {
     });
   }
 
+  function newSession(id: JsonRpcMessage['id'], params: Record<string, unknown>): void {
+    const cwd = typeof params['cwd'] === 'string' ? params['cwd'] : '';
+    const root = workspaceRoot();
+    const path = relative(root, resolve(cwd));
+    if (!isAbsolute(cwd) || path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path)) {
+      fail(
+        id,
+        INVALID_PARAMS,
+        `cwd is required and must be absolute and inside ${root}; the agent works in ${root} and must be launched there`,
+      );
+      return;
+    }
+    const sessionId = randomUUID();
+    sessions.set(sessionId, { id: sessionId, cwd: resolve(cwd), state: createAgentState() });
+    reply(id, { sessionId });
+  }
+
   return {
     /** Sessions currently open. Exposed for the entrypoint's shutdown path. */
     sessionCount: (): number => sessions.size,
+
+    close(): void {
+      unsubscribe();
+      for (const session of sessions.values()) {
+        denyPermissions(session.id);
+        session.abort?.abort();
+      }
+      sessions.clear();
+    },
 
     async handle(frame: unknown): Promise<void> {
       if (typeof frame !== 'object' || frame === null || Array.isArray(frame)) return;
       const message = frame as JsonRpcMessage;
       const { id, method } = message;
       const params = message.params ?? {};
+
+      if (method === undefined && id !== undefined) return permissionResponse(message);
 
       // A response or an unknown notification is not ours to answer. Replying
       // to a notification (no id) is a protocol violation on its own.
@@ -224,11 +316,7 @@ export function createAcpServer(opts: AcpServerOptions) {
           return;
 
         case 'session/new': {
-          const cwd = typeof params['cwd'] === 'string' ? params['cwd'] : '';
-          if (!cwd) return fail(id, INVALID_PARAMS, 'cwd is required and must be absolute');
-          const sessionId = randomUUID();
-          sessions.set(sessionId, { id: sessionId, cwd, state: createAgentState() });
-          reply(id, { sessionId });
+          newSession(id, params);
           return;
         }
 
@@ -239,6 +327,7 @@ export function createAcpServer(opts: AcpServerOptions) {
         case 'session/cancel': {
           // A notification in the spec, so it gets no reply — only the abort.
           const sessionId = typeof params['sessionId'] === 'string' ? params['sessionId'] : '';
+          denyPermissions(sessionId);
           sessions.get(sessionId)?.abort?.abort();
           return;
         }
