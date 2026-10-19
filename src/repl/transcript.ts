@@ -74,16 +74,21 @@ export function summariseToolResult(
   isError: boolean,
 ): ToolResultSummary {
   const kind: EntryKind = isError ? 'error' : 'tool-result';
+  // A trailing newline is not a hidden line; counting it made the hint claim
+  // one row more than Ctrl+O reveals.
+  const body = output.replace(/\n+$/, '');
   // Short single-line output is shown verbatim — collapsing it would hide
   // nothing and cost a line of hint.
-  if (output.length <= TOOL_RESULT_LINE_MAX && !output.includes('\n')) {
-    return { kind, text: `${name} → ${output}` };
+  if (body.length <= TOOL_RESULT_LINE_MAX && !body.includes('\n')) {
+    return { kind, text: `${name} → ${body}` };
   }
-  const firstLine = output.split('\n')[0] ?? '';
+  const firstLine = body.split('\n')[0] ?? '';
   return {
     kind,
     text: `${name} → ${truncate(firstLine, TOOL_RESULT_LINE_MAX)}`,
-    fullText: `${name} →\n${output}`,
+    // Same first line as `text`, so the line counts of the two compare
+    // exactly: what differs is what is hidden.
+    fullText: `${name} → ${body}`,
   };
 }
 
@@ -91,7 +96,10 @@ export function summariseToolResult(
 export function renderCollapseHint(short: string, full: string): string {
   const hiddenLines = Math.max(0, full.split('\n').length - short.split('\n').length);
   if (hiddenLines > 0) return t('transcript.expandHintLines', { count: hiddenLines });
-  return t('transcript.expandHintChars', { count: full.length - short.length });
+  // `truncate`'s own "…[+N chars]" marker is in the short form but is not
+  // payload; left in, it shrank the count below the one printed inline.
+  const shown = short.replace(/…\[\+\d+ chars\]$/, '');
+  return t('transcript.expandHintChars', { count: full.length - shown.length });
 }
 
 /**

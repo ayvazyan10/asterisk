@@ -202,6 +202,33 @@ describe('parseInline — malformed markup', () => {
   });
 });
 
+describe('parseInline — intra-word markers', () => {
+  const kinds = (text: string) => parseInline(text).map((p) => p.kind);
+
+  it('leaves underscores and stars inside words and arithmetic alone', () => {
+    for (const text of ['edit src/my_file_name.py now', 'MAX_RETRY_COUNT', 'compute 2 * 3 * 4']) {
+      expect(parseInline(text)).toEqual([{ kind: 'text', value: text }]);
+    }
+  });
+
+  it('still renders real emphasis', () => {
+    expect(kinds('_italic_')).toEqual(['italic']);
+    expect(kinds('*also*')).toEqual(['italic']);
+    expect(kinds('__bold__')).toEqual(['bold']);
+    expect(kinds('**bold**')).toEqual(['bold']);
+  });
+});
+
+describe('parseBlocks — indented fences', () => {
+  it('treats a fence indented under a list item as a fence', () => {
+    expect(parseBlocks('1. step\n\n   ```bash\n   ls\n   ```')).toEqual([
+      { kind: 'ordered', items: ['step'] },
+      { kind: 'blank' },
+      { kind: 'code', lang: 'bash', code: '   ls' },
+    ]);
+  });
+});
+
 describe('MarkdownText rendering', () => {
   async function frameOf(text: string): Promise<string> {
     const h = renderInk(<MarkdownText text={text} />);

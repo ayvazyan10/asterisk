@@ -29,12 +29,12 @@ export function parseBlocks(text: string): MarkdownBlock[] {
 
     // Fenced code block: ``` or ~~~. An unterminated fence swallows the rest
     // of the message rather than leaking the raw backticks into the chat.
-    const fence = /^(```|~~~)(.*)$/.exec(line);
+    const fence = /^\s*(```|~~~)(.*)$/.exec(line);
     if (fence) {
       const lang = (fence[2] ?? '').trim();
       const code: string[] = [];
       idx++;
-      while (idx < lines.length && !/^(```|~~~)\s*$/.test(lines[idx] ?? '')) {
+      while (idx < lines.length && !/^\s*(```|~~~)\s*$/.test(lines[idx] ?? '')) {
         code.push(lines[idx] ?? '');
         idx++;
       }
@@ -111,8 +111,11 @@ export type InlinePart =
   | { kind: 'code'; value: string }
   | { kind: 'link'; value: string; href: string };
 
+// Underscore emphasis must not touch a letter or digit on the outside, and a
+// single-star run must not open or close on whitespace — otherwise
+// my_file_name.py, MAX_RETRY_COUNT and 2 * 3 * 4 come out half-italic.
 const INLINE_RE =
-  /(\*\*[^*\n]+?\*\*)|(__[^_\n]+?__)|(\*[^*\n]+?\*)|(_[^_\n]+?_)|(`[^`\n]+?`)|(\[[^\]\n]+?\]\([^)\n]+?\))/g;
+  /(\*\*[^*\n]+?\*\*)|((?<![A-Za-z0-9])__[^_\n]+?__(?![A-Za-z0-9]))|(\*(?![\s*])[^*\n]+?(?<!\s)\*)|((?<![A-Za-z0-9])_[^_\n]+?_(?![A-Za-z0-9]))|(`[^`\n]+?`)|(\[[^\]\n]+?\]\([^)\n]+?\))/g;
 
 export function parseInline(text: string): InlinePart[] {
   const out: InlinePart[] = [];

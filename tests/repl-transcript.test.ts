@@ -85,7 +85,7 @@ describe('summariseToolResult', () => {
   it('collapses multi-line output even when it is short', () => {
     const s = summariseToolResult('Read', 'line one\nline two', false);
     expect(s.text).toBe('Read → line one');
-    expect(s.fullText).toBe('Read →\nline one\nline two');
+    expect(s.fullText).toBe('Read → line one\nline two');
   });
 
   it('collapses a long single line', () => {
@@ -119,6 +119,28 @@ describe('renderCollapseHint', () => {
 
   it('falls back to hidden characters when the line count matches', () => {
     expect(renderCollapseHint('ab', 'abcdef')).toBe('[+4 more chars · Ctrl+O to expand]');
+  });
+
+  it('counts exactly the rows Ctrl+O would reveal', () => {
+    const rows = Array.from({ length: 60 }, (_, i) => `row-${i}`).join('\n');
+    const s = summariseToolResult('Read', rows, false);
+    expect(renderCollapseHint(s.text, s.fullText ?? '')).toBe(
+      '[+59 more lines · Ctrl+O to expand]',
+    );
+  });
+
+  it('does not count a trailing newline as a hidden line', () => {
+    const s = summariseToolResult('Bash', 'a\nb\n', false);
+    expect(renderCollapseHint(s.text, s.fullText ?? '')).toBe('[+1 more lines · Ctrl+O to expand]');
+    expect(summariseToolResult('Bash', 'a\n', false).fullText).toBeUndefined();
+  });
+
+  it('agrees with the inline count on a long single line', () => {
+    const s = summariseToolResult('Grep', 'z'.repeat(500), false);
+    expect(s.text).toContain('…[+300 chars]');
+    expect(renderCollapseHint(s.text, s.fullText ?? '')).toBe(
+      '[+300 more chars · Ctrl+O to expand]',
+    );
   });
 
   it('never reports a negative count', () => {

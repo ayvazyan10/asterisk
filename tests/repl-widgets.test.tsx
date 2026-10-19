@@ -94,6 +94,12 @@ describe('Banner', () => {
     expect(frame).toContain('/help');
     expect(frame).toContain('/quit');
   });
+
+  it('says Esc cancels a turn, not ^C', async () => {
+    const frame = await frameOf(<Banner providerName="ollama" cwd="/x" version="1.0.0" />);
+    expect(frame).toContain('Esc cancels a turn');
+    expect(frame).not.toContain('^C to abort');
+  });
 });
 
 describe('WorkingIndicator', () => {

@@ -62,7 +62,19 @@ interface Props {
 export function App({ initialProvider, state, mcp }: Props) {
   const { exit } = useApp();
   const [provider, setProvider] = useState<Provider>(initialProvider);
+  // The provider a turn should use, updated synchronously. A queued /provider
+  // or /model runs from the drain loop, and the chat message queued behind it
+  // runs before React re-renders — through the old `provider` in the closure.
+  const providerRef = useRef<Provider>(initialProvider);
+  const setProviderNow = useCallback((next: Provider) => {
+    providerRef.current = next;
+    setProvider(next);
+  }, []);
   const [input, setInput] = useState('');
+  // Bumped to remount the text input when the prompt is replaced wholesale
+  // (Tab completion, injected text). ink-text-input only moves its cursor
+  // when the value shrinks, so a longer value would keep the old offset.
+  const [promptKey, setPromptKey] = useState(0);
   // The prompt value, mirrored in a ref that updates synchronously — React
   // state is a render behind while a keystroke is still being dispatched.
   const promptNow = useRef('');
@@ -72,13 +84,18 @@ export function App({ initialProvider, state, mcp }: Props) {
   // send it to the model on the next Enter. Ink dispatches to this component
   // before the text input, so the echo can be dropped as it arrives.
   const chordEcho = useRef(false);
-  const setPrompt = useCallback((next: string) => {
+  const setPrompt = useCallback((raw: string) => {
+    // A paste carries the terminal's line endings; a bare \r would reach the
+    // model and the transcript as a carriage return.
+    const next = raw.replace(/\r\n?/g, '\n');
     if (chordEcho.current) {
       chordEcho.current = false;
       // Only ever swallow the single character the chord echoed, never a
       // real edit that happens to follow it.
       if (next.length === promptNow.current.length + 1) return;
     }
+    // A new filter means a new match list; the old highlight indexes nothing.
+    if (next !== promptNow.current) setMenuIndex(0);
     promptNow.current = next;
     setInput(next);
   }, []);
@@ -242,9 +259,12 @@ export function App({ initialProvider, state, mcp }: Props) {
   }, []);
 
   // ESC while the agent is busy → abort the current turn and flush the queue.
+  // Not while an approval or question prompt is up: there Esc answers the
+  // prompt (deny / cancel) and the turn carries on with that answer.
+  const escCancelsTurn = busy && !approval && !askQuestion;
   useInput(
     (_char, key) => {
-      if (!key.escape || !busy) return;
+      if (!key.escape || !escCancelsTurn) return;
       if (abortRef.current) {
         abortRef.current.abort();
         abortRef.current = null;
@@ -254,7 +274,7 @@ export function App({ initialProvider, state, mcp }: Props) {
         setQueueLen(0);
       }
     },
-    { isActive: busy },
+    { isActive: escCancelsTurn },
   );
 
   // Picker key handling. ink-text-input ignores up/down arrows and tab, so we
@@ -281,6 +301,7 @@ export function App({ initialProvider, state, mcp }: Props) {
         if (!target) return;
         const wantsArgs = !!target.usage && /\s/.test(target.usage.trim());
         setPrompt(wantsArgs ? `${target.name} ` : target.name);
+        setPromptKey((k) => k + 1);
         return;
       }
       if (key.escape) {
@@ -326,7 +347,7 @@ export function App({ initialProvider, state, mcp }: Props) {
         const cfg = loadConfig().config;
         const hooks = cfg.hooks;
         const outputStyle = findOutputStyle(cfg.outputStyle);
-        const turn = await runAgentTurn(provider, state, text, {
+        const turn = await runAgentTurn(providerRef.current, state, text, {
           signal: ctrl.signal,
           session,
           rules,
@@ -339,7 +360,6 @@ export function App({ initialProvider, state, mcp }: Props) {
             setWorkingStatus(`thinking · ${thinkingChars} chars`);
           },
           onAssistantDelta: (delta: string) => {
-            renderedAnyText = true;
             streamingText += delta;
             streamingChars += delta.length;
             // Update the LIVE state (rendered outside <Static>). Static
@@ -351,35 +371,26 @@ export function App({ initialProvider, state, mcp }: Props) {
             setWorkingStatus(`writing · ${streamingChars} chars`);
           },
           onAssistantText: (t) => {
-            // After streaming has populated an entry, the post-turn whole-
-            // text event is a duplicate — commit the streamed text into
-            // the static log, clear the live state, and skip the duplicate.
-            if (streamingText) {
-              const finalText = streamingText.trimStart();
-              setEntries((prev) => [
-                ...prev,
-                {
-                  id: `stream_${prev.length}_${Date.now()}`,
-                  kind: 'assistant',
-                  text: finalText,
-                },
-              ]);
-              setLiveAssistant('');
-              streamingEntryId = null;
-              streamingText = '';
-              streamingChars = 0;
-              thinkingChars = 0;
-              renderedAnyText = true;
-              return;
-            }
+            // The loop's text, not the streamed buffer, is what gets
+            // committed: the loop has already cleaned it (tool-call markup
+            // recovered as a call, repetition trimmed) and sends one event
+            // per text block, where the buffer holds every block at once.
+            setLiveAssistant('');
+            streamingEntryId = null;
+            streamingText = '';
+            streamingChars = 0;
             thinkingChars = 0;
-            // Non-streaming provider (or empty stream): fall back to the
-            // append-once behaviour so the user still sees the reply.
             setWorkingStatus('writing response');
             append('assistant', t.trimStart());
             renderedAnyText = true;
           },
           onToolUse: (name, toolInput) => {
+            // Text streamed for a response that turned out to be a tool call
+            // (raw markup a small model typed out) must not linger and merge
+            // with the next model turn.
+            setLiveAssistant('');
+            streamingText = '';
+            streamingChars = 0;
             tally[name] = (tally[name] ?? 0) + 1;
             lastTool = name;
             const summary = summariseToolUse(name, toolInput);
@@ -427,6 +438,7 @@ export function App({ initialProvider, state, mcp }: Props) {
             },
           ]);
           setLiveAssistant('');
+          renderedAnyText = true;
         }
         // Fallback: if the model finished a successful turn but no
         // assistant text reached the transcript (e.g. it emitted only
@@ -463,7 +475,7 @@ export function App({ initialProvider, state, mcp }: Props) {
         setLiveAssistant('');
       }
     },
-    [append, provider, state],
+    [append, state],
   );
 
   const runSlashCommand = useCallback(
@@ -479,14 +491,17 @@ export function App({ initialProvider, state, mcp }: Props) {
         const out = await cmd.command.execute(
           {
             state,
-            provider,
-            setProvider,
+            provider: providerRef.current,
+            setProvider: setProviderNow,
             clearHistory: () => {
               state.history.length = 0;
             },
             exit,
             mcp,
-            injectInput: (text) => setPrompt(text),
+            injectInput: (text) => {
+              setPrompt(text);
+              setPromptKey((k) => k + 1);
+            },
           },
           cmd.args,
         );
@@ -496,7 +511,7 @@ export function App({ initialProvider, state, mcp }: Props) {
         append('error', `command error: ${(e as Error).message}`);
       }
     },
-    [append, applyResult, exit, mcp, provider, setPrompt, state],
+    [append, applyResult, exit, mcp, setPrompt, setProviderNow, state],
   );
 
   // Resolve a single submitted line into the right action. Used both for
@@ -629,9 +644,9 @@ export function App({ initialProvider, state, mcp }: Props) {
               title: [
                 `🔒  ${t('approval.title')}`,
                 '',
-                `    ${approval.command}`,
+                `    ${visibleControls(approval.command)}`,
                 '',
-                `    ${t('approval.because', { reason: approval.reason })}`,
+                `    ${t('approval.because', { reason: visibleControls(approval.reason) })}`,
                 `    ${t('approval.notASandbox')}`,
               ].join('\n'),
               items: [
@@ -645,7 +660,9 @@ export function App({ initialProvider, state, mcp }: Props) {
                   label: t('approval.allowAlways'),
                   description:
                     approval.rules.length > 0
-                      ? t('approval.allowAlwaysHelp', { rules: approval.rules.join(', ') })
+                      ? t('approval.allowAlwaysHelp', {
+                          rules: visibleControls(approval.rules.join(', ')),
+                        })
                       : t('approval.allowAlwaysHelpGeneric'),
                 },
                 {
@@ -739,6 +756,7 @@ export function App({ initialProvider, state, mcp }: Props) {
             <Box borderStyle="round" borderColor={menuOpen ? 'cyan' : 'gray'} paddingX={1}>
               <Text color="cyan">{'› '}</Text>
               <TextInput
+                key={promptKey}
                 value={input}
                 onChange={setPrompt}
                 onSubmit={onSubmit}
@@ -761,6 +779,21 @@ export function App({ initialProvider, state, mcp }: Props) {
       </Box>
     </Box>
   );
+}
+
+// What a person approves must be what runs. Control bytes in a command would
+// otherwise reach the terminal raw — ESC[8m (conceal) can hide the rest of the
+// line from the person approving it — so each one is shown as a \xNN escape.
+// Newline and tab are left alone; they are layout, not terminal commands.
+// Bidi overrides and zero-width characters get the same treatment: they
+// reorder or hide text without a single control byte ("Trojan Source").
+function visibleControls(text: string): string {
+  return text.replace(/(?![\n\t])[\p{Cc}​-‏‪-‮⁦-⁩]/gu, (c) => {
+    const code = c.codePointAt(0) ?? 0;
+    return code > 0xff
+      ? `\\u${code.toString(16).padStart(4, '0')}`
+      : `\\x${code.toString(16).padStart(2, '0')}`;
+  });
 }
 
 function renderEntry(entry: Entry) {
@@ -796,9 +829,8 @@ function renderEntry(entry: Entry) {
           </Box>
           {entry.fullText && (
             <Box marginLeft={4}>
-              <Text dimColor>
-                {`[+${entry.fullText.length - entry.text.length} chars · Ctrl+O]`}
-              </Text>
+              {/* The line above already says how much was cut ("…[+N chars]"). */}
+              <Text dimColor>{'[Ctrl+O to expand]'}</Text>
             </Box>
           )}
         </Box>
