@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2026-10-22
+
+### Fixed
+
+- **`asterisk update` no longer aborts on a re-pointed release tag.** The
+  v0.6.2 tag was moved after its first release run failed, and every git
+  install that had already fetched the old one stopped with "would clobber
+  existing tag" — reported as a network failure. Tags are now fetched with
+  `--force`, since the install mirrors upstream, and the error points at
+  git's own output instead of the network. An install still on 0.6.2 runs the
+  old updater once more; if it stops there, run
+  `git -C ~/.local/share/asterisk tag -d v0.6.2 && asterisk update`.
+
 ## [0.6.2] - 2026-10-19
 
 A second bug sweep — RunCode, the REPL and the ACP server — plus one thing an
