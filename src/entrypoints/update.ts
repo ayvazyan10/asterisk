@@ -93,9 +93,11 @@ async function main(): Promise<void> {
   step('Fetching latest...');
 
   try {
-    run(`git fetch --tags origin ${branch}`, installDir);
+    // --force: the install mirrors upstream, so a tag re-pointed there (a
+    // re-cut release) must replace the local one rather than abort the fetch.
+    run(`git fetch --tags --force origin ${branch}`, installDir);
   } catch {
-    fail('git fetch failed — check your network connection.');
+    fail('git fetch failed — see the git output above.');
   }
 
   const remoteHead = run(`git rev-parse origin/${branch}`, installDir).slice(0, 10);
