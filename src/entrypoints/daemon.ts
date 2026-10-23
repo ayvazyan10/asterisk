@@ -24,7 +24,7 @@ import { createDaemonLogger } from '../daemon/logger.ts';
 import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
 import { closeDb } from '../db/index.ts';
 import { createMcpManager } from '../mcp/manager.ts';
-import { chooseProvider } from '../providers/factory.ts';
+import { createProviderChain } from '../providers/factory.ts';
 import { loadRules } from '../rules/loader.ts';
 import { loadSouls } from '../soul/loader.ts';
 import { closeBrowser } from '../tools/browser/session.ts';
@@ -40,7 +40,7 @@ log.info({ pid: process.pid }, 'asterisk daemon starting');
 const loaded = loadConfig();
 
 function pickProvider(): Provider {
-  const chosen = chooseProvider(loaded);
+  const chosen = createProviderChain(loaded);
   if (chosen.fallbackReason) {
     log.warn({ reason: chosen.fallbackReason, using: chosen.kind }, 'provider fallback');
   }

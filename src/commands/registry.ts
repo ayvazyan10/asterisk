@@ -21,7 +21,7 @@ import { asteriskPaths } from '../daemon/paths.ts';
 import { statusFromPidFile } from '../daemon/pidfile.ts';
 import type { McpManager } from '../mcp/manager.ts';
 import { OUTPUT_STYLES, findOutputStyle } from '../output-styles/styles.ts';
-import { chooseProvider } from '../providers/factory.ts';
+import { createProviderChain } from '../providers/factory.ts';
 import { clearDetectedModels } from '../providers/model-detect.ts';
 import type { CommandResult, FormSpec, ListSpec } from '../repl/forms/types.ts';
 import { loadRules } from '../rules/loader.ts';
@@ -288,7 +288,7 @@ export const COMMANDS: SlashCommand[] = [
     description: 'Clear history and reload config-driven provider',
     execute(ctx) {
       ctx.clearHistory();
-      const chosen = chooseProvider(loadConfig());
+      const chosen = createProviderChain(loadConfig());
       ctx.setProvider(chosen.provider);
       return chosen.fallbackReason
         ? `(reset — ${chosen.fallbackReason}; using ${chosen.kind})`
@@ -720,7 +720,7 @@ function switchModel(ctx: CommandContext, model: string): string {
 
   // A pin change must not be masked by a cached detection from a second ago.
   clearDetectedModels();
-  ctx.setProvider(chooseProvider(loaded).provider);
+  ctx.setProvider(createProviderChain(loaded).provider);
   return trimmed
     ? `✓ switched to ${kind}:${trimmed}`
     : '✓ model unpinned — using whatever the server reports';
@@ -740,7 +740,7 @@ function switchProvider(ctx: CommandContext, target: string): string {
   }
 
   loaded.config = { ...loaded.config, provider: target };
-  const chosen = chooseProvider(loaded);
+  const chosen = createProviderChain(loaded);
   ctx.setProvider(chosen.provider);
   return `✓ switched to ${chosen.provider.name}`;
 }

@@ -9,7 +9,7 @@ import { createAgentState } from '../agent/loop.ts';
 import { loadConversation } from '../agent/persistence.ts';
 import { loadConfig } from '../config/load.ts';
 import { type McpManager, createMcpManager } from '../mcp/manager.ts';
-import { chooseProvider } from '../providers/factory.ts';
+import { createProviderChain } from '../providers/factory.ts';
 import { App } from '../repl/App.tsx';
 import { setExtraTools } from '../tools/registry.ts';
 import type { Provider } from '../types/messages.ts';
@@ -23,7 +23,7 @@ function pickProvider(): Provider {
     loaded.config = { ...loaded.config, provider: explicit };
   }
 
-  const chosen = chooseProvider(loaded);
+  const chosen = createProviderChain(loaded);
   if (chosen.fallbackReason) {
     console.error(`asterisk: ${chosen.fallbackReason} — using ${chosen.kind}`);
   }

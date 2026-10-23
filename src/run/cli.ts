@@ -19,7 +19,7 @@ import { loadConfig } from '../config/load.ts';
 import { closeDb, dbPath } from '../db/index.ts';
 import { type McpManager, createMcpManager } from '../mcp/manager.ts';
 import { ProviderError, type ProviderErrorKind } from '../providers/errors.ts';
-import { chooseProvider } from '../providers/factory.ts';
+import { createProviderChain } from '../providers/factory.ts';
 import { loadRules } from '../rules/loader.ts';
 import { loadSouls } from '../soul/loader.ts';
 import { automaticDenialCount, clearAutomaticDenials } from '../tools/approval.ts';
@@ -128,7 +128,7 @@ const PROCESS_STREAMS: CliStreams = {
  */
 export interface RunCliDeps {
   /** Builds the Provider this run talks to. Defaults to the same
-   *  config-driven choice the REPL and daemon make (chooseProvider, with the
+   *  config-driven choice the REPL and daemon make (createProviderChain, with the
    *  same ASTERISK_PROVIDER one-run override cli.tsx honours). */
   createProvider(): Provider;
   /** Defaults to the real MCP manager. A run with no configured MCP servers
@@ -151,7 +151,7 @@ function defaultCreateProvider(): Provider {
   if (explicit === 'anthropic' || explicit === 'openai-compatible' || explicit === 'deepseek') {
     loaded.config = { ...loaded.config, provider: explicit };
   }
-  const chosen = chooseProvider(loaded);
+  const chosen = createProviderChain(loaded);
   if (chosen.fallbackReason) {
     process.stderr.write(`asterisk run: ${chosen.fallbackReason} — using ${chosen.kind}\n`);
   }

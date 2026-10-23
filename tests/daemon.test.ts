@@ -133,7 +133,7 @@ describe('daemon intake interruption', () => {
   async function importDaemon(): Promise<void> {
     vi.doMock('../src/bots/approval-bridge.ts', () => ({ attachChatApprovals: () => () => {} }));
     vi.doMock('../src/providers/factory.ts', () => ({
-      chooseProvider: () => ({ provider: { name: 'fake' } }),
+      createProviderChain: () => ({ provider: { name: 'fake' } }),
     }));
     vi.doMock('../src/mcp/manager.ts', () => ({
       createMcpManager: () => ({ tools: [], reload: async () => ({ connected: [], failed: [] }) }),

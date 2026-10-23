@@ -278,6 +278,17 @@ describe('/reset', () => {
     expect(out).toContain('ANTHROPIC_API_KEY is not set');
     expect(out).toContain('using openai-compatible');
   });
+
+  it('rebuilds the fallback chain, not just the head provider', async () => {
+    const cfg = config();
+    cfg.providerFallback = ['deepseek'];
+    saveConfig(cfg);
+    saveSecrets({ DEEPSEEK_API_KEY: 'test-key' });
+
+    const ctx = makeContext();
+    await runText(ctx, '/reset');
+    expect(ctx.provider.name).toMatch(/^openai-compatible:.* → deepseek:deepseek-flash$/);
+  });
 });
 
 describe('/status', () => {
