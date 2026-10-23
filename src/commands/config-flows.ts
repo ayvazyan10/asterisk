@@ -55,7 +55,7 @@ const CONFIG_SECTIONS: ConfigSection[] = [
   {
     key: 'provider',
     label: 'Default provider',
-    summary: 'local endpoint or anthropic at startup',
+    summary: 'local endpoint, anthropic or deepseek at startup',
     open() {
       const cfg = loadConfig().config;
       return {
@@ -76,6 +76,7 @@ const CONFIG_SECTIONS: ConfigSection[] = [
                 label: 'Local / OpenAI-compatible (llama.cpp, LM Studio, …)',
               },
               { value: 'anthropic', label: 'Anthropic API' },
+              { value: 'deepseek', label: 'DeepSeek API' },
             ],
             defaultValue: cfg.provider,
           },

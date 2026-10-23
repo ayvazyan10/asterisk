@@ -19,7 +19,7 @@ function pickProvider(): Provider {
 
   // ASTERISK_PROVIDER overrides the stored choice for one run.
   const explicit = (process.env['ASTERISK_PROVIDER'] ?? '').toLowerCase();
-  if (explicit === 'anthropic' || explicit === 'openai-compatible') {
+  if (explicit === 'anthropic' || explicit === 'openai-compatible' || explicit === 'deepseek') {
     loaded.config = { ...loaded.config, provider: explicit };
   }
 

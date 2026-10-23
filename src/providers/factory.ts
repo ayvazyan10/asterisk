@@ -24,7 +24,7 @@ export interface ProviderChoice {
 
 /**
  * Builds the configured provider, falling back to the local endpoint when
- * Anthropic is selected without a key. The local provider never falls back —
+ * a hosted provider is selected without a key. The local provider never falls back —
  * a wrong base URL should surface as a connection error, not a silent switch.
  */
 export function chooseProvider(loaded: LoadedConfig): ProviderChoice {
@@ -45,6 +45,18 @@ export function chooseProvider(loaded: LoadedConfig): ProviderChoice {
     };
   }
 
+  if (config.provider === 'deepseek') {
+    const provider = buildKind('deepseek', loaded);
+    if (!provider) {
+      return {
+        provider: buildOpenAiCompatible(loaded),
+        kind: 'openai-compatible',
+        fallbackReason: 'deepseek selected but DEEPSEEK_API_KEY is not set',
+      };
+    }
+    return { provider, kind: 'deepseek' };
+  }
+
   return { provider: buildOpenAiCompatible(loaded), kind: 'openai-compatible' };
 }
 
@@ -52,7 +64,7 @@ export function chooseProvider(loaded: LoadedConfig): ProviderChoice {
  * Builds the provider chain: the chosen backend, then anything in
  * `providerFallback` that is usable and not already in front of it.
  *
- * A backend that cannot be constructed at all — Anthropic with no key — is
+ * A backend that cannot be constructed at all — a hosted API with no key — is
  * dropped here rather than added and left to fail on first use, so the chain
  * only contains links that could plausibly answer.
  */
@@ -74,6 +86,18 @@ export function createProviderChain(loaded: LoadedConfig): ProviderChoice {
 /** Builds one backend by name, or null when it cannot be built. */
 function buildKind(kind: AsteriskConfig['provider'], loaded: LoadedConfig): Provider | null {
   try {
+    if (kind === 'deepseek') {
+      const apiKey = loaded.secrets.DEEPSEEK_API_KEY;
+      return apiKey
+        ? createOpenAiCompatibleProvider({
+            ...loaded.config.deepseek,
+            apiKey,
+            detectModel: false,
+            namePrefix: 'deepseek',
+            imageSupport: 'off',
+          })
+        : null;
+    }
     if (kind === 'anthropic') {
       const apiKey = loaded.secrets.ANTHROPIC_API_KEY;
       // Without a key this link could only ever contribute an auth failure.

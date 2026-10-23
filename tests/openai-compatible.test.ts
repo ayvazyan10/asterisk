@@ -106,6 +106,54 @@ function stalls(frames: string[]): void {
 
 const base = { system: 'sys', messages: [], tools: [] };
 
+describe('disabled model detection', () => {
+  it('keeps the pinned model and name prefix without probing metadata', async () => {
+    const urls: string[] = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      urls.push(String(url));
+      lastRequest = { url: String(url), init: init ?? {} };
+      return Response.json({
+        data: [{ id: 'wrong-model', meta: { n_ctx: 8192 } }],
+        choices: [{ message: { content: 'ok' } }],
+      });
+    }) as unknown as typeof fetch;
+    const provider = createOpenAiCompatibleProvider({
+      baseUrl: 'https://hosted.invalid/v1',
+      model: 'deepseek-flash',
+      detectModel: false,
+      namePrefix: 'deepseek',
+      contextWindow: 32768,
+      imageSupport: 'auto',
+    });
+    await provider.refresh?.();
+    expect(await provider.supportsImages?.()).toBe(false);
+    expect(urls).toEqual([]);
+    await provider.send(base);
+    expect(JSON.parse(String(lastRequest?.init.body)).model).toBe('deepseek-flash');
+    expect(provider.name).toBe('deepseek:deepseek-flash');
+    expect(provider.contextWindow).toBe(32768);
+    expect(urls).toEqual(['https://hosted.invalid/v1/chat/completions']);
+  });
+
+  it.each(['off', 'on', 'auto'] as const)(
+    'honours imageSupport=%s without probes',
+    async (mode) => {
+      const urls: string[] = [];
+      globalThis.fetch = (async (url: string) => {
+        urls.push(String(url));
+        return Response.json({});
+      }) as unknown as typeof fetch;
+      const provider = createOpenAiCompatibleProvider({
+        model: 'vision-model',
+        detectModel: false,
+        imageSupport: mode,
+      });
+      expect(await provider.supportsImages?.()).toBe(mode !== 'off');
+      expect(urls).toEqual([]);
+    },
+  );
+});
+
 describe('refresh', () => {
   it('resolves the server context window before the first send', async () => {
     respond(JSON.stringify({ data: [{ id: 'loaded', meta: { n_ctx: 8192 } }] }));

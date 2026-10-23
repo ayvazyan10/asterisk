@@ -82,6 +82,7 @@ describe('settings registry', () => {
       'provider',
       'openaiCompatible',
       'anthropic',
+      'deepseek',
       'bots',
       'daemon',
       'web',

@@ -111,6 +111,10 @@ export const COMMANDS: SlashCommand[] = [
         return switchModel(ctx, target);
       }
 
+      if (current?.kind === 'deepseek') {
+        return `current model: ${current.model} — pass a model name: /model <id>`;
+      }
+
       // No args → visual model picker.
       if (current?.kind === 'openai-compatible') {
         // Ask the endpoint what it serves. Falling through to the Anthropic
@@ -174,8 +178,8 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: '/provider',
-    description: 'Switch between openai-compatible and anthropic',
-    usage: '/provider [openai-compatible|anthropic]',
+    description: 'Switch between openai-compatible, anthropic and deepseek',
+    usage: '/provider [openai-compatible|anthropic|deepseek]',
     execute(ctx, args) {
       const target = args.trim().toLowerCase();
       if (target) return switchProvider(ctx, target);
@@ -195,6 +199,12 @@ export const COMMANDS: SlashCommand[] = [
             label: 'Anthropic API',
             description: cfg.anthropic.model,
             ...(ctx.provider.name.startsWith('anthropic:') ? { badge: '* current' } : {}),
+          },
+          {
+            value: 'deepseek',
+            label: 'DeepSeek API',
+            description: cfg.deepseek.model,
+            ...(ctx.provider.name.startsWith('deepseek:') ? { badge: '* current' } : {}),
           },
         ],
         onPick: (v) => switchProvider(ctx, v),
@@ -692,7 +702,11 @@ function switchModel(ctx: CommandContext, model: string): string {
     return 'ANTHROPIC_API_KEY not set; run `asterisk configure`';
   }
 
-  if (kind === 'anthropic' && !trimmed) return 'no model specified';
+  if (kind === 'deepseek' && !loaded.secrets.DEEPSEEK_API_KEY) {
+    return 'DEEPSEEK_API_KEY not set';
+  }
+
+  if (kind !== 'openai-compatible' && !trimmed) return 'no model specified';
 
   loaded.config = {
     ...loaded.config,
@@ -701,6 +715,7 @@ function switchModel(ctx: CommandContext, model: string): string {
       ? { openaiCompatible: { ...loaded.config.openaiCompatible, model: trimmed } }
       : {}),
     ...(kind === 'anthropic' ? { anthropic: { ...loaded.config.anthropic, model: trimmed } } : {}),
+    ...(kind === 'deepseek' ? { deepseek: { ...loaded.config.deepseek, model: trimmed } } : {}),
   };
 
   // A pin change must not be masked by a cached detection from a second ago.
@@ -712,13 +727,16 @@ function switchModel(ctx: CommandContext, model: string): string {
 }
 
 function switchProvider(ctx: CommandContext, target: string): string {
-  if (target !== 'openai-compatible' && target !== 'anthropic') {
-    return `unknown provider: ${target} (expected openai-compatible or anthropic)`;
+  if (target !== 'openai-compatible' && target !== 'anthropic' && target !== 'deepseek') {
+    return `unknown provider: ${target} (expected openai-compatible, anthropic or deepseek)`;
   }
 
   const loaded = loadConfig();
   if (target === 'anthropic' && !loaded.secrets.ANTHROPIC_API_KEY) {
     return 'ANTHROPIC_API_KEY not set; run `asterisk configure`';
+  }
+  if (target === 'deepseek' && !loaded.secrets.DEEPSEEK_API_KEY) {
+    return 'DEEPSEEK_API_KEY not set';
   }
 
   loaded.config = { ...loaded.config, provider: target };

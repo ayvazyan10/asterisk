@@ -148,7 +148,7 @@ function defaultCreateProvider(): Provider {
   // the same reason: a caller scripting `asterisk run` wants it without
   // touching the stored config either.
   const explicit = (process.env['ASTERISK_PROVIDER'] ?? '').toLowerCase();
-  if (explicit === 'anthropic' || explicit === 'openai-compatible') {
+  if (explicit === 'anthropic' || explicit === 'openai-compatible' || explicit === 'deepseek') {
     loaded.config = { ...loaded.config, provider: explicit };
   }
   const chosen = chooseProvider(loaded);

@@ -33,6 +33,9 @@ export interface StatusModel {
  * `null` — never a placeholder string — means there is nothing to report.
  */
 async function resolveStatusModel(config: AsteriskConfig): Promise<StatusModel | null> {
+  if (config.provider === 'deepseek') {
+    return { id: config.deepseek.model, source: 'configured' };
+  }
   if (config.provider === 'anthropic') {
     return { id: config.anthropic.model, source: 'configured' };
   }

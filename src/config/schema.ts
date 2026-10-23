@@ -8,11 +8,12 @@
 // text. Add a field here and it appears in the browser automatically.
 
 import { z } from 'zod';
+import { PROVIDER_KINDS } from '../providers/kinds.ts';
 
 // `openai-compatible` is the local-model path and the default — llama.cpp,
 // LM Studio, vLLM, Jan, LocalAI, or any proxy speaking /v1/chat/completions.
-// `anthropic` is the opt-in hosted alternative.
-const ProviderSchema = z.enum(['openai-compatible', 'anthropic']);
+// `anthropic` and `deepseek` are the opt-in hosted alternatives.
+const ProviderSchema = z.enum(PROVIDER_KINDS);
 
 // The three states of `openaiCompatible.imageSupport`. `/v1/models` names the
 // model but not its modalities, so `auto` has real work to do — see
@@ -64,6 +65,34 @@ const OpenAiCompatibleSchema = z.object({
   imageSupport: ImageSupportSchema.default('auto').describe(
     'Whether this endpoint can be sent images. auto asks the server (llama.cpp reports its modalities) and falls back to reading the model name, refusing when it cannot tell. Set on for a vision model the server does not advertise, off to never send images.',
   ),
+});
+
+const DeepSeekSchema = z.object({
+  baseUrl: z
+    .string()
+    .url()
+    .default('https://api.deepseek.com')
+    .describe('DeepSeek API endpoint root (OpenAI format).'),
+  model: z
+    .string()
+    .default('deepseek-flash')
+    .describe('Pinned DeepSeek model id. Requires DEEPSEEK_API_KEY; model detection is disabled.'),
+  // Without a window this link makes the whole fallback chain's window
+  // unknown, and compaction would budget the local link against 128k too.
+  contextWindow: z
+    .number()
+    .int()
+    .min(0)
+    .max(10_000_000)
+    .default(1_000_000)
+    .describe('Tokens the DeepSeek model can hold. Compaction budgets history against this.'),
+  maxTokens: z
+    .number()
+    .int()
+    .min(0)
+    .max(1_000_000)
+    .default(0)
+    .describe('Cap on generated tokens. 0 lets the server decide.'),
 });
 
 const AnthropicSchema = z.object({
@@ -417,6 +446,7 @@ export const ConfigSchema = z.object({
     ),
   openaiCompatible: OpenAiCompatibleSchema.default({}),
   anthropic: AnthropicSchema.default({}),
+  deepseek: DeepSeekSchema.default({}),
   bots: BotsSchema.default({}),
   daemon: DaemonSchema.default({}),
   web: WebSchema.default({}),
@@ -436,6 +466,8 @@ export type AsteriskConfig = z.infer<typeof ConfigSchema>;
 
 export const SECRET_KEYS = [
   'ANTHROPIC_API_KEY',
+  // Required for the DeepSeek hosted API, as primary or fallback.
+  'DEEPSEEK_API_KEY',
   // Only needed when the OpenAI-compatible endpoint is a hosted service;
   // local servers accept requests without one.
   'ASTERISK_OPENAI_API_KEY',

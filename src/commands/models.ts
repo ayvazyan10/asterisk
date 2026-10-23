@@ -4,6 +4,8 @@
 // than being imported back out of the registry — that would close an import
 // cycle at value level.
 
+import type { ProviderKind } from '../providers/kinds.ts';
+
 /**
  * Model ids an OpenAI-compatible endpoint advertises.
  *
@@ -73,7 +75,7 @@ export async function listAnthropicModels(apiKey: string): Promise<AnthropicMode
   }
 }
 
-export type ProviderKind = 'openai-compatible' | 'anthropic';
+export type { ProviderKind } from '../providers/kinds.ts';
 
 /** Splits `<kind>:<model>`; model ids may contain colons, so only the first splits. */
 export function parseProviderName(name: string): { kind: ProviderKind; model: string } | null {
@@ -81,6 +83,6 @@ export function parseProviderName(name: string): { kind: ProviderKind; model: st
   if (colon === -1) return null;
   const kind = name.slice(0, colon);
   const model = name.slice(colon + 1);
-  if (kind !== 'openai-compatible' && kind !== 'anthropic') return null;
+  if (kind !== 'openai-compatible' && kind !== 'anthropic' && kind !== 'deepseek') return null;
   return { kind, model };
 }

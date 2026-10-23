@@ -77,7 +77,7 @@ describe('/config provider offers every provider the schema has', () => {
     )) as FormSpec;
     const field = out.fields.find((f) => f.key === 'provider');
     const values = field && 'options' in field ? field.options.map((o) => o.value) : [];
-    expect(values).toEqual(['openai-compatible', 'anthropic']);
+    expect(values).toEqual(['openai-compatible', 'anthropic', 'deepseek']);
   });
 
   it('round-trips the selection into config', async () => {

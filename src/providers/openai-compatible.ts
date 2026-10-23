@@ -37,6 +37,10 @@ export interface OpenAiCompatibleConfig {
   /** Endpoint root including the version segment, e.g. http://127.0.0.1:8080/v1 */
   baseUrl: string;
   model: string;
+  /** Disable model and vision probes for hosted endpoints with a pinned model. */
+  detectModel?: boolean;
+  /** Provider kind shown before the model id. Defaults to openai-compatible. */
+  namePrefix?: string;
   /** Sent as `Authorization: Bearer`. Local servers usually need none. */
   apiKey: string;
   /** Upper bound on generated tokens. 0 leaves it to the server. */
@@ -403,7 +407,7 @@ export function createOpenAiCompatibleProvider(
    * authority and the config is the fallback for when it cannot be reached.
    */
   const resolveModel = async (): Promise<string> => {
-    detected = await detectActiveModel(root, cfg.apiKey);
+    if (cfg.detectModel !== false) detected = await detectActiveModel(root, cfg.apiKey);
     const model = detected?.id || cfg.model;
     if (!model) {
       throw new ProviderError(
@@ -416,7 +420,7 @@ export function createOpenAiCompatibleProvider(
 
   return {
     get name(): string {
-      return `openai-compatible:${detected?.id || cfg.model || 'auto'}`;
+      return `${cfg.namePrefix ?? 'openai-compatible'}:${detected?.id || cfg.model || 'auto'}`;
     },
     // The server's own n_ctx beats the configured guess; 0/undefined means
     // "unknown" and compaction falls back to its own default.
@@ -445,8 +449,8 @@ export function createOpenAiCompatibleProvider(
     async supportsImages(): Promise<boolean> {
       // A forced mode is the whole answer, so it must not send the user's
       // machine looking for a server that may not even be running.
-      if (cfg.imageSupport !== 'auto') {
-        return resolveImageSupport({ mode: cfg.imageSupport, modelId: '' });
+      if (cfg.imageSupport !== 'auto' || cfg.detectModel === false) {
+        return resolveImageSupport({ mode: cfg.imageSupport, modelId: cfg.model });
       }
       const listed = await detectActiveModel(root, cfg.apiKey);
       const reported = await detectVisionSupport(root, cfg.apiKey);

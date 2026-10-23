@@ -6,5 +6,5 @@
 // /v1/chat/completions. Ollama had its own provider until 0.4.2 — see the
 // CHANGELOG for why one local path is better than two.
 
-export const PROVIDER_KINDS = ['openai-compatible', 'anthropic'] as const;
+export const PROVIDER_KINDS = ['openai-compatible', 'anthropic', 'deepseek'] as const;
 export type ProviderKind = (typeof PROVIDER_KINDS)[number];

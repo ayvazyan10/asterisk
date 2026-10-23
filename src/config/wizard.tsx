@@ -24,14 +24,14 @@ interface WizardState {
 const STEPS: Step[] = [
   {
     key: 'provider',
-    prompt: 'Provider — "openai-compatible" (local) or "anthropic"',
+    prompt: 'Provider — "openai-compatible" (local), "anthropic" or "deepseek"',
     initial: (s) => s.config.provider,
     apply: (s, v) => {
       const typed = v.trim().toLowerCase();
-      // Anything that is not clearly Anthropic means the local endpoint —
+      // Anything that is not clearly a hosted provider means the local endpoint —
       // that is the default, and an unrecognised answer should land there
       // rather than silently selecting a hosted API that needs a key.
-      const p = typed === 'anthropic' ? 'anthropic' : 'openai-compatible';
+      const p = typed === 'anthropic' || typed === 'deepseek' ? typed : 'openai-compatible';
       return { ...s, config: { ...s.config, provider: p } };
     },
   },

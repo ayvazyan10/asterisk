@@ -204,7 +204,7 @@ describe('command registry', () => {
     expect(out && typeof out === 'object' && (out as { kind?: string }).kind).toBe('list');
     if (out && typeof out === 'object' && 'items' in out) {
       const items = (out as { items: { value: string }[] }).items.map((i) => i.value);
-      expect(items).toEqual(['openai-compatible', 'anthropic']);
+      expect(items).toEqual(['openai-compatible', 'anthropic', 'deepseek']);
     }
   });
 
