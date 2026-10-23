@@ -45,6 +45,19 @@ describe('agent loop', () => {
     expect(seen[0]).toBeLessThanOrEqual(compactionThreshold(8_192));
   });
 
+  it('tells the model which backend it is, so it does not guess from config', async () => {
+    const systems: string[] = [];
+    const provider: Provider = {
+      name: 'deepseek:deepseek-flash',
+      async send(req) {
+        systems.push(req.system);
+        return { content: [{ type: 'text', text: 'ok' }], stopReason: 'end_turn' };
+      },
+    };
+    await runAgentTurn(provider, createAgentState(), 'what model are you?');
+    expect(systems[0]).toContain('Model: deepseek:deepseek-flash.');
+  });
+
   it('surfaces a network error without retrying after a text delta', async () => {
     const error = new ProviderError('network', 'connection lost mid-stream');
     const send = vi.fn(async (req: ProviderRequest): Promise<ProviderResponse> => {

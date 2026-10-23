@@ -260,7 +260,10 @@ async function runAgentTurnInner(
   const soulSection = soulsToPromptSection(souls);
   const rulesSection = rulesToPromptSection(rules);
   const styleSection = outputStyleToPromptSection(opts.outputStyle);
-  const systemPrompt = [SYSTEM_PROMPT, soulSection, rulesSection, styleSection]
+  // Without this a model asked what it is guesses — from training, or from
+  // whatever model id it finds in the config (an unused anthropic.model).
+  const modelSection = `Model: ${provider.name}. When asked which model you are, answer from this line, not from config files, environment variables or your training.`;
+  const systemPrompt = [SYSTEM_PROMPT, modelSection, soulSection, rulesSection, styleSection]
     .filter((s) => s && s.length > 0)
     .join('\n\n');
 
