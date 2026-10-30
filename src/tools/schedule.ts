@@ -24,6 +24,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { validateCron } from '../daemon/scheduler.ts';
 import { ensureOwnerOnlyDir, writeOwnerOnlyAtomic } from '../utils/fs-safe.ts';
 import { type Tool, err, ok } from './types.ts';
 
@@ -143,7 +144,7 @@ export const scheduleWakeupTool: Tool = {
 export const cronCreateTool: Tool = {
   name: 'CronCreate',
   description:
-    'Schedule a recurring agent prompt using a 5-field cron expression (minute hour dom month dow) in the daemon machine\'s local time. Examples: "0 9 * * 1-5" weekday 9am, "*/15 * * * *" every 15 minutes.',
+    'Schedule a recurring agent prompt using a 5-field cron expression (minute hour dom month dow) in the daemon machine\'s local time. When dom and dow both do not start with *, either may match. Examples: "0 9 * * 1-5" weekday 9am, "*/15 * * * *" every 15 minutes.',
   input_schema: {
     type: 'object',
     properties: {
@@ -156,8 +157,8 @@ export const cronCreateTool: Tool = {
   async execute(input) {
     const cron = typeof input['cron'] === 'string' ? input['cron'].trim() : '';
     const prompt = typeof input['prompt'] === 'string' ? input['prompt'].trim() : '';
-    if (!cron || cron.split(/\s+/).length !== 5)
-      return err('cron must be a 5-field expression: minute hour dom month dow');
+    const cronError = validateCron(cron);
+    if (cronError) return err(cronError);
     if (!prompt) return err('prompt is required');
     const job: CronJob = {
       id: nextId('cron'),

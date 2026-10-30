@@ -13,7 +13,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { readCronJobs, readOneShots, writeOneShots } from '../src/tools/schedule.ts';
+import {
+  cronCreateTool,
+  readCronJobs,
+  readOneShots,
+  writeOneShots,
+} from '../src/tools/schedule.ts';
 
 describe('schedule.ts persistence', () => {
   let home: string;
@@ -29,6 +34,14 @@ describe('schedule.ts persistence', () => {
     if (prevHome === undefined) delete process.env['ASTERISK_HOME'];
     else process.env['ASTERISK_HOME'] = prevHome;
     await rm(home, { recursive: true, force: true });
+  });
+
+  it('refuses an invalid CronCreate weekday without persisting a job', async () => {
+    const result = await cronCreateTool.execute({ cron: '0 9 * * mon', prompt: 'hello' });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('day-of-week');
+    expect(readCronJobs()).toEqual([]);
+    expect(existsSync(join(home, 'schedule', 'cron.jsonl'))).toBe(false);
   });
 
   it('skips a corrupted line instead of throwing and losing every other job', () => {

@@ -180,6 +180,41 @@ export function expandCronField(field: string, min: number, max: number): Set<nu
   return out;
 }
 
+export function validateCron(expr: string): string | null {
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5) return 'cron must be a 5-field expression: minute hour dom month dow';
+  const [minute = '', hour = '', dom = '', month = '', dow = ''] = parts;
+  const fields = [
+    ['minute', minute, 0, 59],
+    ['hour', hour, 0, 23],
+    ['day-of-month (dom)', dom, 1, 31],
+    ['month', month, 1, 12],
+    ['day-of-week (dow)', dow, 0, 7],
+  ] as const;
+  for (const [name, field, min, max] of fields) {
+    for (const piece of field.split(',')) {
+      const match = /^(\*|(\d+)(?:-(\d+))?)(?:\/(\d+))?$/.exec(piece);
+      if (!match) return `invalid ${name} field: ${piece}`;
+      const lo = Number(match[2] ?? min);
+      const hi = Number(match[3] ?? match[2] ?? max);
+      const step = Number(match[4] ?? 1);
+      if (lo < min || hi > max || lo > hi)
+        return `invalid ${name} field: values must be ${min}..${max} with ascending ranges`;
+      if (!Number.isFinite(step) || step < 1)
+        return `invalid ${name} field: step must be at least 1`;
+    }
+  }
+  // A restricted weekday can still match when no selected calendar date exists.
+  if (!dom.startsWith('*') && !dow.startsWith('*')) return null;
+  const doms = expandCronField(dom, 1, 31);
+  const months = expandCronField(month, 1, 12);
+  const monthDays = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  for (const selectedMonth of months) {
+    if ([...doms].some((day) => day <= (monthDays[selectedMonth - 1] ?? 0))) return null;
+  }
+  return 'invalid day-of-month (dom) field: no date exists in the selected month field';
+}
+
 export function cronMatches(expr: string, when: Date): boolean {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return false;
@@ -191,12 +226,17 @@ export function cronMatches(expr: string, when: Date): boolean {
   const months = expandCronField(month, 1, 12);
   const dows = expandCronField(dow, 0, 7); // 0 and 7 = Sunday
   if (dows.has(7)) dows.add(0);
+  const domMatches = doms.has(when.getDate());
+  const dowMatches = dows.has(when.getDay());
+  const dayMatches =
+    !dom.startsWith('*') && !dow.startsWith('*')
+      ? domMatches || dowMatches
+      : domMatches && dowMatches;
 
   return (
     minutes.has(when.getMinutes()) &&
     hours.has(when.getHours()) &&
-    doms.has(when.getDate()) &&
     months.has(when.getMonth() + 1) &&
-    dows.has(when.getDay())
+    dayMatches
   );
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cronMatches, expandCronField } from '../src/daemon/scheduler.ts';
+import { cronMatches, expandCronField, validateCron } from '../src/daemon/scheduler.ts';
 
 describe('expandCronField', () => {
   it('handles "*"', () => {
@@ -31,6 +31,39 @@ describe('expandCronField', () => {
 });
 
 describe('cronMatches', () => {
+  it('matches either restricted day-of-month or day-of-week', () => {
+    expect(cronMatches('0 9 1 * 1', new Date(2026, 9, 5, 9, 0))).toBe(true);
+    expect(cronMatches('0 9 1 * 1', new Date(2026, 9, 1, 9, 0))).toBe(true);
+    expect(cronMatches('0 9 1 * 1', new Date(2026, 9, 6, 9, 0))).toBe(false);
+    expect(cronMatches('0 9 1 9 1', new Date(2026, 9, 5, 9, 0))).toBe(false);
+    expect(cronMatches('0 9 1 * 1', new Date(2026, 9, 5, 9, 1))).toBe(false);
+  });
+
+  it('matches 74 distinct days for the first, fifteenth, or Monday in 2026', () => {
+    let count = 0;
+    for (let day = 1; day <= 365; day += 1) {
+      const date = new Date(2026, 0, day, 9, 0);
+      const expected = date.getDate() === 1 || date.getDate() === 15 || date.getDay() === 1;
+      const matches = cronMatches('0 9 1,15 * 1', date);
+      expect(matches).toBe(expected);
+      if (matches) count += 1;
+    }
+    expect(count).toBe(74);
+  });
+
+  it('requires the day-of-month when the weekday is a wildcard', () => {
+    expect(cronMatches('0 9 1 * *', new Date(2026, 9, 1, 9, 0))).toBe(true);
+    expect(cronMatches('0 9 1 * *', new Date(2026, 9, 5, 9, 0))).toBe(false);
+  });
+
+  it('keeps AND semantics for fields starting with a stepped wildcard', () => {
+    expect(cronMatches('0 9 */2 * 1', new Date(2026, 9, 5, 9, 0))).toBe(true);
+    expect(cronMatches('0 9 */2 * 1', new Date(2026, 9, 12, 9, 0))).toBe(false);
+    expect(cronMatches('0 9 */2 * 1', new Date(2026, 9, 1, 9, 0))).toBe(false);
+    expect(cronMatches('0 9 1 * */2', new Date(2026, 9, 1, 9, 0))).toBe(true);
+    expect(cronMatches('0 9 1 * */2', new Date(2026, 9, 8, 9, 0))).toBe(false);
+  });
+
   it('matches the local minute, hour, date, month, and weekday', () => {
     expect(cronMatches('42 23 31 12 4', new Date(2026, 11, 31, 23, 42))).toBe(true);
     expect(cronMatches('42 23 31 12 4', new Date(2026, 11, 31, 22, 42))).toBe(false);
@@ -74,5 +107,51 @@ describe('cronMatches', () => {
   it('returns false for malformed expressions', () => {
     expect(cronMatches('not a cron', new Date())).toBe(false);
     expect(cronMatches('* * *', new Date())).toBe(false);
+  });
+});
+
+describe('validateCron', () => {
+  it.each([
+    '0 9 * * 1-5',
+    '*/15 * * * *',
+    '0 9 * * 7',
+    '0 0 29 2 *',
+    '0,30 9-17/2 1,15 * 1',
+    '5/2 * * * *',
+    '0 9 31 2,3 *',
+    '0 9 28,31 2 *',
+    '0 9 31 2 1',
+  ])('accepts %s', (expr) => {
+    expect(validateCron(expr)).toBeNull();
+  });
+
+  it.each([
+    ['0 9 * * mon', 'day-of-week'],
+    ['0 9 * * MON-FRI', 'day-of-week'],
+    ['60 * * * *', 'minute'],
+    ['0 24 * * *', 'hour'],
+    ['0 17-9 * * *', 'hour'],
+    ['0 9 31 2 *', 'day-of-month'],
+    ['5x * * * *', 'minute'],
+    ['0 9am * * *', 'hour'],
+    ['*/0 * * * *', 'minute'],
+    ['0 9 0 * *', 'day-of-month'],
+    ['0 9 32 * *', 'day-of-month'],
+    ['0 9 * 0 *', 'month'],
+    ['0 9 * 13 *', 'month'],
+    ['0 9 * * 8', 'day-of-week'],
+    ['0 9 31 4,6 *', 'day-of-month'],
+    ['0 9 31 2 */2', 'day-of-month'],
+    ['0, 9 * * *', 'minute'],
+    ['0 9 *-3 * *', 'day-of-month'],
+    ['0 9 * * -1', 'day-of-week'],
+    ['*/1.5 * * * *', 'minute'],
+    ['0-60 * * * *', 'minute'],
+  ])('rejects %s and names the %s field', (expr, field) => {
+    expect(validateCron(expr)).toContain(field);
+  });
+
+  it.each(['', '* * * *', '* * * * * *'])('rejects the wrong field count: %s', (expr) => {
+    expect(validateCron(expr)).toContain('5-field');
   });
 });
