@@ -5,6 +5,40 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-10-30
+
+Two cron bugs reported by @mattabate (#1, #2), plus a provider to fall back to
+when the local model server is down.
+
+### Added
+
+- **`deepseek` provider kind.** A third kind on the shared OpenAI-compatible
+  transport, with the model pinned (default `deepseek-flash`, 1M window) and
+  no `/models` or `/props` probes. Needs `DEEPSEEK_API_KEY`; without it the
+  link is dropped from `providerFallback`, and as the primary provider it
+  falls back to local with a reason.
+
+### Fixed
+
+- **Cron day-of-month and day-of-week are OR'd when both are set** (#1). The
+  scheduler ANDed every field, so `0 9 1,15 * 1` fired only on a 1st or 15th
+  that was also a Monday — twice in 2026 instead of 74 times. It now follows
+  standard cron: when neither field starts with `*`, either one matching is
+  enough.
+- **`CronCreate` refuses expressions that can never fire** (#2). Day names
+  (`mon`), out-of-range values (`60`, `24`), reversed ranges (`17-9`), a zero
+  step, trailing garbage (`9am`, which was read as `9`) and impossible dates
+  (`31 2`) used to be saved, listed as enabled and never run. The error now
+  names the bad field.
+- **The REPL, the daemon and `asterisk run` honour `providerFallback`.** Only
+  ACP, sub-agents and eval built the chain; everywhere else a local-first
+  install with the local server down failed every turn instead of stepping
+  down to the next provider.
+- **The model is told which backend is answering.** Nothing in the system
+  prompt named the model, so a bot answering through the fallback chain read
+  an unused config value and claimed to be a different model. The prompt now
+  carries a `Model:` line, plus the active link when a chain is in use.
+
 ## [0.6.3] - 2026-10-22
 
 ### Fixed
