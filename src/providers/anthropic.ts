@@ -2,6 +2,7 @@
 // Reference: https://github.com/anthropics/anthropic-sdk-typescript
 
 import Anthropic from '@anthropic-ai/sdk';
+import type { AsteriskConfig } from '../config/schema.ts';
 import type {
   ContentBlock,
   Provider,
@@ -13,10 +14,11 @@ import { ProviderError, classifyHttpError } from './errors.ts';
 interface AnthropicConfig {
   apiKey: string;
   model: string;
+  reasoningEffort: AsteriskConfig['anthropic']['reasoningEffort'];
 }
 
-// Haiku 3.5 retired 2026-02-19; `claude-haiku-4-5` is its replacement.
-const DEFAULT_MODEL = process.env['ANTHROPIC_MODEL'] ?? 'claude-haiku-4-5';
+// The current Opus model is the default for new configurations.
+const DEFAULT_MODEL = process.env['ANTHROPIC_MODEL'] ?? 'claude-opus-5-5';
 
 /**
  * Bridges our content blocks to the Anthropic wire shape.
@@ -29,7 +31,13 @@ const DEFAULT_MODEL = process.env['ANTHROPIC_MODEL'] ?? 'claude-haiku-4-5';
  */
 export function toAnthropicContent(blocks: readonly ContentBlock[]): unknown[] {
   return blocks.map((block) => {
-    if (block.type !== 'image') return block;
+    if (block.type !== 'image') {
+      if ('reasoning_content' in block) {
+        const { reasoning_content: _reasoning, ...content } = block;
+        return content;
+      }
+      return block;
+    }
     return {
       type: 'image',
       source: { type: 'base64', media_type: block.mediaType, data: block.data },
@@ -43,14 +51,19 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
     throw new Error('ANTHROPIC_API_KEY is required to use the Anthropic provider');
   }
   const model = overrides.model ?? DEFAULT_MODEL;
+  const effort = overrides.reasoningEffort ?? 'default';
+  const supportsEffort = /^claude-(fable-5|opus-(5|4-[678])|sonnet-(5|4-6)|haiku-5-5)(-|$)/.test(
+    model,
+  );
+  const clampedEffort =
+    effort === 'xhigh' && /^claude-(opus|sonnet)-4-6(-|$)/.test(model) ? 'high' : effort;
   // The agent loop owns retries (and reports each one); the SDK's own two
   // would nest inside it — up to 15 requests per send, and slow failover.
   const client = new Anthropic({ apiKey, maxRetries: 0 });
 
   return {
     name: `anthropic:${model}`,
-    // Every current Claude model exposes at least a 200k window.
-    contextWindow: 200_000,
+    contextWindow: model.startsWith('claude-haiku-4-5') ? 200_000 : 1_000_000,
     // Every model this SDK can address accepts image blocks; there is nothing
     // to detect and nothing a user would need to override.
     supportsImages: async (): Promise<boolean> => true,
@@ -60,6 +73,9 @@ export function createAnthropicProvider(overrides: Partial<AnthropicConfig> = {}
         const requestOptions = req.signal ? { signal: req.signal } : {};
         const params: Anthropic.Messages.MessageCreateParamsNonStreaming = {
           model,
+          ...(clampedEffort !== 'default' && supportsEffort
+            ? { output_config: { effort: clampedEffort } }
+            : {}),
           max_tokens: req.maxTokens ?? 4096,
           // cache_control reached the stable SDK types in the 0.3x → 0.12x
           // window, so this is a plain TextBlockParam now — no cast.

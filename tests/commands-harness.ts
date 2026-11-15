@@ -27,6 +27,7 @@ import type { Provider } from '../src/types/messages.ts';
 const ISOLATED_ENV = [
   'ASTERISK_HOME',
   'ANTHROPIC_API_KEY',
+  'DEEPSEEK_API_KEY',
   'ASTERISK_OPENAI_API_KEY',
   'ASTERISK_TELEGRAM_BOT_TOKEN',
   'ASTERISK_INSTALL_DIR',

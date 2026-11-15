@@ -106,6 +106,163 @@ function stalls(frames: string[]): void {
 
 const base = { system: 'sys', messages: [], tools: [] };
 
+describe('reasoning effort request fields', () => {
+  it.each([
+    ['default', {}],
+    ['off', { chat_template_kwargs: { enable_thinking: false } }],
+    ['low', { reasoning_effort: 'low' }],
+    ['medium', { reasoning_effort: 'medium' }],
+    ['high', { reasoning_effort: 'high' }],
+  ] as const)('maps local %s', async (reasoningEffort, fields) => {
+    respond(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }));
+    await createOpenAiCompatibleProvider({
+      model: 'm',
+      detectModel: false,
+      maxTokens: 0,
+      reasoningEffort,
+    }).send(base);
+    expect(JSON.parse(String(lastRequest?.init.body))).toEqual({
+      model: 'm',
+      messages: [{ role: 'system', content: 'sys' }],
+      stream: false,
+      ...fields,
+    });
+  });
+
+  it.each([
+    ['default', {}],
+    ['off', { thinking: { type: 'disabled' } }],
+    ['low', { thinking: { type: 'enabled' }, reasoning_effort: 'low' }],
+    ['high', { thinking: { type: 'enabled' }, reasoning_effort: 'high' }],
+    ['max', { thinking: { type: 'enabled' }, reasoning_effort: 'max' }],
+  ] as const)('maps DeepSeek %s', async (reasoningEffort, fields) => {
+    respond(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }));
+    await createOpenAiCompatibleProvider({
+      model: 'deepseek-flash',
+      detectModel: false,
+      namePrefix: 'deepseek',
+      maxTokens: 0,
+      reasoningEffort,
+    }).send(base);
+    expect(JSON.parse(String(lastRequest?.init.body))).toEqual({
+      model: 'deepseek-flash',
+      messages: [{ role: 'system', content: 'sys' }],
+      stream: false,
+      ...fields,
+    });
+  });
+});
+
+describe('DeepSeek reasoning history', () => {
+  it.each([false, true])(
+    'passes every assistant reasoning back (streaming=%s)',
+    async (streaming) => {
+      const cfg = { model: 'deepseek-flash', detectModel: false, namePrefix: 'deepseek' };
+      const thought = '  first\nsecond  ';
+      const call = { id: 'c1', type: 'function', function: { name: 'read', arguments: '{}' } };
+      const tools = [
+        { name: 'read', description: 'Read a file', input_schema: { type: 'object' } },
+      ];
+      const messages: Message[] = [{ role: 'user', content: [{ type: 'text', text: 'read it' }] }];
+      if (streaming) {
+        sse([
+          JSON.stringify({ choices: [{ delta: { reasoning_content: '  first\n' } }] }),
+          JSON.stringify({ choices: [{ delta: { reasoning_content: 'second  ' } }] }),
+          JSON.stringify({
+            choices: [
+              { delta: { tool_calls: [{ index: 0, ...call }] }, finish_reason: 'tool_calls' },
+            ],
+          }),
+          '[DONE]',
+        ]);
+      } else {
+        respond(
+          JSON.stringify({
+            choices: [
+              {
+                message: { content: null, reasoning_content: thought, tool_calls: [call] },
+                finish_reason: 'tool_calls',
+              },
+            ],
+          }),
+        );
+      }
+      const first = await createOpenAiCompatibleProvider(cfg).send({
+        ...base,
+        messages,
+        tools,
+        ...(streaming ? { onText: () => undefined } : {}),
+      });
+      messages.push(
+        { role: 'assistant', content: first.content },
+        {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'c1', content: 'file body' }],
+        },
+      );
+
+      // Reload the serialized history into a fresh provider, as conversation resume does.
+      const restored = JSON.parse(JSON.stringify(messages)) as Message[];
+      respond(
+        JSON.stringify({
+          choices: [{ message: { content: 'done', reasoning_content: 'final reasoning' } }],
+        }),
+      );
+      const second = await createOpenAiCompatibleProvider(cfg).send({
+        ...base,
+        messages: restored,
+        tools,
+      });
+      let sent = JSON.parse(String(lastRequest?.init.body)) as {
+        messages: Array<Record<string, unknown>>;
+      };
+      expect(sent.messages.find((message) => message['role'] === 'assistant')).toMatchObject({
+        reasoning_content: thought,
+        tool_calls: [call],
+      });
+
+      restored.push(
+        { role: 'assistant', content: second.content },
+        { role: 'user', content: [{ type: 'text', text: 'next question' }] },
+      );
+      respond(JSON.stringify({ choices: [{ message: { content: 'next answer' } }] }));
+      await createOpenAiCompatibleProvider(cfg).send({ ...base, messages: restored, tools });
+      sent = JSON.parse(String(lastRequest?.init.body)) as typeof sent;
+      expect(
+        sent.messages
+          .filter((message) => message['role'] === 'assistant')
+          .map((message) => message['reasoning_content']),
+      ).toEqual([thought, 'final reasoning']);
+
+      await createOpenAiCompatibleProvider({ model: 'local', detectModel: false }).send({
+        ...base,
+        messages: restored,
+        tools,
+      });
+      sent = JSON.parse(String(lastRequest?.init.body)) as typeof sent;
+      expect(sent.messages.every((message) => !('reasoning_content' in message))).toBe(true);
+    },
+  );
+
+  it('uses empty reasoning for assistant history from a different backend', async () => {
+    respond(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }));
+    await createOpenAiCompatibleProvider({
+      model: 'deepseek-flash',
+      detectModel: false,
+      namePrefix: 'deepseek',
+    }).send({
+      ...base,
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'local answer' }] }],
+      tools: [{ name: 'read', description: 'read', input_schema: { type: 'object' } }],
+    });
+    expect(JSON.parse(String(lastRequest?.init.body)).messages[1]).toEqual({
+      role: 'assistant',
+      content: 'local answer',
+      reasoning_content: '',
+    });
+  });
+});
+
 describe('disabled model detection', () => {
   it('keeps the pinned model and name prefix without probing metadata', async () => {
     const urls: string[] = [];

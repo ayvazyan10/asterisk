@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ProviderError } from '../src/providers/errors.ts';
-import { createFallbackProvider } from '../src/providers/fallback.ts';
+import { FALLBACK_COOLDOWN_MS, createFallbackProvider } from '../src/providers/fallback.ts';
 import type { Provider, ProviderRequest, ProviderResponse } from '../src/types/messages.ts';
 
 function reply(text: string): ProviderResponse {
@@ -43,6 +43,8 @@ const request = (over: Partial<ProviderRequest> = {}): ProviderRequest => ({
   ...over,
 });
 
+afterEach(() => vi.restoreAllMocks());
+
 describe('createFallbackProvider', () => {
   it('returns the single provider unwrapped', () => {
     const only = working('solo');
@@ -68,18 +70,27 @@ describe('createFallbackProvider', () => {
 
   it.each([
     ['network', new ProviderError('network', 'connection refused')],
+    ['unresponsive', new ProviderError('unresponsive', 'timed out')],
     ['server', new ProviderError('server', 'HTTP 502')],
     ['overloaded', new ProviderError('overloaded', 'overloaded')],
     ['rate-limit', new ProviderError('rate-limit', 'HTTP 429')],
     ['auth', new ProviderError('auth', 'HTTP 401')],
   ])('steps down the chain on %s', async (_kind, error) => {
+    const head = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(reply('recovered'));
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
     const chain = createFallbackProvider([
-      { provider: failing('first', error), label: 'first' },
+      { provider: { name: 'first', send: head }, label: 'first' },
       { provider: working('second'), label: 'second' },
     ]);
 
     const out = await chain.send(request());
     expect(out.content[0]).toMatchObject({ text: 'second' });
+    clock.mockReturnValue(1_000 + FALLBACK_COOLDOWN_MS - 1);
+    expect((await chain.send(request())).content[0]).toMatchObject({ text: 'second' });
+    expect(head).toHaveBeenCalledTimes(1);
+    clock.mockReturnValue(1_000 + FALLBACK_COOLDOWN_MS);
+    expect((await chain.send(request())).content[0]).toMatchObject({ text: 'recovered' });
+    expect(head).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -90,13 +101,16 @@ describe('createFallbackProvider', () => {
     // These describe the request, not the backend. Retrying elsewhere burns a
     // second provider on the same input and hides the real error behind a
     // model switch.
+    const first = vi.fn().mockRejectedValue(error);
     const second = vi.fn();
     const chain = createFallbackProvider([
-      { provider: failing('first', error), label: 'first' },
+      { provider: { name: 'first', send: first }, label: 'first' },
       { provider: { name: 'second', send: second }, label: 'second' },
     ]);
 
     await expect(chain.send(request())).rejects.toThrow(error.message);
+    await expect(chain.send(request())).rejects.toThrow(error.message);
+    expect(first).toHaveBeenCalledTimes(2);
     expect(second).not.toHaveBeenCalled();
   });
 
@@ -135,12 +149,46 @@ describe('createFallbackProvider', () => {
   });
 
   it('throws the last error when every link fails', async () => {
+    const first = vi.fn().mockRejectedValue(new ProviderError('network', 'first refused'));
+    const second = vi.fn().mockRejectedValue(new ProviderError('network', 'second refused'));
     const chain = createFallbackProvider([
-      { provider: failing('first', new ProviderError('network', 'first refused')), label: 'a' },
-      { provider: failing('second', new ProviderError('network', 'second refused')), label: 'b' },
+      { provider: { name: 'first', send: first }, label: 'a' },
+      { provider: { name: 'second', send: second }, label: 'b' },
     ]);
 
     await expect(chain.send(request())).rejects.toThrow(/second refused/);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
+  it('tries again when every link is cooling instead of failing for a minute', async () => {
+    const first = vi.fn().mockRejectedValue(new ProviderError('network', 'first refused'));
+    const second = vi
+      .fn()
+      .mockRejectedValueOnce(new ProviderError('server', 'second blipped'))
+      .mockResolvedValue(reply('second back'));
+    const chain = createFallbackProvider([
+      { provider: { name: 'first', send: first }, label: 'a' },
+      { provider: { name: 'second', send: second }, label: 'b' },
+    ]);
+
+    await expect(chain.send(request())).rejects.toThrow(/second blipped/);
+    expect((await chain.send(request())).content[0]).toMatchObject({ text: 'second back' });
+    expect(first).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips every cooling link in a longer chain', async () => {
+    const first = vi.fn().mockRejectedValue(new ProviderError('network', 'first down'));
+    const second = vi.fn().mockRejectedValue(new ProviderError('server', 'second down'));
+    const chain = createFallbackProvider([
+      { provider: { name: 'first', send: first }, label: 'first' },
+      { provider: { name: 'second', send: second }, label: 'second' },
+      { provider: working('third'), label: 'third' },
+    ]);
+    await chain.send(request());
+    expect((await chain.send(request())).content[0]).toMatchObject({ text: 'third' });
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
   });
 
   it('tells each link that it is the one answering', async () => {
@@ -521,7 +569,7 @@ describe('a local server that goes quiet', () => {
   });
 
   it('gives up after ONE request when there is no fallback configured', async () => {
-    // The default install: `providerFallback` is empty, so there is nothing to
+    // With `providerFallback` empty, there is nothing to
     // step down to and the retry wrapper is all that is left. Retrying here
     // would mean five attempts against a 90s idle deadline — over seven
     // minutes of silence — for a server that has already demonstrated it is
@@ -540,14 +588,11 @@ describe('a local server that goes quiet', () => {
     expect(chatRequests).toBe(1);
   });
 
-  it('still retries a server it could not reach at all', async () => {
-    // Connection refused: the request never landed, so a second attempt costs
-    // nothing and often lands. This is the case that must NOT be swept up with
-    // the silent-server one.
+  it('keeps network errors retryable while caching the failed connection probe', async () => {
     const { createAgentState, runAgentTurn } = await import('../src/agent/loop.ts');
-    let attempts = 0;
+    const urls: string[] = [];
     globalThis.fetch = (async (url: string) => {
-      if (!String(url).endsWith('/models')) attempts++;
+      urls.push(String(url));
       throw new TypeError('fetch failed');
     }) as unknown as typeof fetch;
 
@@ -555,6 +600,7 @@ describe('a local server that goes quiet', () => {
       '../src/providers/openai-compatible.ts'
     );
     const local = createOpenAiCompatibleProvider({ baseUrl, model: 'pinned', maxTokens: 0 });
+    const send = vi.spyOn(local, 'send');
 
     const failed = await runAgentTurn(local, createAgentState(), 'hello', {
       maxRetries: 2,
@@ -562,7 +608,7 @@ describe('a local server that goes quiet', () => {
 
     expect(failed).toBeInstanceOf(ProviderError);
     expect((failed as ProviderError).kind).toBe('network');
-    // Count sends separately from refresh and uncached failed model probes.
-    expect(attempts).toBe(2);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(urls).toEqual([`${baseUrl}/models`]);
   });
 });

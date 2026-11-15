@@ -39,7 +39,8 @@ export interface DetectedModel {
 
 interface CacheEntry {
   at: number;
-  value: DetectedModel;
+  /** null records a transport failure, not an unsupported metadata endpoint. */
+  value: DetectedModel | null;
 }
 
 const cache = new Map<string, CacheEntry>();
@@ -60,6 +61,12 @@ export function clearDetectedModels(baseUrl?: string): void {
 
 function normalise(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '');
+}
+
+/** A recent failed connection lets generation fail over without its full timeout. */
+export function isModelServerUnreachable(baseUrl: string): boolean {
+  const cached = cache.get(normalise(baseUrl));
+  return cached?.value === null && Date.now() - cached.at < CACHE_TTL_MS;
 }
 
 interface WireModel {
@@ -170,9 +177,8 @@ export interface DetectOptions {
 
 /**
  * Asks the endpoint what it is serving. Returns null when it cannot be
- * reached or says nothing useful — the caller then falls back to whatever the
- * config pinned, so an unreachable server surfaces as a connection error on
- * the real request rather than as a confusing detection failure.
+ * reached or says nothing useful. A transport failure is cached so generation
+ * can fail over immediately; an unsupported listing still permits a pinned model.
  */
 export async function detectActiveModel(
   baseUrl: string,
@@ -185,16 +191,23 @@ export async function detectActiveModel(
   const cached = cache.get(key);
   if (!opts.force && cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.value;
 
-  let value: DetectedModel | null = null;
+  let res: Response;
   try {
-    const res = await fetch(`${key}/models`, {
+    res = await fetch(`${key}/models`, {
       headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
       signal: AbortSignal.timeout(opts.timeoutMs ?? 5_000),
     });
+  } catch {
+    cache.set(key, { at: Date.now(), value: null });
+    return null;
+  }
+  cache.delete(key);
+
+  let value: DetectedModel | null = null;
+  try {
     if (res.ok) value = parseModelsResponse(await res.json());
   } catch {
-    // Unreachable, timed out, or answered with something that is not JSON.
-    value = null;
+    // A reachable server without usable metadata may still accept a pinned model.
   }
 
   if (value !== null) cache.set(key, { at: Date.now(), value });

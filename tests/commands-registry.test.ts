@@ -20,15 +20,19 @@ import { setPlanMode } from '../src/tools/planmode.ts';
 import { _resetTasksForTesting, taskCreateTool, taskUpdateTool } from '../src/tools/tasks.ts';
 import type { Provider } from '../src/types/messages.ts';
 import {
+  asForm,
   asList,
   asText,
   fakeMcp,
   fakeServer,
+  field,
   makeContext,
   pickText,
   run,
+  runForm,
   runList,
   runText,
+  submitText,
   values,
   withTempHome,
 } from './commands-harness.ts';
@@ -181,7 +185,17 @@ describe('/model picker', () => {
     const picker = await runList(ctx, '/model');
 
     expect(picker.title).toBe('Pick an Anthropic model (offline list)');
-    expect(values(picker)).toContain('claude-opus-5');
+    expect(picker.items.map(({ value, label }) => [value, label])).toEqual([
+      ['claude-fable-5-2', 'Claude Fable 5.2'],
+      ['claude-opus-5-5', 'Claude Opus 5.5'],
+      ['claude-sonnet-5-5', 'Claude Sonnet 5.5'],
+      ['claude-haiku-5-5', 'Claude Haiku 5.5'],
+      ['claude-fable-5-1', 'Claude Fable 5.1'],
+      ['claude-opus-5', 'Claude Opus 5'],
+      ['claude-sonnet-5', 'Claude Sonnet 5'],
+      ['claude-opus-4-8', 'Claude Opus 4.8'],
+      ['claude-haiku-4-5', 'Claude Haiku 4.5'],
+    ]);
     const current = picker.items.find((i) => i.value === 'claude-opus-5');
     expect(current?.badge).toBe('* current');
     // The fallback list has human labels, so the id is shown as the subtitle.
@@ -209,6 +223,63 @@ describe('/model picker', () => {
     const picker = await runList(ctx, '/model');
     expect(picker.items[0]).toMatchObject({ badge: '* current', description: 'claude-opus-5' });
     expect(picker.onCancel?.()).toBeNull();
+  });
+
+  it('offers exactly the two current DeepSeek models and switches on pick', async () => {
+    saveSecrets({ DEEPSEEK_API_KEY: 'test-key' });
+    const ctx = makeContext({ provider: named('deepseek:deepseek-flash') });
+    const picker = await runList(ctx, '/model');
+    expect(values(picker)).toEqual(['deepseek-flash', 'deepseek-v4-pro']);
+    expect(picker.items[0]).toMatchObject({ label: 'DeepSeek-V4.1-Flash', badge: '* current' });
+    expect(await pickText(picker, 'deepseek-v4-pro')).toBe(
+      '✓ switched to deepseek:deepseek-v4-pro',
+    );
+    expect(ctx.provider.name).toBe('deepseek:deepseek-v4-pro');
+    expect(ctx.provider.contextWindow).toBe(1_000_000);
+    expect(picker.onCancel?.()).toBeNull();
+  });
+});
+
+describe('reasoning level picker', () => {
+  withTempHome('reasoning');
+
+  it.each([
+    ['openai-compatible', 'openaiCompatible', ['default', 'off', 'low', 'medium', 'high']],
+    ['deepseek', 'deepseek', ['default', 'off', 'low', 'high', 'max']],
+    ['anthropic', 'anthropic', ['default', 'low', 'medium', 'high', 'xhigh', 'max']],
+  ] as const)('persists %s effort and retains the session model', async (kind, key, options) => {
+    saveSecrets({ ANTHROPIC_API_KEY: 'test-key', DEEPSEEK_API_KEY: 'test-key' });
+    const before = config();
+    const ctx = makeContext({ provider: named(`${kind}:session-model → deepseek:deepseek-flash`) });
+    const form = await runForm(ctx, '/model', 'reasoning');
+    const select = field(form, 'reasoningEffort');
+    if (select.kind !== 'select') throw new Error('expected a select field');
+    expect(select.options.map((option) => option.value)).toEqual(options);
+    expect(select.defaultValue).toBe('default');
+    expect(await submitText(form, { reasoningEffort: 'low' })).toBe(
+      `✓ ${kind} reasoning level set to low`,
+    );
+    const after = config();
+    expect(after[key].reasoningEffort).toBe('low');
+    expect(after[key].model).toBe(before[key].model);
+    expect(after.provider).toBe(before.provider);
+    for (const other of ['openaiCompatible', 'deepseek', 'anthropic'] as const) {
+      if (other !== key) expect(after[other]).toEqual(before[other]);
+    }
+    expect(ctx.provider.name).toMatch(new RegExp(`^${kind}:session-model(?: →|$)`));
+    expect(
+      field(await runForm(ctx, '/provider', 'reasoning'), 'reasoningEffort').defaultValue,
+    ).toBe('low');
+  });
+
+  it('opens reasoning from the provider visual flow and cancels without saving', async () => {
+    const ctx = makeContext();
+    const before = config();
+    const picker = await runList(ctx, '/provider');
+    const form = asForm(await picker.onPick('reasoning'));
+    expect(form.title).toContain('openai-compatible');
+    expect(form.onCancel?.()).toBeNull();
+    expect(config()).toEqual(before);
   });
 });
 

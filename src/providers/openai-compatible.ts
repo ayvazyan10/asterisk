@@ -13,6 +13,7 @@
 // Reference: https://platform.openai.com/docs/api-reference/chat/create
 // llama.cpp server: https://github.com/ggml-org/llama.cpp/tree/master/tools/server
 
+import type { AsteriskConfig } from '../config/schema.ts';
 import type {
   ContentBlock,
   Message,
@@ -23,7 +24,12 @@ import type {
   ToolUseBlock,
 } from '../types/messages.ts';
 import { ProviderError, classifyHttpError, parseRetryAfter } from './errors.ts';
-import { type DetectedModel, detectActiveModel, detectVisionSupport } from './model-detect.ts';
+import {
+  type DetectedModel,
+  detectActiveModel,
+  detectVisionSupport,
+  isModelServerUnreachable,
+} from './model-detect.ts';
 import {
   type RepetitionOptions,
   createRepetitionGuard,
@@ -50,6 +56,9 @@ export interface OpenAiCompatibleConfig {
   modelIdleTimeoutMs: number;
   /** Whether images may be sent: forced on, forced off, or worked out. */
   imageSupport: ImageSupportMode;
+  reasoningEffort:
+    | AsteriskConfig['openaiCompatible']['reasoningEffort']
+    | AsteriskConfig['deepseek']['reasoningEffort'];
   /** Thresholds for the runaway-repetition detector. Left at the defaults
    *  unless a caller has a reason; see providers/repetition.ts. */
   repetition?: RepetitionOptions;
@@ -64,6 +73,7 @@ export const OPENAI_COMPATIBLE_DEFAULTS: OpenAiCompatibleConfig = {
   modelTimeoutMs: Number(process.env['OPENAI_MODEL_TIMEOUT_MS'] ?? 300_000),
   modelIdleTimeoutMs: Number(process.env['OPENAI_MODEL_IDLE_TIMEOUT_MS'] ?? 90_000),
   imageSupport: 'auto',
+  reasoningEffort: 'default',
 };
 
 // --- wire types ----------------------------------------------------------
@@ -124,6 +134,21 @@ interface OutMessage {
     function: { name: string; arguments: string };
   }>;
   tool_call_id?: string;
+  reasoning_content?: string;
+}
+
+// Stored on the first assistant block so the existing history serialization
+// preserves DeepSeek's required reasoning without changing neutral message types.
+type ReasoningBlock = ContentBlock & { reasoning_content?: string };
+
+function storeDeepSeekReasoning(
+  content: ContentBlock[],
+  reasoning: string,
+  cfg: OpenAiCompatibleConfig,
+): void {
+  if (cfg.namePrefix !== 'deepseek' || !reasoning) return;
+  if (content.length === 0) content.push({ type: 'text', text: '' });
+  (content[0] as ReasoningBlock).reasoning_content = reasoning;
 }
 
 /**
@@ -134,7 +159,11 @@ interface OutMessage {
  * its own `role: "tool"` message keyed by `tool_call_id`. Results are
  * therefore hoisted out and emitted as separate messages, in order.
  */
-export function toOpenAiMessages(system: string, messages: readonly Message[]): OutMessage[] {
+export function toOpenAiMessages(
+  system: string,
+  messages: readonly Message[],
+  includeReasoning = false,
+): OutMessage[] {
   const out: OutMessage[] = [];
   if (system) out.push({ role: 'system', content: system });
 
@@ -154,6 +183,10 @@ export function toOpenAiMessages(system: string, messages: readonly Message[]): 
 
     if (message.role === 'assistant') {
       const entry: OutMessage = { role: 'assistant', content: text || null };
+      if (includeReasoning) {
+        entry.reasoning_content =
+          (message.content[0] as ReasoningBlock | undefined)?.reasoning_content ?? '';
+      }
       if (toolUses.length > 0) {
         entry.tool_calls = toolUses.map((u) => ({
           id: u.id,
@@ -464,16 +497,30 @@ export function createOpenAiCompatibleProvider(
       const streaming = !!req.onText;
       const maxTokens = req.maxTokens ?? (cfg.maxTokens > 0 ? cfg.maxTokens : undefined);
       const model = await resolveModel();
+      if (req.signal?.aborted) throw new ProviderError('aborted', 'request aborted');
+      if (cfg.detectModel !== false && isModelServerUnreachable(root)) {
+        throw new ProviderError('network', `model server is unreachable: ${root}`);
+      }
 
       const body: Record<string, unknown> = {
         model,
-        messages: toOpenAiMessages(req.system, req.messages),
+        messages: toOpenAiMessages(req.system, req.messages, cfg.namePrefix === 'deepseek'),
         stream: streaming,
         ...(req.tools.length > 0 ? { tools: toOpenAiTools(req.tools) } : {}),
         ...(maxTokens ? { max_tokens: maxTokens } : {}),
         // Without this the final SSE frame carries no usage, and cost
         // tracking silently records nothing for every streamed turn.
       };
+      if (cfg.reasoningEffort !== 'default') {
+        if (cfg.namePrefix === 'deepseek') {
+          body['thinking'] = { type: cfg.reasoningEffort === 'off' ? 'disabled' : 'enabled' };
+          if (cfg.reasoningEffort !== 'off') body['reasoning_effort'] = cfg.reasoningEffort;
+        } else if (cfg.reasoningEffort === 'off') {
+          body['chat_template_kwargs'] = { enable_thinking: false };
+        } else {
+          body['reasoning_effort'] = cfg.reasoningEffort;
+        }
+      }
 
       const ctrl = new AbortController();
       const onParentAbort = () => ctrl.abort(req.signal?.reason);
@@ -545,6 +592,7 @@ export function createOpenAiCompatibleProvider(
         if (reasoning) req.onThinking?.(reasoning);
 
         const content = blocksFrom(message, cfg.repetition);
+        storeDeepSeekReasoning(content, message.reasoning_content ?? '', cfg);
         return {
           content,
           stopReason: mapStopReason(
@@ -576,6 +624,7 @@ async function readStream(
   const decoder = new TextDecoder();
   let buf = '';
   let text = '';
+  let reasoning = '';
   let finish: string | null | undefined;
   const toolCalls = new ToolCallBuffer();
   const repetition = createRepetitionGuard(cfg.repetition ?? {});
@@ -628,6 +677,7 @@ async function readStream(
       }
     }
     if (delta.reasoning_content) {
+      if (cfg.namePrefix === 'deepseek') reasoning += delta.reasoning_content;
       if (reasoningRepetition.push(delta.reasoning_content)) runaway = true;
       try {
         req.onThinking?.(delta.reasoning_content);
@@ -693,6 +743,7 @@ async function readStream(
   const content: ContentBlock[] = [];
   if (text.trim()) content.push({ type: 'text', text: text.trim() });
   content.push(...toolCalls.blocks());
+  storeDeepSeekReasoning(content, reasoning, cfg);
 
   return {
     content,

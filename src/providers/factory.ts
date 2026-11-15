@@ -24,8 +24,8 @@ export interface ProviderChoice {
 
 /**
  * Builds the configured provider, falling back to the local endpoint when
- * a hosted provider is selected without a key. The local provider never falls back —
- * a wrong base URL should surface as a connection error, not a silent switch.
+ * a hosted provider is selected without a key. Runtime availability fallback
+ * is handled by createProviderChain().
  */
 export function chooseProvider(loaded: LoadedConfig): ProviderChoice {
   const { config, secrets } = loaded;
@@ -40,7 +40,7 @@ export function chooseProvider(loaded: LoadedConfig): ProviderChoice {
       };
     }
     return {
-      provider: createAnthropicProvider({ apiKey, model: config.anthropic.model }),
+      provider: createAnthropicProvider({ apiKey, ...config.anthropic }),
       kind: 'anthropic',
     };
   }
@@ -101,9 +101,7 @@ function buildKind(kind: AsteriskConfig['provider'], loaded: LoadedConfig): Prov
     if (kind === 'anthropic') {
       const apiKey = loaded.secrets.ANTHROPIC_API_KEY;
       // Without a key this link could only ever contribute an auth failure.
-      return apiKey
-        ? createAnthropicProvider({ apiKey, model: loaded.config.anthropic.model })
-        : null;
+      return apiKey ? createAnthropicProvider({ apiKey, ...loaded.config.anthropic }) : null;
     }
     return buildOpenAiCompatible(loaded);
   } catch {
@@ -127,5 +125,6 @@ function buildOpenAiCompatible(loaded: LoadedConfig): Provider {
     modelTimeoutMs: cfg.modelTimeoutMs,
     modelIdleTimeoutMs: cfg.modelIdleTimeoutMs,
     imageSupport: cfg.imageSupport,
+    reasoningEffort: cfg.reasoningEffort,
   });
 }

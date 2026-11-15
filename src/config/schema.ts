@@ -12,7 +12,7 @@ import { PROVIDER_KINDS } from '../providers/kinds.ts';
 
 // `openai-compatible` is the local-model path and the default — llama.cpp,
 // LM Studio, vLLM, Jan, LocalAI, or any proxy speaking /v1/chat/completions.
-// `anthropic` and `deepseek` are the opt-in hosted alternatives.
+// DeepSeek is the default fallback when its key is set; Anthropic is optional.
 const ProviderSchema = z.enum(PROVIDER_KINDS);
 
 // The three states of `openaiCompatible.imageSupport`. `/v1/models` names the
@@ -31,6 +31,12 @@ const OpenAiCompatibleSchema = z.object({
     .default('')
     .describe(
       'Pin a model id. Normally left blank: Asterisk asks the server what it is serving (GET /v1/models) and uses that, along with the context window it reports.',
+    ),
+  reasoningEffort: z
+    .enum(['default', 'off', 'low', 'medium', 'high'])
+    .default('default')
+    .describe(
+      'Reasoning level for the local endpoint. default lets the server decide; off disables thinking in llama.cpp/Qwen templates; low, medium and high send reasoning_effort.',
     ),
   maxTokens: z
     .number()
@@ -77,6 +83,12 @@ const DeepSeekSchema = z.object({
     .string()
     .default('deepseek-flash')
     .describe('Pinned DeepSeek model id. Requires DEEPSEEK_API_KEY; model detection is disabled.'),
+  reasoningEffort: z
+    .enum(['default', 'off', 'low', 'high', 'max'])
+    .default('default')
+    .describe(
+      'DeepSeek reasoning level. default lets the model decide (thinking is enabled by default); off disables thinking; low, high and max enable thinking at that effort.',
+    ),
   // Without a window this link makes the whole fallback chain's window
   // unknown, and compaction would budget the local link against 128k too.
   contextWindow: z
@@ -96,12 +108,17 @@ const DeepSeekSchema = z.object({
 });
 
 const AnthropicSchema = z.object({
-  // Was `claude-3-5-haiku-latest` until 2026-07: Haiku 3.5 retired on
-  // 2026-02-19, so that alias 404s. `claude-haiku-4-5` is its replacement.
+  // Use the current Opus model for new configurations; stored model pins remain valid.
   model: z
     .string()
-    .default('claude-haiku-4-5')
+    .default('claude-opus-5-5')
     .describe('Anthropic model id. Requires ANTHROPIC_API_KEY.'),
+  reasoningEffort: z
+    .enum(['default', 'low', 'medium', 'high', 'xhigh', 'max'])
+    .default('default')
+    .describe(
+      'Claude reasoning effort. default lets the model decide; other levels set output_config.effort on supported models. Opus/Sonnet 4.6 use high for xhigh; Haiku/Sonnet 4.5 ignore this setting.',
+    ),
 });
 
 // Telegram streaming modes — Telegram has no native server-sent events for
@@ -440,9 +457,9 @@ export const ConfigSchema = z.object({
   ),
   providerFallback: z
     .array(ProviderSchema)
-    .default([])
+    .default(['deepseek'])
     .describe(
-      'Backends to try, in order, when the primary one is unreachable. Only availability failures step down the chain — a rejected request is not retried elsewhere.',
+      'Backends to try, in order, when the primary is unavailable. Defaults to DeepSeek when DEEPSEEK_API_KEY is set. Only availability failures step down; unavailable links are skipped briefly before retrying the primary.',
     ),
   openaiCompatible: OpenAiCompatibleSchema.default({}),
   anthropic: AnthropicSchema.default({}),

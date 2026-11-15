@@ -10,6 +10,7 @@ import {
   clearDetectedModels,
   detectActiveModel,
   detectVisionSupport,
+  isModelServerUnreachable,
   parseModelsResponse,
   parsePropsResponse,
   propsUrlFor,
@@ -38,6 +39,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   clearDetectedModels();
 });
@@ -221,6 +223,46 @@ describe('detectVisionSupport', () => {
 });
 
 describe('detectActiveModel', () => {
+  it('caches a transport failure for a minute, then discovers recovery', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('connection refused'))
+      .mockResolvedValueOnce(Response.json({ data: [{ id: 'recovered' }] }));
+    vi.stubGlobal('fetch', fetch);
+    expect(isModelServerUnreachable(BASE)).toBe(false);
+    expect(await detectActiveModel(BASE)).toBeNull();
+    expect(isModelServerUnreachable(`${BASE}/`)).toBe(true);
+    expect(isModelServerUnreachable('http://other.invalid/v1')).toBe(false);
+    expect(await detectActiveModel(BASE)).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    clock.mockReturnValue(61_000);
+    expect(isModelServerUnreachable(BASE)).toBe(false);
+    expect(await detectActiveModel(BASE)).toEqual({ id: 'recovered' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears an unreachable result on a forced successful connection without metadata', async () => {
+    const fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('connection refused'))
+      .mockResolvedValueOnce(new Response('unsupported', { status: 404 }));
+    vi.stubGlobal('fetch', fetch);
+    await detectActiveModel(BASE);
+    expect(isModelServerUnreachable(BASE)).toBe(true);
+    expect(await detectActiveModel(BASE, '', { force: true })).toBeNull();
+    expect(isModelServerUnreachable(BASE)).toBe(false);
+  });
+
+  it('clears cached transport failures with the model cache', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw new Error('connection refused');
+    });
+    await detectActiveModel(BASE);
+    clearDetectedModels(BASE);
+    expect(isModelServerUnreachable(BASE)).toBe(false);
+  });
+
   it('re-asks after a failed detection while the server is loading', async () => {
     const fetch = vi
       .fn()
@@ -330,20 +372,33 @@ describe('the provider uses what it detected', () => {
     expect(served.bodies[0]?.['model']).toBe('now-serving');
   });
 
-  it('falls back to the configured model when detection fails', async () => {
-    const bodies: Array<Record<string, unknown>> = [];
-    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
-      if (String(url).endsWith('/models')) throw new Error('ECONNREFUSED');
-      bodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
-      return new Response(
-        JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'ok' } }] }),
-        { status: 200 },
-      );
-    });
+  it.each([404, 503, 200])(
+    'uses the configured model when metadata is unsupported (HTTP %s)',
+    async (status) => {
+      const bodies: Array<Record<string, unknown>> = [];
+      vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+        if (String(url).endsWith('/models')) return new Response('{}', { status });
+        bodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+        return new Response(
+          JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'ok' } }] }),
+          { status: 200 },
+        );
+      });
 
+      const provider = createOpenAiCompatibleProvider({ baseUrl: BASE, model: 'pinned' });
+      await provider.send(request);
+      expect(bodies[0]?.['model']).toBe('pinned');
+    },
+  );
+
+  it('rejects immediately when a cached probe knows the server is unreachable', async () => {
+    const fetch = vi.fn().mockRejectedValue(new TypeError('connection refused'));
+    vi.stubGlobal('fetch', fetch);
+    await detectActiveModel(BASE);
     const provider = createOpenAiCompatibleProvider({ baseUrl: BASE, model: 'pinned' });
-    await provider.send(request);
-    expect(bodies[0]?.['model']).toBe('pinned');
+    await provider.refresh?.();
+    await expect(provider.send(request)).rejects.toMatchObject({ kind: 'network' });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('refuses with a usable message when there is no model at all', async () => {

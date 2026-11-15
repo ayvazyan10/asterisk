@@ -40,6 +40,9 @@ const FAILOVER_KINDS: ReadonlySet<ProviderErrorKind> = new Set([
   'auth',
 ]);
 
+/** Give an unavailable backend a minute to recover before trying it again. */
+export const FALLBACK_COOLDOWN_MS = 60_000;
+
 export interface FallbackLink {
   provider: Provider;
   /** Shown when this link is the one that answers after a failure. */
@@ -93,6 +96,7 @@ export function createFallbackProvider(
   const first = links[0];
   if (!first) throw new Error('a fallback chain needs at least one provider');
   if (links.length === 1) return first.provider;
+  const unavailable = new Map<number, { until: number; error: unknown }>();
 
   return {
     // Both of these are getters, not snapshots, because a link's own name and
@@ -126,8 +130,19 @@ export function createFallbackProvider(
     async send(req: ProviderRequest): Promise<ProviderResponse> {
       let lastError: unknown;
 
+      // With every link cooling there is nothing better to skip to, and
+      // failing instantly for a minute would outlast a backend that recovered.
+      if (links.every((_, i) => Date.now() < (unavailable.get(i)?.until ?? 0))) {
+        unavailable.clear();
+      }
+
       for (let i = 0; i < links.length; i++) {
         const link = links[i] as FallbackLink;
+        const cooled = unavailable.get(i);
+        if (cooled && Date.now() < cooled.until) {
+          lastError = cooled.error;
+          continue;
+        }
 
         // Once a link has emitted text, its partial answer is on screen and the
         // chain has to stop here — the alternative is two half-answers spliced
@@ -147,11 +162,17 @@ export function createFallbackProvider(
           : { ...req, system };
 
         try {
-          return await link.provider.send(guarded);
+          const response = await link.provider.send(guarded);
+          unavailable.delete(i);
+          return response;
         } catch (e) {
           lastError = e;
-          const next = links[i + 1];
-          if (!next || emitted || !shouldFailover(e)) throw e;
+          if (!shouldFailover(e)) throw e;
+          unavailable.set(i, { until: Date.now() + FALLBACK_COOLDOWN_MS, error: e });
+          const next = links.find(
+            (_, index) => index > i && Date.now() >= (unavailable.get(index)?.until ?? 0),
+          );
+          if (!next || emitted) throw e;
           opts.onFailover?.(link.label, next.label, (e as Error).message);
         }
       }

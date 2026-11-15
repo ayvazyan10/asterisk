@@ -43,8 +43,10 @@ import { type ProviderKind, parseProviderName } from './models.ts';
 import {
   ANTHROPIC_FALLBACK_MODELS,
   type AnthropicModel,
+  DEEPSEEK_MODELS,
   listAnthropicModels,
   listOpenAiCompatibleModels,
+  reasoningForm,
 } from './models.ts';
 import { permissionsCommand } from './permissions.ts';
 import { forgetCommand, resumeCommand, sessionsCommand } from './session-flows.ts';
@@ -102,17 +104,30 @@ export const COMMANDS: SlashCommand[] = [
   {
     name: '/model',
     description: 'List installed models or switch the active one',
-    usage: '/model [name]',
+    usage: '/model [name|reasoning]',
     async execute(ctx, args) {
       const target = args.trim();
       const current = parseProviderName(ctx.provider.name);
 
+      if (target === 'reasoning') return reasoningForm(ctx);
       if (target) {
         return switchModel(ctx, target);
       }
 
       if (current?.kind === 'deepseek') {
-        return `current model: ${current.model} — pass a model name: /model <id>`;
+        const list: ListSpec = {
+          kind: 'list',
+          title: 'Pick a DeepSeek model',
+          items: DEEPSEEK_MODELS.map((model) => ({
+            value: model.id,
+            label: model.label,
+            description: model.id,
+            ...(model.id === current.model ? { badge: '* current' } : {}),
+          })),
+          onPick: (value) => switchModel(ctx, value),
+          onCancel: () => null,
+        };
+        return list;
       }
 
       // No args → visual model picker.
@@ -179,9 +194,10 @@ export const COMMANDS: SlashCommand[] = [
   {
     name: '/provider',
     description: 'Switch between openai-compatible, anthropic and deepseek',
-    usage: '/provider [openai-compatible|anthropic|deepseek]',
+    usage: '/provider [openai-compatible|anthropic|deepseek|reasoning]',
     execute(ctx, args) {
       const target = args.trim().toLowerCase();
+      if (target === 'reasoning') return reasoningForm(ctx);
       if (target) return switchProvider(ctx, target);
       const cfg = loadConfig().config;
       const list: ListSpec = {
@@ -206,8 +222,13 @@ export const COMMANDS: SlashCommand[] = [
             description: cfg.deepseek.model,
             ...(ctx.provider.name.startsWith('deepseek:') ? { badge: '* current' } : {}),
           },
+          {
+            value: 'reasoning',
+            label: 'Reasoning level',
+            description: 'Set and save the reasoning level for the active provider',
+          },
         ],
-        onPick: (v) => switchProvider(ctx, v),
+        onPick: (v) => (v === 'reasoning' ? reasoningForm(ctx) : switchProvider(ctx, v)),
         onCancel: () => null,
       };
       return list;
