@@ -24,6 +24,8 @@ export interface AgentSession {
    * unattended prompt. See src/run/cli.ts for the reasoning.
    */
   headlessOverride?: 'deny' | 'allow';
+  /** Active provider window, read by request-scoped tool schema deferral. */
+  contextWindow?: number | undefined;
 }
 
 const store = new AsyncLocalStorage<AgentSession>();

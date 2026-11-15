@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { compactionThreshold, estimateTokens } from '../src/agent/compaction.ts';
 import { createAgentState, runAgentTurn } from '../src/agent/loop.ts';
 import { ProviderError } from '../src/providers/errors.ts';
-import type { Provider, ProviderRequest, ProviderResponse } from '../src/types/messages.ts';
+import type {
+  Message,
+  Provider,
+  ProviderRequest,
+  ProviderResponse,
+} from '../src/types/messages.ts';
 
 function fakeProvider(responses: ProviderResponse[]): Provider {
   let i = 0;
@@ -56,6 +61,135 @@ describe('agent loop', () => {
     };
     await runAgentTurn(provider, createAgentState(), 'what model are you?');
     expect(systems[0]).toContain('Model: deepseek:deepseek-flash.');
+  });
+
+  it.each([1, 2])(
+    'compacts and retries once after context overflow (%i failures)',
+    async (failures) => {
+      const state = createAgentState();
+      state.history = Array.from({ length: 400 }, (_, i) => ({
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: [{ type: 'text', text: `message ${i}: ${'x'.repeat(300)}` }],
+      }));
+      const requests: ProviderRequest[] = [];
+      const provider: Provider = {
+        name: 'overflowing',
+        contextWindow: 16_384,
+        async send(request) {
+          requests.push({ ...request, messages: [...request.messages] });
+          if (requests.length <= failures) throw new ProviderError('context-overflow', 'too long');
+          return { content: [{ type: 'text', text: 'recovered' }], stopReason: 'end_turn' };
+        },
+      };
+      const onRetry = vi.fn();
+      const result = await runAgentTurn(provider, state, 'continue', {
+        allowedTools: ['Read'],
+        summariseDropped: false,
+        maxRetries: 1,
+        maxTurns: 1,
+        onRetry,
+      });
+      expect(requests).toHaveLength(2);
+      const first = requests[0];
+      const second = requests[1];
+      if (!first || !second) throw new Error('missing recorded request');
+      expect(estimateTokens(second.messages)).toBeLessThan(estimateTokens(first.messages));
+      expect(estimateTokens(second.messages)).toBeLessThanOrEqual(
+        Math.floor(compactionThreshold(provider.contextWindow, first) / 2),
+      );
+      expect(second.messages.slice(-6)).toEqual(first.messages.slice(-6));
+      expect(onRetry).toHaveBeenCalledExactlyOnceWith(1, 0, 'context-overflow: too long');
+      expect(result).toEqual(
+        failures === 1
+          ? { finalText: 'recovered', reason: 'end-turn' }
+          : { finalText: '', reason: 'context-overflow' },
+      );
+    },
+  );
+
+  it('keeps model-written summaries when recovering from context overflow', async () => {
+    const state = createAgentState();
+    state.history = Array.from({ length: 400 }, (_, i) => ({
+      role: i % 2 === 0 ? 'user' : 'assistant',
+      content: [{ type: 'text', text: `message ${i}: ${'x'.repeat(300)}` }],
+    }));
+    const requests: ProviderRequest[] = [];
+    let summaries = 0;
+    const provider: Provider = {
+      name: 'summarising',
+      contextWindow: 16_384,
+      async send(request) {
+        if (request.tools.length === 0) {
+          summaries++;
+          return {
+            content: [{ type: 'text', text: 'Preserved decisions.' }],
+            stopReason: 'end_turn',
+          };
+        }
+        requests.push({ ...request, messages: [...request.messages] });
+        if (requests.length === 1) throw new ProviderError('context-overflow', 'too long');
+        return { content: [{ type: 'text', text: 'recovered' }], stopReason: 'end_turn' };
+      },
+    };
+    const result = await runAgentTurn(provider, state, 'continue', { allowedTools: ['Read'] });
+    expect(result.reason).toBe('end-turn');
+    expect(requests).toHaveLength(2);
+    expect(summaries).toBe(2);
+    expect(requests[1]?.messages[0]?.content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ text: expect.stringContaining('Preserved decisions.') }),
+      ]),
+    );
+  });
+
+  it('shortens recent messages on overflow only when their tail alone exceeds the new budget', async () => {
+    const state = createAgentState();
+    state.history = Array.from(
+      { length: 5 },
+      (_, i): Message => ({
+        role: i % 2 === 0 ? 'assistant' : 'user',
+        content: [{ type: 'text', text: '漢'.repeat(1000) }],
+      }),
+    );
+    const histories: Message[][] = [];
+    const provider: Provider = {
+      name: 'large-tail',
+      contextWindow: 16_384,
+      async send(request) {
+        histories.push([...request.messages]);
+        if (histories.length === 1) throw new ProviderError('context-overflow', 'too long');
+        return { content: [{ type: 'text', text: 'recovered' }], stopReason: 'end_turn' };
+      },
+    };
+    const result = await runAgentTurn(provider, state, '漢'.repeat(1000), {
+      allowedTools: ['Read'],
+      summariseDropped: false,
+    });
+    expect(result.reason).toBe('end-turn');
+    expect(histories).toHaveLength(2);
+    expect(
+      histories[0]?.every(
+        (m) => m.content[0]?.type === 'text' && m.content[0].text.length === 1000,
+      ),
+    ).toBe(true);
+    expect(histories[1]).toHaveLength(6);
+    expect(estimateTokens(histories[1] ?? [])).toBeLessThan(estimateTokens(histories[0] ?? []));
+  });
+
+  it('ends with context-overflow when even the clamped history cannot fit the halved budget', async () => {
+    const send = vi.fn(async (): Promise<ProviderResponse> => {
+      throw new ProviderError('context-overflow', 'too long');
+    });
+    const result = await runAgentTurn(
+      { name: 'tiny', contextWindow: 64, send },
+      createAgentState(),
+      'hi',
+      {
+        summariseDropped: false,
+      },
+    );
+    expect(result.reason).toBe('context-overflow');
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it('surfaces a network error without retrying after a text delta', async () => {

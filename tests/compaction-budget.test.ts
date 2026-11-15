@@ -11,11 +11,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_CONTEXT_WINDOW,
+  DEFAULT_REPLY_TOKEN_RESERVE,
+  SUMMARY_TOKEN_RESERVE,
   compactHistory,
+  compactHistoryWithSummary,
   compactionThreshold,
   estimateTokens,
 } from '../src/agent/compaction.ts';
 import { findUnpaired } from '../src/agent/history.ts';
+import { estimateTextTokens } from '../src/agent/tokens.ts';
 import type { Message } from '../src/types/messages.ts';
 
 /** Mirrors KEEP_RECENT in compaction.ts — the tail that is never dropped. */
@@ -34,6 +38,11 @@ function chatter(n: number, size: number): Message[] {
 }
 
 describe('compactionThreshold', () => {
+  const request = {
+    system: '漢'.repeat(1500),
+    tools: [{ name: 'Read', description: '漢'.repeat(4000), input_schema: { type: 'object' } }],
+  };
+
   it('scales with the provider window', () => {
     expect(compactionThreshold(65_536)).toBeLessThan(65_536);
     expect(compactionThreshold(200_000)).toBeGreaterThan(compactionThreshold(65_536));
@@ -47,6 +56,34 @@ describe('compactionThreshold', () => {
 
   it('falls back to a conservative default', () => {
     expect(compactionThreshold()).toBe(compactionThreshold(DEFAULT_CONTEXT_WINDOW));
+    expect(compactionThreshold(0, request)).toBe(
+      compactionThreshold(DEFAULT_CONTEXT_WINDOW, request),
+    );
+  });
+
+  it.each([8_192, 16_384])('subtracts the actual request costs at a %i window', (window) => {
+    const overhead =
+      estimateTextTokens(request.system) + estimateTextTokens(JSON.stringify(request.tools));
+    const reply = Math.min(DEFAULT_REPLY_TOKEN_RESERVE, window * 0.15);
+    expect(compactionThreshold(window, request)).toBe(Math.floor(window - overhead - reply));
+    expect(compactionThreshold(window, { ...request, tools: [] })).toBe(Math.floor(window * 0.6));
+  });
+
+  it('reserves the explicit request maxTokens instead of the default reply allowance', () => {
+    const window = 16_384;
+    const overhead =
+      estimateTextTokens(request.system) + estimateTextTokens(JSON.stringify(request.tools));
+    expect(compactionThreshold(window, { ...request, maxTokens: 6000 })).toBe(
+      Math.floor(window - overhead - 6000),
+    );
+  });
+
+  it('keeps the 60% threshold for a 200k window', () => {
+    expect(compactionThreshold(200_000, request)).toBe(120_000);
+  });
+
+  it('has no history budget when the fixed request costs fill the window', () => {
+    expect(compactionThreshold(4096, request)).toBe(0);
   });
 });
 
@@ -115,6 +152,23 @@ describe('compactHistory', () => {
     expect(estimateTokens(after)).toBeLessThanOrEqual(compactionThreshold(16_384));
   });
 
+  it('keeps a tool result in the protected tail when its call crosses the drop boundary', () => {
+    const history: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 't1', name: 'Read', input: { path: 'x'.repeat(10_000) } },
+        ],
+      },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] },
+      ...Array.from({ length: 5 }, (_, i) => say(i % 2 === 0 ? 'assistant' : 'user', 'small')),
+    ];
+    const after = compactHistory(history, 16_384, 120);
+    expect(estimateTokens(after)).toBeLessThanOrEqual(120);
+    expect(after.slice(-KEEP_RECENT)).toEqual(history.slice(-KEEP_RECENT));
+    expect(findUnpaired(after)).toEqual([]);
+  });
+
   it('is stable — a second pass over compacted output changes nothing', () => {
     const once = compactHistory(chatter(4000, 40), 32_768);
     expect(compactHistory(once, 32_768)).toBe(once);
@@ -125,6 +179,33 @@ describe('compactHistory', () => {
     const tight = compactHistory(history, 16_384);
     const roomy = compactHistory(history, 200_000);
     expect(estimateTokens(roomy)).toBeGreaterThan(estimateTokens(tight));
+  });
+
+  it('uses an explicit history budget without changing the summary reserve', async () => {
+    const budget = 1800;
+    const summary = '漢'.repeat(SUMMARY_TOKEN_RESERVE);
+    const after = await compactHistoryWithSummary(
+      chatter(400, 200),
+      16_384,
+      async () => summary,
+      budget,
+    );
+    expect(estimateTokens(after)).toBeLessThanOrEqual(budget);
+    expect(after[0]?.content).toEqual(
+      expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining(summary) })]),
+    );
+    // The reserved summary fits on the first pass, so a second compaction
+    // neither drops more history nor calls the model again.
+    expect(
+      await compactHistoryWithSummary(
+        after,
+        16_384,
+        async () => {
+          throw new Error('unexpected second summary');
+        },
+        budget,
+      ),
+    ).toBe(after);
   });
 });
 

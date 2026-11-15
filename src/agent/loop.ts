@@ -35,7 +35,12 @@ import type {
   ToolUseBlock,
 } from '../types/messages.ts';
 import { retry } from '../utils/retry.ts';
-import { compactHistory, compactHistoryWithSummary } from './compaction.ts';
+import {
+  compactHistory,
+  compactHistoryWithSummary,
+  compactionThreshold,
+  estimateTokens,
+} from './compaction.ts';
 import { type AgentSession, runWithSession } from './context.ts';
 import { completeToolResults, repairHistory } from './history.ts';
 import { collectImageBlocks, evictOldImages, imageLimits } from './images.ts';
@@ -239,7 +244,12 @@ export async function runAgentTurn(
   userInput: string,
   opts: RunOptions = {},
 ): Promise<AgentTurnResult> {
-  const session: AgentSession = opts.session ?? { id: 'default', scope: 'unknown' };
+  const session: AgentSession = {
+    ...(opts.session ?? { id: 'default', scope: 'unknown' }),
+    get contextWindow() {
+      return provider.contextWindow;
+    },
+  };
   return runWithSession(session, () => runAgentTurnInner(provider, state, userInput, opts));
 }
 
@@ -302,6 +312,7 @@ async function runAgentTurnInner(
   // How many times each (tool, arguments) pair has been dispatched this turn.
   const callCounts = new Map<string, number>();
   let reason: TerminalReason = 'unknown-error';
+  let overflowRetried = false;
 
   try {
     // Before the first compaction: the local provider only learns the server's
@@ -329,11 +340,23 @@ async function runAgentTurnInner(
       if (state.history.some((m) => m.content.some((b) => b.type === 'image'))) {
         state.history = evictOldImages(state.history, imageLimits().keepInHistory);
       }
+      // An explicit allow-list keeps its full schemas. Otherwise the session's
+      // detected window lets the default deferral upgrade to `all` when needed.
+      const tools =
+        opts.allowedTools && opts.allowedTools.length > 0
+          ? toolDefinitions().filter((t) => opts.allowedTools?.includes(t.name))
+          : promptToolDefinitions();
+      const request = { system: systemPrompt, tools };
+      let budget = compactionThreshold(provider.contextWindow, request);
+      if (overflowRetried) budget = Math.floor(budget / 2);
       state.history = repairHistory(
         opts.summariseDropped === false
-          ? compactHistory(state.history, provider.contextWindow)
-          : await compactHistoryWithSummary(state.history, provider.contextWindow, (dropped) =>
-              summariseMessages(dropped, provider, signal),
+          ? compactHistory(state.history, provider.contextWindow, budget)
+          : await compactHistoryWithSummary(
+              state.history,
+              provider.contextWindow,
+              (dropped) => summariseMessages(dropped, provider, signal),
+              budget,
             ),
       );
 
@@ -344,7 +367,7 @@ async function runAgentTurnInner(
       let emitted = false;
       try {
         response = await retry(
-          () => {
+          async () => {
             emitted = false;
             const sendOpts: {
               signal?: AbortSignal;
@@ -359,19 +382,35 @@ async function runAgentTurnInner(
               };
             }
             if (opts.onAssistantThinking) sendOpts.onThinking = opts.onAssistantThinking;
-            // An allow-list is already explicit and small, and deferring
-            // inside it would hide a tool the caller deliberately granted, so
-            // it keeps the pre-deferral behaviour. See tools/deferred.ts.
-            const tools =
-              opts.allowedTools && opts.allowedTools.length > 0
-                ? toolDefinitions().filter((t) => opts.allowedTools?.includes(t.name))
-                : promptToolDefinitions();
-            return provider.send({
-              system: systemPrompt,
-              messages: state.history,
-              tools,
-              ...sendOpts,
-            });
+            try {
+              return await provider.send({ ...request, messages: state.history, ...sendOpts });
+            } catch (error) {
+              if (
+                emitted ||
+                overflowRetried ||
+                !(error instanceof ProviderError) ||
+                error.kind !== 'context-overflow'
+              ) {
+                throw error;
+              }
+              overflowRetried = true;
+              budget = Math.floor(budget / 2);
+              state.history = repairHistory(
+                opts.summariseDropped === false
+                  ? compactHistory(state.history, provider.contextWindow, budget)
+                  : await compactHistoryWithSummary(
+                      state.history,
+                      provider.contextWindow,
+                      (dropped) => summariseMessages(dropped, provider, signal),
+                      budget,
+                    ),
+              );
+              // Framing and required tool pairs can exceed even a fully
+              // clamped tail. Retrying that request cannot fit this budget.
+              if (estimateTokens(state.history) > budget) throw error;
+              opts.onRetry?.(1, 0, `context-overflow: ${error.message.split('\n')[0]}`);
+              return provider.send({ ...request, messages: state.history, ...sendOpts });
+            }
           },
           {
             maxAttempts: maxRetries,
@@ -401,8 +440,11 @@ async function runAgentTurnInner(
           break;
         }
         if (error instanceof ProviderError) {
-          if (error.kind === 'context-overflow') reason = 'context-overflow';
-          else if (error.kind === 'auth') reason = 'auth-error';
+          if (error.kind === 'context-overflow') {
+            reason = 'context-overflow';
+            break;
+          }
+          if (error.kind === 'auth') reason = 'auth-error';
           else if (error.kind === 'bad-request') reason = 'bad-request';
           else reason = 'unknown-error';
         }

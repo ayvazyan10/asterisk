@@ -19,19 +19,20 @@
 // pairs, because splitting a pair produces the 400 that `history.ts` exists to
 // prevent.
 
-import type { ContentBlock, Message } from '../types/messages.ts';
+import type { ContentBlock, Message, ProviderRequest } from '../types/messages.ts';
 import { estimateImageTokens, estimateTextTokens, messageOverhead } from './tokens.ts';
 
 /** Used when the provider does not report a window. */
 export const DEFAULT_CONTEXT_WINDOW = 128_000;
 
 /**
- * Fraction of the context window that history may occupy.
- *
- * The remainder is the system prompt, the tool schemas — which can run to tens
- * of thousands of tokens on their own — and room for the model's reply.
+ * Upper cap on history, even when the request's fixed costs leave more room.
  */
 const HISTORY_BUDGET = 0.6;
+
+/** Reply allowance when the request has no explicit generation ceiling. */
+export const DEFAULT_REPLY_TOKEN_RESERVE = 2048;
+const REPLY_BUDGET = 0.15;
 
 /**
  * Messages at the end of the history that are never *dropped*.
@@ -111,11 +112,22 @@ export function estimateTokens(messages: readonly Message[]): number {
 }
 
 /** Token budget history may occupy for a given context window. */
-export function compactionThreshold(contextWindow?: number): number {
+export function compactionThreshold(
+  contextWindow?: number,
+  request?: Pick<ProviderRequest, 'system' | 'tools' | 'maxTokens'>,
+): number {
   // A provider that reports 0 means "I don't know", not "no budget" — taking
   // it literally would compact every message away on the first turn.
   const window = contextWindow && contextWindow > 0 ? contextWindow : DEFAULT_CONTEXT_WINDOW;
-  return Math.floor(window * HISTORY_BUDGET);
+  const overhead = request
+    ? estimateTextTokens(request.system) + estimateTextTokens(JSON.stringify(request.tools))
+    : 0;
+  const replyReserve =
+    request?.maxTokens ?? Math.min(DEFAULT_REPLY_TOKEN_RESERVE, window * REPLY_BUDGET);
+  return Math.max(
+    0,
+    Math.floor(Math.min(window * HISTORY_BUDGET, window - overhead - replyReserve)),
+  );
 }
 
 /** Shortens oversized blocks in place-free fashion, returning a new message. */
@@ -237,7 +249,9 @@ function findDropPoint(messages: Message[], budget: number, reserve: number): nu
     // message carrying the results, so the pair never splits.
     if (current && opensToolCall(current)) {
       const next = messages[start + 1];
-      start += next && answersToolCall(next) ? 2 : 1;
+      const count = next && answersToolCall(next) ? 2 : 1;
+      if (start + count > messages.length - floor) break;
+      start += count;
       continue;
     }
     start += 1;
@@ -326,10 +340,15 @@ function noticeReserve(): number {
  * Returns a history that fits the provider's context window.
  *
  * `contextWindow` should be what the active provider reports; omit it and a
- * conservative default is used.
+ * conservative default is used. Pass a request-aware `budget` from
+ * `compactionThreshold` when the system prompt and tool schemas are known.
  */
-export function compactHistory(messages: Message[], contextWindow?: number): Message[] {
-  const staged = shortenForBudget(messages, contextWindow);
+export function compactHistory(
+  messages: Message[],
+  contextWindow?: number,
+  budget = compactionThreshold(contextWindow),
+): Message[] {
+  const staged = shortenForBudget(messages, budget);
   if (staged.done) return staged.messages;
   return enforceBudget(dropOldest(staged.messages, staged.budget), staged.budget);
 }
@@ -347,8 +366,9 @@ export async function compactHistoryWithSummary(
   messages: Message[],
   contextWindow: number | undefined,
   summarise: (dropped: Message[]) => Promise<string | null>,
+  budget = compactionThreshold(contextWindow),
 ): Promise<Message[]> {
-  const staged = shortenForBudget(messages, contextWindow);
+  const staged = shortenForBudget(messages, budget);
   if (staged.done) return staged.messages;
 
   const shortened = staged.messages;
@@ -366,9 +386,8 @@ export async function compactHistoryWithSummary(
  */
 function shortenForBudget(
   messages: Message[],
-  contextWindow?: number,
+  budget: number,
 ): { done: boolean; messages: Message[]; budget: number } {
-  const budget = compactionThreshold(contextWindow);
   if (estimateTokens(messages) <= budget) return { done: true, messages, budget };
 
   // A short history is NOT exempt. It used to return here untouched whenever

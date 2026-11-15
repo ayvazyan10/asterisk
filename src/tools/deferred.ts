@@ -19,11 +19,15 @@
 // schema is in the `tools` array of every later request in that conversation.
 // The model therefore never has to call a tool that is absent from its list.
 
-import { currentSessionId } from '../agent/context.ts';
+import { currentSession, currentSessionId } from '../agent/context.ts';
+import { estimateTextTokens } from '../agent/tokens.ts';
 import { loadConfig } from '../config/load.ts';
 import type { Tool } from './types.ts';
 
 export type DeferMode = 'off' | 'mcp' | 'all';
+
+/** Upgrade the default deferral when full schemas exceed this window share. */
+export const MAX_TOOL_SCHEMA_FRACTION = 0.25;
 
 /**
  * Built-ins that stay in the prompt no matter what, under `all`.
@@ -122,11 +126,24 @@ export function partitionForPrompt(
   mode: DeferMode,
 ): PromptPartition {
   if (mode === 'off') return { visible: [...all], deferred: [] };
+  let effectiveMode = mode;
+  const window = currentSession().contextWindow;
+  if (mode === 'mcp' && window && window > 0) {
+    const definitions = all.map(({ name, description, input_schema }) => ({
+      name,
+      description,
+      input_schema,
+    }));
+    if (estimateTextTokens(JSON.stringify(definitions)) > window * MAX_TOOL_SCHEMA_FRACTION) {
+      effectiveMode = 'all';
+    }
+  }
   const revealed = revealedToolNames();
   const visible: Tool[] = [];
   const deferred: Tool[] = [];
   for (const tool of all) {
-    if (revealed.has(tool.name) || keepInPrompt(tool.name, mcpNames, mode)) visible.push(tool);
+    if (revealed.has(tool.name) || keepInPrompt(tool.name, mcpNames, effectiveMode))
+      visible.push(tool);
     else deferred.push(tool);
   }
   return { visible, deferred };

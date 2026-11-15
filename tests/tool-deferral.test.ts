@@ -15,7 +15,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import {
+  DEFAULT_REPLY_TOKEN_RESERVE,
+  compactionThreshold,
+  estimateTokens,
+} from '../src/agent/compaction.ts';
 import { createAgentState, runAgentTurn } from '../src/agent/loop.ts';
+import { estimateTextTokens } from '../src/agent/tokens.ts';
 import { saveConfig } from '../src/config/load.ts';
 import { ConfigSchema } from '../src/config/schema.ts';
 import { closeDb } from '../src/db/index.ts';
@@ -87,24 +93,74 @@ function bytesOf(defs: readonly unknown[]): number {
 function recordingProvider(responses: ProviderResponse[]): {
   provider: Provider;
   sent: string[][];
+  requests: ProviderRequest[];
 } {
   const sent: string[][] = [];
+  const requests: ProviderRequest[] = [];
   let i = 0;
   const provider: Provider = {
     name: 'fake',
     async send(request: ProviderRequest) {
       sent.push(request.tools.map((t) => t.name));
+      requests.push({ ...request, messages: [...request.messages] });
       const r = responses[i++];
       if (!r) throw new Error('fake provider exhausted');
       return r;
     },
   };
-  return { provider, sent };
+  return { provider, sent, requests };
 }
 
 // ─── prompt size ───────────────────────────────────────────────────────
 
 describe('prompt size under deferral', () => {
+  it.each([8_192, 16_384])(
+    'fits the real request in a %i window using automatic all deferral',
+    async (window) => {
+      const { provider, sent, requests } = recordingProvider([
+        { content: [{ type: 'text', text: 'ok' }], stopReason: 'end_turn' },
+      ]);
+      provider.contextWindow = window;
+      const state = createAgentState();
+      if (window === 16_384) {
+        state.history = Array.from({ length: 500 }, (_, i) => ({
+          role: i % 2 === 0 ? 'user' : 'assistant',
+          content: [{ type: 'text', text: `${i}: ${'history '.repeat(40)}` }],
+        }));
+      }
+      const result = await runAgentTurn(provider, state, 'hi', { summariseDropped: false });
+      expect(result.reason).toBe('end-turn');
+      expect(requests).toHaveLength(1);
+      const request = requests[0];
+      if (!request) throw new Error('missing recorded request');
+      const estimatedSize =
+        estimateTextTokens(request.system) +
+        estimateTextTokens(JSON.stringify(request.tools)) +
+        estimateTokens(request.messages) +
+        Math.min(DEFAULT_REPLY_TOKEN_RESERVE, window * 0.15);
+      expect(estimatedSize).toBeLessThanOrEqual(window);
+      expect([...(sent[0] ?? [])].sort()).toEqual([...CORE_TOOL_NAMES].sort());
+      expect(request.tools.find((t) => t.name === 'ToolSearch')?.description).toContain(
+        'BrowserNavigate',
+      );
+      // This is a request-local choice: outside the turn the default mode still
+      // offers every built-in, and no stored setting was changed.
+      expect(promptToolDefinitions().length).toBe(toolDefinitions().length);
+    },
+  );
+
+  it('retains the 60% history threshold and default tool list at 200k', async () => {
+    const { provider, requests } = recordingProvider([
+      { content: [{ type: 'text', text: 'ok' }], stopReason: 'end_turn' },
+    ]);
+    provider.contextWindow = 200_000;
+    await runAgentTurn(provider, createAgentState(), 'hi');
+    const request = requests[0];
+    if (!request) throw new Error('missing recorded request');
+    expect(request.tools).toEqual(promptToolDefinitions());
+    expect(compactionThreshold(provider.contextWindow, request)).toBe(120_000);
+  });
+
   it('does not grow with the number of MCP tools', () => {
     setMode('mcp');
 
@@ -192,6 +248,16 @@ describe('prompt size under deferral', () => {
 // ─── the off switch ────────────────────────────────────────────────────
 
 describe('deferSchemas: off', () => {
+  it('is honoured on an 8k window', async () => {
+    setMode('off');
+    const { provider, requests } = recordingProvider([
+      { content: [{ type: 'text', text: 'ok' }], stopReason: 'end_turn' },
+    ]);
+    provider.contextWindow = 8_192;
+    await runAgentTurn(provider, createAgentState(), 'hi', { summariseDropped: false });
+    expect(requests[0]?.tools).toEqual(toolDefinitions());
+  });
+
   it('sends every schema, exactly as before', () => {
     setMode('off');
     setExtraTools(fakeMcpTools(30));
