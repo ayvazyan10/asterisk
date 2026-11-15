@@ -16,6 +16,7 @@ import {
   evaluateCommand,
   suggestRules,
 } from './bash-permissions.ts';
+import { bashSandboxActive } from './bash-sandbox.ts';
 import { checkOutboundUrl } from './ssrf-guard.ts';
 import type { Tool } from './types.ts';
 import { isAsteriskHomePath, protectedWriteReason } from './write-policy.ts';
@@ -84,6 +85,7 @@ export async function authoriseBashCommand(
   signal?: AbortSignal,
 ): Promise<GateResult> {
   const policy = resolvePolicy();
+  if (policy.mode === 'relaxed') policy.sandboxActive = await bashSandboxActive();
   const decision = evaluateCommand(command, policy);
 
   if (decision.action === 'allow') return ALLOWED;

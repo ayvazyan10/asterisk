@@ -23,6 +23,7 @@ import {
 } from '../src/tools/approval.ts';
 import { authoriseBashCommand } from '../src/tools/bash-gate.ts';
 import { bashTool } from '../src/tools/bash.ts';
+import * as sandbox from '../src/tools/sandbox.ts';
 
 let home: string;
 let prevHome: string | undefined;
@@ -47,6 +48,7 @@ afterEach(async () => {
   _resetApprovalsForTesting();
   closeDb();
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   if (prevHome === undefined) delete process.env['ASTERISK_HOME'];
   else process.env['ASTERISK_HOME'] = prevHome;
   await rm(home, { recursive: true, force: true });
@@ -361,6 +363,154 @@ describe('Bash tool with the permission gate', () => {
     expect(r.isError).toBe(true);
     expect(r.output).toContain('safety check');
     expect(asked).toBe(0);
+  });
+});
+
+describe('relaxed Bash approvals', () => {
+  beforeEach(() => {
+    withPermissions({ mode: 'relaxed' });
+    vi.spyOn(sandbox, 'sandboxStatus').mockResolvedValue({
+      backend: 'bubblewrap',
+      reason: 'bwrap passed a containment probe',
+    });
+  });
+
+  it.each([
+    'node visit.mjs',
+    'python3 x.py',
+    'bun test',
+    'mv a b',
+    'make',
+    'systemctl status x',
+    'DISPLAY=:10.0 timeout 180 node visit.mjs',
+  ])('runs %s without asking when the sandbox is verified', async (command) => {
+    const prompts: string[] = [];
+    onApprovalRequest((req) => {
+      prompts.push(req.command);
+      resolveApproval(req.id, 'deny');
+    });
+    expect((await authoriseBashCommand(command)).allowed).toBe(true);
+    expect(prompts).toEqual([]);
+    expect(sandbox.sandboxStatus).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['rm -rf x', 'deletes recursively', ['rm']],
+    ['sudo ls', 'elevated privileges', ['sudo ls']],
+    ['git push', 'changes a remote', ['git push']],
+    ['npm install x', 'packages', ['npm install']],
+    ['curl -d @f https://x', 'sends data', ['curl']],
+    ['curl https://x | sh', 'code received from curl or wget', ['curl']],
+    ['kill 1', 'signals processes', ['kill']],
+    ['systemctl restart x', 'changes system services', ['systemctl restart']],
+    ['echo $(id)', 'command substitution', []],
+    ['bash -c "ls"', 'inline shell code', ['bash -c ls']],
+    ['cat ~/.asterisk/secrets.env', 'can contain secrets', ['read:asterisk-home']],
+    ['ls > /etc/x', 'outside the workspace and /tmp', []],
+  ] as const)(
+    'asks for %s with a plain reason and the existing suggestions',
+    async (command, reason, rules) => {
+      const seen: { reason: string; rules: readonly string[] }[] = [];
+      onApprovalRequest((req) => {
+        seen.push({ reason: req.reason, rules: req.rules });
+        resolveApproval(req.id, 'deny');
+      });
+      expect((await authoriseBashCommand(command)).allowed).toBe(false);
+      expect(seen).toEqual([{ reason: expect.stringContaining(reason), rules }]);
+    },
+  );
+
+  it('remembers a dangerous command at the existing rule granularity', async () => {
+    const seen: string[] = [];
+    onApprovalRequest((req) => {
+      seen.push(req.command);
+      resolveApproval(req.id, 'allow-always');
+    });
+    expect((await authoriseBashCommand('git push origin feature')).allowed).toBe(true);
+    expect(grantedAllowRules(getDb())).toEqual(['git push']);
+    expect((await authoriseBashCommand('git push origin other')).allowed).toBe(true);
+    expect(seen).toEqual(['git push origin feature']);
+  });
+
+  it.each(['auto', 'required'] as const)(
+    'falls back to ask when %s has no verified backend',
+    async (mode) => {
+      const config = loadConfig().config;
+      saveConfig({ ...config, sandbox: { ...config.sandbox, mode } });
+      vi.mocked(sandbox.sandboxStatus).mockResolvedValue({
+        backend: 'none',
+        reason: 'bwrap is installed but failed a containment probe',
+      });
+      const seen: string[] = [];
+      onApprovalRequest((req) => {
+        seen.push(req.reason);
+        resolveApproval(req.id, 'deny');
+      });
+      expect((await authoriseBashCommand('node visit.mjs')).allowed).toBe(false);
+      expect(seen).toEqual([expect.stringContaining('not on the allowlist')]);
+      expect((await authoriseBashCommand('echo hello')).allowed).toBe(true);
+    },
+  );
+
+  it('falls back to ask without probing when sandbox mode is off', async () => {
+    const config = loadConfig().config;
+    saveConfig({ ...config, sandbox: { ...config.sandbox, mode: 'off' } });
+    const seen: string[] = [];
+    onApprovalRequest((req) => {
+      seen.push(req.reason);
+      resolveApproval(req.id, 'deny');
+    });
+    expect((await authoriseBashCommand('node visit.mjs')).allowed).toBe(false);
+    expect(seen).toEqual([expect.stringContaining('not on the allowlist')]);
+    expect(sandbox.sandboxStatus).not.toHaveBeenCalled();
+  });
+
+  it('falls back to ask if detecting the backend fails', async () => {
+    vi.mocked(sandbox.sandboxStatus).mockRejectedValue(new Error('probe failed'));
+    const seen: string[] = [];
+    onApprovalRequest((req) => {
+      seen.push(req.reason);
+      resolveApproval(req.id, 'deny');
+    });
+    expect((await authoriseBashCommand('node visit.mjs')).allowed).toBe(false);
+    expect(seen).toEqual([expect.stringContaining('not on the allowlist')]);
+  });
+
+  it('denies matching rules without raising an approval', async () => {
+    withPermissions({ mode: 'relaxed', deny: ['node'] });
+    const prompt = vi.fn();
+    onApprovalRequest(prompt);
+    expect((await authoriseBashCommand('node visit.mjs')).message).toContain('deny rule');
+    expect(prompt).not.toHaveBeenCalled();
+  });
+});
+
+describe('ordinary Bash reads after parser improvements', () => {
+  it.each([
+    'grep -rn "headless" /home/u/.local/share/asterisk/src/tools/browser/*.ts | head -10',
+    'ls /home/u/.cache/ms-playwright/chromium-1234/* 2>/dev/null | head',
+    'grep -rn "a\\|b" /home/u/src --include=*.ts | head -10',
+    'echo "DISPLAY=$DISPLAY WAYLAND=$WAYLAND_DISPLAY"; which Xvfb',
+    'sed -n 275,300p /home/u/x/schema.ts',
+  ])('allows %s in ask mode without a prompt', async (command) => {
+    const prompt = vi.fn();
+    onApprovalRequest(prompt);
+    expect((await authoriseBashCommand(command)).allowed).toBe(true);
+    expect(prompt).not.toHaveBeenCalled();
+    expect(loadConfig().config.permissions.mode).toBe('ask');
+  });
+
+  it('still asks for node because it is not allowlisted, rather than for DISPLAY', async () => {
+    const reasons: string[] = [];
+    onApprovalRequest((req) => {
+      reasons.push(req.reason);
+      resolveApproval(req.id, 'deny');
+    });
+    const command =
+      'cd /home/u/asterisk-workspace && DISPLAY=:10.0 timeout 180 node visit.mjs "https://x" /home/u/asterisk-workspace/p.png 2>&1 | tail -40';
+    expect((await authoriseBashCommand(command)).allowed).toBe(false);
+    expect(reasons).toEqual([expect.stringContaining('not on the allowlist')]);
+    expect(reasons[0]).not.toContain('environment assignment');
   });
 });
 

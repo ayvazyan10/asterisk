@@ -10,9 +10,9 @@
 //
 // So before any rule is consulted, the command is split into the segments the
 // shell would actually run, and anything whose effect cannot be determined by
-// reading the text — command substitution, variable expansion, redirection to
-// a real path, here-docs, subshells — is recorded in `opaque`. A command with
-// a non-empty `opaque` list is never auto-approved, whatever the rules say.
+// reading the text — command substitution, unsafe expansion, redirection to
+// a real path, here-docs, subshells — is recorded in `opaque`. Relaxed policy
+// can resolve output redirections against its sandbox's writable paths.
 //
 // This is deliberately not a bash parser. It over-approximates: constructs it
 // does not understand are reported as opaque rather than skipped, so the
@@ -26,12 +26,16 @@ export interface CommandSegment {
   args: string[];
   /** The segment's source text, for display in the approval prompt. */
   raw: string;
+  /** Literal output redirection targets, also recorded in `opaque`. */
+  outputs?: string[];
+  /** Receives the previous segment's output through a pipe. */
+  piped?: boolean;
 }
 
 export interface ParsedCommand {
   segments: CommandSegment[];
   /** Human-readable descriptions of constructs that defeat static analysis.
-   *  Non-empty means "never auto-approve". */
+   *  Output redirections can be resolved by sandbox-aware policy. */
   opaque: string[];
 }
 
@@ -40,11 +44,17 @@ const SEPARATORS = new Set([';', '&&', '||', '|', '|&', '&', '\n']);
 
 interface Word {
   value: string;
-  /** Set when the whole word came out of single quotes, where `$` is inert. */
+  /** No expansion contributed to this word. */
   literal: boolean;
+  unquotedVariable: boolean;
 }
 
-type Token = { kind: 'word'; word: Word } | { kind: 'op'; value: string };
+type Token =
+  | { kind: 'word'; word: Word }
+  | { kind: 'op'; value: string }
+  | { kind: 'output'; target: string };
+
+const SIMPLE_VARIABLE = /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/;
 
 /**
  * Splits a command line into the segments bash would run, recording every
@@ -54,21 +64,53 @@ export function parseCommand(command: string): ParsedCommand {
   const opaque: string[] = [];
   const tokens = tokenize(command, opaque);
   const segments = groupIntoSegments(tokens, opaque);
+  // A quoted "$X" is judged harmless because its value comes from outside the
+  // command. When the command itself sets X (`export X=-rf; rm "$X" ~`,
+  // `for X in -rf; do …`), the value is chosen by the command after all.
+  if (
+    /\$\{?[A-Za-z_]/.test(command) &&
+    segments.some(
+      (segment) =>
+        VARIABLE_SETTERS.has(segment.bin) ||
+        (segment.bin === 'printf' && segment.args.some((arg) => /^-[^-]*v/.test(arg))),
+    )
+  ) {
+    opaque.push('a variable set and expanded in the same command');
+  }
   return { segments, opaque: dedupe(opaque) };
 }
+
+const VARIABLE_SETTERS = new Set([
+  'export',
+  'declare',
+  'typeset',
+  'local',
+  'readonly',
+  'read',
+  'mapfile',
+  'readarray',
+  'for',
+  'select',
+  'getopts',
+  'let',
+]);
 
 function tokenize(src: string, opaque: string[]): Token[] {
   const tokens: Token[] = [];
   let buf = '';
   let bufStarted = false;
   let literal = true;
+  let unquotedVariable = false;
+  let expansionPrefix: string | null = null;
 
   const flush = (): void => {
     if (!bufStarted) return;
-    tokens.push({ kind: 'word', word: { value: buf, literal } });
+    tokens.push({ kind: 'word', word: { value: buf, literal, unquotedVariable } });
     buf = '';
     bufStarted = false;
     literal = true;
+    unquotedVariable = false;
+    expansionPrefix = null;
   };
   const push = (text: string): void => {
     buf += text;
@@ -112,6 +154,7 @@ function tokenize(src: string, opaque: string[]): Token[] {
 
     if (c === '"') {
       const consumed = readDoubleQuoted(src, i, opaque);
+      if (!consumed.literal) expansionPrefix ??= buf + consumed.prefix;
       push(consumed.text);
       literal = literal && consumed.literal;
       i = consumed.next;
@@ -128,6 +171,15 @@ function tokenize(src: string, opaque: string[]): Token[] {
     }
 
     if (c === '$') {
+      const simple = src.slice(i).match(SIMPLE_VARIABLE)?.[0];
+      if (simple) {
+        expansionPrefix ??= buf;
+        push(simple);
+        literal = false;
+        unquotedVariable = true;
+        i += simple.length;
+        continue;
+      }
       const consumed = readDollar(src, i, opaque);
       literal = false;
       push('');
@@ -135,7 +187,12 @@ function tokenize(src: string, opaque: string[]): Token[] {
       continue;
     }
 
-    if (c === '<' || c === '>') {
+    if (c === '<' || c === '>' || (c === '&' && src[i + 1] === '>')) {
+      if (src[i + 1] === '(') {
+        opaque.push('process substitution');
+        i = skipBalanced(src, i + 1, '(', ')');
+        continue;
+      }
       // A bare run of digits immediately before a redirection is an fd number
       // (`2>&1`), not a word of its own.
       let fd = '';
@@ -145,7 +202,7 @@ function tokenize(src: string, opaque: string[]): Token[] {
         bufStarted = false;
       }
       flush();
-      i = readRedirection(src, i, fd, opaque);
+      i = readRedirection(src, i, fd, opaque, tokens);
       continue;
     }
 
@@ -176,9 +233,15 @@ function tokenize(src: string, opaque: string[]): Token[] {
 
     // Expansion can create extra arguments or filenames that are options.
     // Quotes and backslashes have already been consumed above, so only bare
-    // expansion characters reach here. Over-approximate rather than expand.
-    if (c === '{') opaque.push('brace expansion');
-    if (c === '*' || c === '?' || c === '[') opaque.push('pathname expansion');
+    // expansion characters reach here. A literal prefix prevents a filename
+    // from becoming a flag; --include=*.ts remains that option's value too.
+    if (c === '{' || c === '*' || c === '?' || c === '[') {
+      expansionPrefix ??= buf;
+      if (!expansionPrefix || (expansionPrefix.startsWith('-') && !expansionPrefix.includes('='))) {
+        opaque.push(c === '{' ? 'brace expansion' : 'pathname expansion');
+      }
+      literal = false;
+    }
 
     push(c);
     i += 1;
@@ -193,9 +256,10 @@ function readDoubleQuoted(
   src: string,
   start: number,
   opaque: string[],
-): { text: string; next: number; literal: boolean } {
+): { text: string; next: number; literal: boolean; prefix: string } {
   let out = '';
   let literal = true;
+  let prefix: string | null = null;
   let i = start + 1;
   while (i < src.length) {
     const c = src[i] as string;
@@ -204,16 +268,24 @@ function readDoubleQuoted(
       i += 2;
       continue;
     }
-    if (c === '"') return { text: out, next: i + 1, literal };
+    if (c === '"') return { text: out, next: i + 1, literal, prefix: prefix ?? out };
     if (c === '`') {
       opaque.push('backtick command substitution');
+      prefix ??= out;
       literal = false;
       const end = src.indexOf('`', i + 1);
       i = end === -1 ? src.length : end + 1;
       continue;
     }
     if (c === '$') {
+      prefix ??= out;
       literal = false;
+      const simple = src.slice(i).match(SIMPLE_VARIABLE)?.[0];
+      if (simple) {
+        out += simple;
+        i += simple.length;
+        continue;
+      }
       i = readDollar(src, i, opaque);
       continue;
     }
@@ -221,7 +293,7 @@ function readDoubleQuoted(
     i += 1;
   }
   opaque.push('unterminated double quote');
-  return { text: out, next: i, literal };
+  return { text: out, next: i, literal, prefix: prefix ?? out };
 }
 
 /** Consumes a `$…` expansion and records what kind it was. */
@@ -272,7 +344,13 @@ function readDollar(src: string, start: number, opaque: string[]): number {
  * (`2>&1`) are benign and dropped; everything else writes or reads somewhere
  * a rule cannot see, so it is opaque.
  */
-function readRedirection(src: string, start: number, fd: string, opaque: string[]): number {
+function readRedirection(
+  src: string,
+  start: number,
+  fd: string,
+  opaque: string[],
+  tokens: Token[],
+): number {
   let i = start;
   let op = '';
   while (i < src.length && (src[i] === '<' || src[i] === '>' || src[i] === '&' || src[i] === '|')) {
@@ -287,17 +365,30 @@ function readRedirection(src: string, start: number, fd: string, opaque: string[
 
   while (i < src.length && (src[i] === ' ' || src[i] === '\t')) i += 1;
 
-  let target = '';
+  const targetStart = i;
   while (i < src.length && !/[\s;&|<>()]/.test(src[i] as string)) {
-    target += src[i];
-    i += 1;
+    const c = src[i];
+    if (c === "'" || c === '"' || c === '`') i = skipQuoted(src, i, c);
+    else if (c === '\\') i += 2;
+    else if (c === '$' && (src[i + 1] === '(' || src[i + 1] === '{')) {
+      const open = src[i + 1] as string;
+      i = skipBalanced(src, i + 1, open, open === '(' ? ')' : '}');
+    } else i += 1;
   }
+  const target = src.slice(targetStart, i);
 
   if (op.endsWith('&') && /^\d+$|^-$/.test(target)) return i;
-  if (target === '/dev/null') return i;
+  const words = tokenize(target, opaque);
+  const word = words.length === 1 && words[0]?.kind === 'word' ? words[0].word : null;
+  if (!word?.literal) opaque.push('expansion in a redirection target');
+  if (word?.literal && word.value === '/dev/null') return i;
 
   const label = op.startsWith('<') ? 'input redirection' : 'output redirection';
-  opaque.push(target ? `${label} to ${target}` : label);
+  const path = word?.value ?? target;
+  opaque.push(path ? `${label} to ${path}` : label);
+  if (label === 'output redirection' && word?.literal) {
+    tokens.push({ kind: 'output', target: path });
+  }
   return i;
 }
 
@@ -337,29 +428,48 @@ function skipBalanced(src: string, start: number, open: string, close: string): 
 function groupIntoSegments(tokens: Token[], opaque: string[]): CommandSegment[] {
   const segments: CommandSegment[] = [];
   let current: Word[] = [];
+  let outputs: string[] = [];
+  let piped = false;
 
-  const commit = (): void => {
-    if (current.length === 0) return;
+  const commit = (separator?: string): void => {
     const words = stripEnvAssignments(current, opaque);
+    if (words.length === 0 && outputs.length > 0) {
+      opaque.push('a redirection without a command');
+    }
     if (words.length > 0) {
       const first = words[0] as Word;
+      if (!first.literal) {
+        opaque.push('expansion in the command name');
+      }
+      if (
+        words.slice(1).some((word) => word.unquotedVariable) &&
+        first.value !== 'echo' &&
+        first.value !== 'printf'
+      ) {
+        opaque.push('variable expansion');
+      }
       segments.push({
         bin: first.value,
         args: words.slice(1).map((w) => w.value),
         raw: words.map((w) => w.value).join(' '),
+        ...(outputs.length > 0 ? { outputs } : {}),
+        ...(piped ? { piped: true } : {}),
       });
     }
     current = [];
+    outputs = [];
+    piped = separator === '|' || separator === '|&';
   };
 
   for (const token of tokens) {
     if (token.kind === 'op' && SEPARATORS.has(token.value)) {
-      commit();
+      commit(token.value);
       continue;
     }
     // Words that came out of an expansion are pushed as empty placeholders;
     // they carry no name to match a rule against.
     if (token.kind === 'word' && token.word.value !== '') current.push(token.word);
+    if (token.kind === 'output') outputs.push(token.target);
   }
   commit();
   return segments;
@@ -367,27 +477,31 @@ function groupIntoSegments(tokens: Token[], opaque: string[]): CommandSegment[] 
 
 /**
  * Strips leading `VAR=value` assignments so the segment reads as the command
- * it runs — `FOO=1 npm test` is shown as `npm test` — and records the prefix
- * as opaque, because the assignment is part of what the command does.
- *
- * `GIT_EXTERNAL_DIFF=./x git diff` runs `./x`. `LD_PRELOAD=./x.so ls` loads
- * `./x.so` into `ls`. `PATH=/tmp/bin ls` picks a different `ls` entirely, and
- * `BASH_ENV`, `PYTHONPATH`, `NODE_OPTIONS`, `PERL5LIB` and `GIT_CONFIG_*` each
- * have their own version of it. A denylist of variable names cannot close
- * that — the attacker picks the next name — so it is the presence of any
- * assignment, not its name, that makes the segment unresolvable by reading it.
- *
- * The cost is one prompt for a DEFAULT_ALLOW binary carrying an env prefix.
- * Everything else already prompted: `FOO=1 npm test` asked before this change
- * too, `npm` not being allowlisted.
+ * it runs — `DISPLAY=:10.0 npm test` is shown as `npm test`. Names that change
+ * program lookup, inject code or configure Git remain opaque, as do values
+ * containing command substitution, even when quoted literally.
  */
 function stripEnvAssignments(words: Word[], opaque: string[]): Word[] {
   let i = 0;
-  while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test((words[i] as Word).value)) i += 1;
+  while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test((words[i] as Word).value)) {
+    const assignment = (words[i] as Word).value;
+    const name = assignment.slice(0, assignment.indexOf('='));
+    if (
+      /^(?:LD_|DYLD_|GIT_)/.test(name) ||
+      /^(?:PATH|BASH_ENV|ENV|IFS|PS4|PROMPT_COMMAND|SHELLOPTS|BASHOPTS|NODE_OPTIONS|PYTHONSTARTUP|PYTHONPATH|PERL5OPT|PERL5LIB|RUBYOPT|RUBYLIB|NODE_PATH|PAGER|MANPAGER|EDITOR|VISUAL|LESSOPEN|LESSCLOSE|BROWSER|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS)$/.test(
+        name,
+      ) ||
+      /\$\(|`/.test(assignment)
+    ) {
+      opaque.push('environment assignment');
+    }
+    if ((words[i] as Word).unquotedVariable) opaque.push('variable expansion');
+    i += 1;
+  }
   if (i === 0) return words;
   // Assignments with no command after them additionally set shell state for
   // later segments, which a per-segment rule check cannot account for.
-  opaque.push(i === words.length ? 'bare environment assignment' : 'environment assignment');
+  if (i === words.length) opaque.push('bare environment assignment');
   return words.slice(i);
 }
 

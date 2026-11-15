@@ -1,21 +1,26 @@
 // The Bash permission policy — decides whether a command runs unattended,
 // needs a human to approve it, or is refused outright.
 //
-// This is a *consent* boundary, not a sandbox. An approved command runs with
-// the full privileges of the user who started Asterisk. What the policy buys
-// is that nothing with unreviewed effects runs without someone saying yes.
+// This is a *consent* boundary; bash-sandbox.ts separately confines execution.
+// In ask mode, effects beyond the read-only allowlist need someone's consent.
 //
 // The rules only ever see the segments `command-parse.ts` extracted, so a
 // chained command is judged segment by segment: `git status && rm -rf ~`
 // needs approval because `rm` does, even though `git status` is allowlisted.
+//
+// Relaxed mode allows ordinary commands when the Bash sandbox has a verified
+// backend. Destructive commands, code re-entry, opaque syntax, secret reads,
+// forbidden arguments and writes to sensitive or outside paths still ask.
+// Without an active sandbox, relaxed uses exactly the ask policy.
 
 import { resolve } from 'node:path';
-import { resolveWriteTarget } from '../utils/fs-safe.ts';
+import { resolveWriteTarget, resolvesInside } from '../utils/fs-safe.ts';
 import { expandHome } from '../utils/path.ts';
 import { type CommandSegment, parseCommand } from './command-parse.ts';
+import { workspaceRoot } from './workspace.ts';
 import { isAsteriskHomePath, protectedWriteReason } from './write-policy.ts';
 
-export type PermissionMode = 'ask' | 'allowlist' | 'unrestricted';
+export type PermissionMode = 'ask' | 'relaxed' | 'allowlist' | 'unrestricted';
 
 export type PermissionDecision =
   | { action: 'allow'; reason: string }
@@ -28,6 +33,8 @@ export interface PolicyInput {
   allow: readonly string[];
   /** Deny wins over every allow, including the built-in defaults. */
   deny: readonly string[];
+  /** True only when the configured Bash sandbox has a verified backend. */
+  sandboxActive?: boolean;
 }
 
 export const ASTERISK_HOME_READ_RULE = 'read:asterisk-home';
@@ -93,6 +100,8 @@ const FORBIDDEN_ARGS: Record<string, readonly string[]> = {
   date: ['-s', '--set'],
   // `file -C` writes a compiled magic database.
   file: ['-C', '--compile'],
+  // Script files cannot be inspected here; inline scripts are checked below.
+  sed: ['-i', '--in-place', '-f', '--file'],
   ls: [],
 };
 
@@ -110,8 +119,7 @@ const MAX_OPERANDS: Record<string, number> = { uniq: 1 };
  * break that promise excluded above. Deliberately short: everything absent
  * from this list simply prompts once and can be remembered by the user.
  *
- * Notably absent, and not by oversight — `sed` (`-i` writes, GNU `e`
- * executes), `awk` (`system()`), `env`/`xargs` (they run
+ * Notably absent, and not by oversight — `awk` (`system()`), `env`/`xargs` (they run
  * another program), `sh`/`bash`/`eval`/`source` (they re-enter the shell),
  * and `curl`/`wget` (network egress is not read-only). Transparent wrappers
  * such as timeout and nohup are judged by their inner command instead.
@@ -142,6 +150,7 @@ const DEFAULT_ALLOW: readonly string[] = [
   'sort',
   'uniq',
   'cut',
+  'sed',
   'column',
   'jq',
   'grep',
@@ -178,9 +187,8 @@ export function defaultAllowRules(): readonly string[] {
 /**
  * Evaluates a raw command string against the policy.
  *
- * Returns `allow` only when every segment is independently allowlisted, no
- * segment carries a forbidden argument, and the command contains nothing the
- * parser could not statically resolve.
+ * Every guarded mode retains opaque/secret/argument checks. Relaxed with an active
+ * sandbox also permits commands outside the allowlist unless dangerous.
  */
 export function evaluateCommand(command: string, input: PolicyInput): PermissionDecision {
   const parsed = parseCommand(command);
@@ -188,6 +196,7 @@ export function evaluateCommand(command: string, input: PolicyInput): Permission
   if (input.mode === 'unrestricted') {
     return { action: 'allow', reason: 'permissions.mode is unrestricted' };
   }
+  const relaxed = input.mode === 'relaxed' && input.sandboxActive === true;
 
   const segments = parsed.segments.map((segment) => {
     const inner = unwrapSegment(segment);
@@ -221,8 +230,11 @@ export function evaluateCommand(command: string, input: PolicyInput): Permission
       ? { action: 'deny', reason: `${reason} (permissions.mode is allowlist, so nothing is asked)` }
       : { action: 'ask', reason, segments: parsed.segments };
 
-  if (parsed.opaque.length > 0) {
-    return refuse(`the command contains ${parsed.opaque.join(', ')}`);
+  const opaque = parsed.opaque.filter(
+    (reason) => !relaxed || !reason.startsWith('output redirection to '),
+  );
+  if (opaque.length > 0) {
+    return refuse(`the command contains ${opaque.join(', ')}`);
   }
 
   if (parsed.segments.length === 0) {
@@ -230,7 +242,9 @@ export function evaluateCommand(command: string, input: PolicyInput): Permission
   }
 
   const allow = [...DEFAULT_ALLOW, ...input.allow];
-  for (const [index, segment] of segments.entries()) {
+  let directories = [process.cwd()];
+  let networkPipe = false;
+  for (const segment of segments) {
     const secret = reads.get(segment);
     if (secret && (!secret.rule || !input.allow.includes(secret.rule))) {
       return refuse(`"${segment.raw}" ${secret.reason}`);
@@ -240,15 +254,267 @@ export function evaluateCommand(command: string, input: PolicyInput): Permission
     // (`timeout 240`) must not cover whatever is wrapped: it would have
     // approved `timeout 240 rm -rf ~` as readily as the test run it was for.
     const rule = matchingRule(segment, allow);
-    if (!rule) return refuse(`"${segment.raw}" is not on the allowlist`);
+    if (!rule && !relaxed) return refuse(`"${segment.raw}" is not on the allowlist`);
 
-    const forbidden = forbiddenArg(segment);
+    const forms: CommandSegment[] = [];
+    for (const form of relaxed ? denyForms(segment) : [segment]) {
+      const inner = relaxed ? unwrapSegment(form) : form;
+      if (!inner) return refuse(`an unrecognised ${form.bin} wrapper`);
+      forms.push(...(relaxed ? denyForms(inner) : [inner]));
+    }
+    const forbidden = forms.map(forbiddenArg).find((reason) => reason !== null);
     if (forbidden) {
       return refuse(`"${segment.raw}" uses ${forbidden}, which can run commands or write files`);
     }
+
+    if (relaxed) {
+      networkPipe = segment.piped === true && networkPipe;
+      for (const form of forms) {
+        if (form.bin === 'cd') {
+          const path = form.args.find((arg) => !arg.startsWith('-')) ?? '~';
+          directories = [
+            ...directories,
+            ...directories.map((dir) => resolve(dir, expandHome(path))),
+          ];
+        }
+        if (form.bin === 'curl' || form.bin === 'wget') networkPipe = true;
+        if (networkPipe && INTERPRETERS.has(form.bin)) {
+          return refuse(`"${segment.raw}" runs code received from curl or wget`);
+        }
+        if (form.bin === 'tee') {
+          for (const target of form.args.filter((arg) => !arg.startsWith('-'))) {
+            const reason = outputWriteReason(target, directories);
+            if (reason) return refuse(`"${segment.raw}" ${reason}`);
+          }
+        }
+        if (!rule) {
+          const danger = dangerousCommand(form);
+          if (danger) return refuse(`"${segment.raw}" ${danger}`);
+        }
+      }
+      for (const target of segment.outputs ?? []) {
+        const reason = outputWriteReason(target, directories);
+        if (reason) return refuse(`the output redirection ${reason}`);
+      }
+    }
   }
 
-  return { action: 'allow', reason: 'every part of the command is allowlisted' };
+  return {
+    action: 'allow',
+    reason: relaxed
+      ? 'the sandbox is active and no part needs approval'
+      : 'every part of the command is allowlisted',
+  };
+}
+
+/** Shared by shell redirects and tee; configured extra roots still need consent. */
+function outputWriteReason(target: string, directories: readonly string[]): string | null {
+  if (target === '/dev/null') return null;
+  for (const directory of directories) {
+    const path = resolve(directory, expandHome(target));
+    const protectedReason = protectedWriteReason(path);
+    if (protectedReason) return `writes "${target}" (${protectedReason})`;
+    if (![workspaceRoot(), '/tmp'].some((root) => resolvesInside(root, path))) {
+      return `writes "${target}" outside the workspace and /tmp`;
+    }
+  }
+  return null;
+}
+
+/** Commands that need consent in relaxed mode unless explicitly allowlisted. */
+function dangerousCommand({ bin, args }: CommandSegment): string | null {
+  const dangerous: Record<string, string> = {
+    rmdir: 'removes directories',
+    shred: 'destroys file contents',
+    truncate: 'discards file contents',
+    sudo: 'runs with elevated privileges',
+    su: 'changes user privileges',
+    doas: 'runs with elevated privileges',
+    pkexec: 'runs with elevated privileges',
+    chroot: 'changes the process root',
+    chmod: 'changes file permissions',
+    chown: 'changes file ownership',
+    chgrp: 'changes file ownership',
+    setfacl: 'changes file permissions',
+    chattr: 'changes file attributes',
+    dd: 'overwrites files or devices',
+    fdisk: 'changes disk partitions',
+    sfdisk: 'changes disk partitions',
+    parted: 'changes disk partitions',
+    wipefs: 'erases filesystem signatures',
+    mount: 'changes mounted filesystems',
+    umount: 'changes mounted filesystems',
+    swapon: 'changes system swap',
+    swapoff: 'changes system swap',
+    shutdown: 'shuts down the system',
+    reboot: 'restarts the system',
+    poweroff: 'shuts down the system',
+    halt: 'halts the system',
+    init: 'changes system state',
+    telinit: 'changes system state',
+    kill: 'signals processes',
+    pkill: 'signals processes',
+    killall: 'signals processes',
+    service: 'changes system services',
+    crontab: 'changes scheduled commands',
+    at: 'schedules commands',
+    apt: 'changes installed packages',
+    'apt-get': 'changes installed packages',
+    dpkg: 'changes installed packages',
+    snap: 'changes installed packages',
+    flatpak: 'changes installed packages',
+    npx: 'downloads and executes packages',
+    bunx: 'downloads and executes packages',
+    docker: 'controls containers and host resources',
+    podman: 'controls containers and host resources',
+    ssh: 'runs commands on a remote host',
+    scp: 'copies files to or from a remote host',
+    sftp: 'transfers files to or from a remote host',
+    rsync: 'synchronises files locally or remotely',
+    nc: 'opens a network connection',
+    ncat: 'opens a network connection',
+    netcat: 'opens a network connection',
+    socat: 'opens a network connection',
+    telnet: 'opens a remote connection',
+    ftp: 'transfers files over the network',
+    eval: 'executes shell code',
+    source: 'executes a shell file',
+    '.': 'executes a shell file',
+  };
+  const reason = dangerous[bin];
+  if (reason) return reason;
+  if (bin.startsWith('mkfs')) return 'creates a filesystem';
+
+  const end = args.indexOf('--');
+  const options = end === -1 ? args : args.slice(0, end);
+  let subcommandIndex = 0;
+  while (args[subcommandIndex]?.startsWith('-')) {
+    const option = args[subcommandIndex] as string;
+    subcommandIndex += [
+      '-C',
+      '--work-tree',
+      '--namespace',
+      '--cwd',
+      '--prefix',
+      '--dir',
+      '--directory',
+      '--host',
+      '-H',
+      '--machine',
+      '-M',
+    ].includes(option)
+      ? 2
+      : 1;
+    if (option === '--') break;
+  }
+  const subcommand = args[subcommandIndex];
+  if (
+    bin === 'rm' &&
+    options.some((arg) => /^-[^-]*[rRf]|^--(?:recursive|force)(?:=|$)/.test(arg))
+  ) {
+    return 'deletes recursively or forcibly';
+  }
+  if (
+    bin === 'systemctl' &&
+    !['status', 'show', 'list-units', 'list-unit-files', 'is-active', 'is-enabled', 'cat'].includes(
+      subcommand ?? '',
+    )
+  ) {
+    return 'changes system services';
+  }
+  if (bin === 'kubectl' && !['get', 'describe', 'logs'].includes(subcommand ?? '')) {
+    return 'changes cluster resources';
+  }
+  if (['bash', 'sh', 'zsh'].includes(bin) && options.some((arg) => /^-[^-]*c/.test(arg))) {
+    return 'executes inline shell code';
+  }
+  if (bin === 'git') {
+    const [sub, ...rest] = args.slice(subcommandIndex);
+    if (sub === 'push') return 'changes a remote';
+    if (['clean', 'rebase', 'filter-branch', 'filter-repo', 'restore'].includes(sub ?? '')) {
+      return 'discards files or rewrites Git history';
+    }
+    if (sub === 'reset' && rest.includes('--hard')) return 'discards tracked changes';
+    if (sub === 'branch' && rest.some((arg) => /^-[^-]*[dD]|^--delete(?:=|$)/.test(arg))) {
+      return 'deletes Git branches';
+    }
+    if (sub === 'tag' && rest.some((arg) => /^-[^-]*d|^--delete(?:=|$)/.test(arg))) {
+      return 'deletes Git tags';
+    }
+    if (sub === 'checkout' && rest.some((arg) => arg === '--' || arg === '.')) {
+      return 'discards working tree changes';
+    }
+    if (sub === 'stash' && rest.some((arg) => arg === 'drop' || arg === 'clear')) {
+      return 'discards stashed changes';
+    }
+    if (sub === 'remote' && rest.some((arg) => ['add', 'remove', 'rm', 'set-url'].includes(arg))) {
+      return 'changes Git remotes';
+    }
+    if (sub === 'config') {
+      const reads = ['--get', '--get-all', '--get-regexp', '--get-urlmatch', '--list', '-l'];
+      const read =
+        rest.some((arg) => reads.includes(arg)) || ['get', 'list'].includes(rest[0] ?? '');
+      const write =
+        rest.some((arg) =>
+          /^--(?:add|replace-all|unset|unset-all|rename-section|remove-section|edit)$|^-e$/.test(
+            arg,
+          ),
+        ) ||
+        ['set', 'unset', 'rename-section', 'remove-section', 'edit'].includes(rest[0] ?? '') ||
+        rest.filter((arg) => !arg.startsWith('-')).length > 1;
+      if (!read && write) return 'writes Git configuration';
+    }
+    if (sub === 'commit' && rest.includes('--amend')) return 'rewrites the previous commit';
+  }
+  if (
+    (bin === 'brew' && ['install', 'uninstall', 'remove', 'upgrade'].includes(subcommand ?? '')) ||
+    (['pip', 'pip3', 'uv', 'pipx'].includes(bin) &&
+      args.some((arg) => ['install', 'uninstall'].includes(arg))) ||
+    (['npm', 'pnpm', 'yarn', 'bun'].includes(bin) &&
+      ['install', 'i', 'add', 'remove', 'rm', 'uninstall', 'publish', 'link', 'unlink'].includes(
+        subcommand ?? '',
+      )) ||
+    (['cargo', 'go', 'gem'].includes(bin) && subcommand === 'install')
+  ) {
+    return 'installs, removes or publishes packages';
+  }
+  if (bin === 'curl') {
+    for (let i = 0; i < args.length; i += 1) {
+      const arg = args[i] as string;
+      if (arg === '--') break;
+      if (/^--(?:data[^=]*|form|form-string|upload-file|json)(?:=|$)/.test(arg)) {
+        return 'sends data over the network';
+      }
+      if (arg === '--request' || arg.startsWith('--request=')) {
+        const method = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : args[++i];
+        if (!['GET', 'HEAD'].includes((method ?? '').toUpperCase())) {
+          return 'sends a network request that can change remote state';
+        }
+      }
+      if (!arg.startsWith('-') || arg.startsWith('--')) continue;
+      for (let j = 1; j < arg.length; j += 1) {
+        const flag = arg[j] as string;
+        if ('dFT'.includes(flag)) return 'sends data over the network';
+        if (flag === 'X') {
+          const method = arg.slice(j + 1) || args[++i] || '';
+          if (!['GET', 'HEAD'].includes(method.toUpperCase())) {
+            return 'sends a network request that can change remote state';
+          }
+          break;
+        }
+        // These short options consume the rest of their word or the next one;
+        // an X/d/F/T inside a header or output filename is not another flag.
+        if ('oHAuxbcewmryYzKDEPtUQ'.includes(flag)) {
+          if (j === arg.length - 1) i += 1;
+          break;
+        }
+      }
+    }
+  }
+  if (bin === 'wget' && args.some((arg) => /^--(?:post-data|post-file|method)(?:=|$)/.test(arg))) {
+    return 'sends data over the network';
+  }
+  return null;
 }
 
 /** Binary grants never cover secrets. Home reads have their own grant;
@@ -284,8 +550,14 @@ function secretReads(
     }
     for (const arg of segment.args) {
       // Include option values such as grep --file=PATH and jq --from-file=PATH.
-      const value =
+      const rawValue =
         arg.startsWith('-') && arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg;
+      // Simple quoted variables are safe syntax, but may still name secrets.
+      const value = rawValue.replace(
+        /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g,
+        (_match, braced: string | undefined, bare: string | undefined) =>
+          process.env[braced ?? bare ?? ''] ?? '',
+      );
       for (const directory of directories) {
         const path = resolve(directory, expandHome(value));
         if (isAsteriskHomePath(path)) homeRead = true;
@@ -465,7 +737,7 @@ function unwrapSegment(segment: CommandSegment): CommandSegment | null {
     if (bin === 'stdbuf' && i === 0) return null;
     const command = args[i];
     if (!command || command.startsWith('-')) return null;
-    inner = { bin: command, args: args.slice(i + 1), raw: segment.raw };
+    inner = { ...inner, bin: command, args: args.slice(i + 1), raw: segment.raw };
   }
   return inner;
 }
@@ -528,7 +800,12 @@ function denyForms(segment: CommandSegment): CommandSegment[] {
   const forms = [segment];
   let current = segment;
   while (COMMAND_WRAPPERS.has(current.bin) && current.args.length > 0) {
-    current = { ...current, bin: current.args[0] as string, args: current.args.slice(1) };
+    let i = 0;
+    while (['--', '-p', '-c', '-l'].includes(current.args[i] ?? '')) i += 1;
+    if (current.bin === 'exec' && current.args[i] === '-a') i += 2;
+    const bin = current.args[i];
+    if (!bin || bin.startsWith('-')) break;
+    current = { ...current, bin, args: current.args.slice(i + 1) };
     forms.push(current);
   }
   const slash = current.bin.lastIndexOf('/');
@@ -554,6 +831,22 @@ function forbiddenArg(segment: CommandSegment): string | null {
           arg.slice(1).includes(option[1] as string))
       ) {
         return `the argument "${arg}"`;
+      }
+    }
+  }
+  if (segment.bin === 'sed') {
+    let hasScript = false;
+    for (let i = 0; i < segment.args.length; i += 1) {
+      const arg = segment.args[i] as string;
+      let script: string | undefined;
+      if (arg === '-e' || arg === '--expression') script = segment.args[++i];
+      else if (arg.startsWith('--expression=')) script = arg.slice('--expression='.length);
+      else if (/^-[^-]*e/.test(arg)) script = arg.slice(arg.indexOf('e') + 1) || segment.args[++i];
+      else if (!arg.startsWith('-') && !hasScript) script = arg;
+      if (script === undefined) continue;
+      hasScript = true;
+      if (/(^|[;\n{}])\s*[wWe]\b|s(.).*\2.*\2[gpiImM0-9]*[ew]/.test(script)) {
+        return `the sed script "${script}"`;
       }
     }
   }

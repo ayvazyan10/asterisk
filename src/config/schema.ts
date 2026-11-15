@@ -262,10 +262,10 @@ const SttSchema = z.object({
 // started Asterisk. See tools/bash-permissions.ts for the rule syntax.
 const PermissionsSchema = z.object({
   mode: z
-    .enum(['ask', 'allowlist', 'unrestricted'])
+    .enum(['ask', 'relaxed', 'allowlist', 'unrestricted'])
     .default('ask')
     .describe(
-      'ask — run allowlisted commands, prompt for the rest. allowlist — refuse anything not allowlisted, never prompt. unrestricted — no boundary at all.',
+      'ask — run allowlisted commands, prompt for the rest. relaxed — run everything except dangerous commands, which still ask. Requires the Bash sandbox; without an active sandbox it behaves like ask. allowlist — refuse anything not allowlisted, never prompt. unrestricted — no boundary at all.',
     ),
   allow: z
     .array(z.string())

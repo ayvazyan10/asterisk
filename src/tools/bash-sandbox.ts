@@ -30,6 +30,16 @@ function resolveSettings(): { mode: string; network: boolean; writablePaths: str
   }
 }
 
+/** The gate needs the same verified backend as confinement, not just a setting. */
+export async function bashSandboxActive(): Promise<boolean> {
+  if (resolveSettings().mode === 'off') return false;
+  try {
+    return (await sandboxStatus()).backend !== 'none';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Returns the invocation to run, confined according to configuration.
  *
