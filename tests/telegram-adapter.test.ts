@@ -23,7 +23,10 @@ import { loadConfig } from '../src/config/load.ts';
 import { closeDb, getDb } from '../src/db/index.ts';
 import { grantRules } from '../src/db/permissions.ts';
 
-const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
+const { FakeBot, fakeBotInstances, FakeInputFile, messageIds } = vi.hoisted(() => {
+  /** One message-id sequence for the chat, as Telegram has: replies and
+   *  bot.api sends interleave, so "newer" means "a larger id". */
+  const messageIds = { last: 100 };
   type Handler = (ctx: unknown) => Promise<void>;
 
   class FakeInputFile {
@@ -62,7 +65,8 @@ const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
         extra: Record<string, unknown> = {},
       ): Promise<{ message_id: number }> => {
         this.sent.push({ chatId, text, extra });
-        return { message_id: 500 + this.sent.length };
+        messageIds.last += 1;
+        return { message_id: messageIds.last };
       },
       editMessageText: async (chatId: string, messageId: number, text: string): Promise<void> => {
         this.apiEdits.push({ chatId, messageId, text });
@@ -91,7 +95,7 @@ const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
     }
   }
 
-  return { FakeBot, fakeBotInstances: [] as FakeBot[], FakeInputFile };
+  return { FakeBot, fakeBotInstances: [] as FakeBot[], FakeInputFile, messageIds };
 });
 
 vi.mock('grammy', async (importOriginal) => {
@@ -120,6 +124,8 @@ interface Call {
   method: string;
   text: string;
   opts: Record<string, unknown> | undefined;
+  /** The message edited or deleted, or the id a reply was given. */
+  messageId?: number;
 }
 
 /** A synthetic grammy Context that records what the adapter sent. */
@@ -129,7 +135,6 @@ class FakeCtx {
   private readonly always = new Map<string, Error>();
   /** method name → errors thrown on the first N calls. */
   private readonly once = new Map<string, Error[]>();
-  private nextMessageId = 100;
 
   from: { id: number } | undefined = { id: 7 };
   chat: { id: number } | undefined = { id: 42 };
@@ -138,11 +143,14 @@ class FakeCtx {
   readonly api = {
     editMessageText: async (
       _chatId: number,
-      _messageId: number,
+      messageId: number,
       text: string,
       opts?: Record<string, unknown>,
     ): Promise<void> => {
-      this.record('editMessageText', text, opts);
+      this.record('editMessageText', text, opts, messageId);
+    },
+    deleteMessage: async (_chatId: number, messageId: number): Promise<void> => {
+      this.record('deleteMessage', '', undefined, messageId);
     },
   };
 
@@ -158,19 +166,24 @@ class FakeCtx {
     return this;
   }
 
-  private record(method: string, text: string, opts?: Record<string, unknown>): void {
+  private record(
+    method: string,
+    text: string,
+    opts?: Record<string, unknown>,
+    messageId?: number,
+  ): void {
     const queued = this.once.get(method);
     const pending = queued?.shift();
-    this.calls.push({ method, text, opts });
+    this.calls.push({ method, text, opts, ...(messageId === undefined ? {} : { messageId }) });
     if (pending) throw pending;
     const always = this.always.get(method);
     if (always) throw always;
   }
 
   reply = async (text: string, opts?: Record<string, unknown>): Promise<{ message_id: number }> => {
-    this.record('reply', text, opts);
-    this.nextMessageId += 1;
-    return { message_id: this.nextMessageId };
+    messageIds.last += 1;
+    this.record('reply', text, opts, messageIds.last);
+    return { message_id: messageIds.last };
   };
 
   replyWithPhoto = async (file: { path: string }, opts?: Record<string, unknown>): Promise<void> =>
@@ -1337,6 +1350,219 @@ describe('permission prompts during a live turn', () => {
     expect(answers).toEqual([{ text: '✅ allowed once' }]);
     expect(outcome).toBe('allow-once');
     expect(ctx.texts('reply')).toContain('outcome=allow-once');
+  });
+});
+
+describe('output after a permission prompt', () => {
+  // The prompt is a new message at the bottom of the chat. The turn's reply
+  // used to keep landing in the placeholder above it, so after a few prompts
+  // the answer sat far up the chat under a pile of answered questions.
+  const question = {
+    command: 'docker ps',
+    reason: 'not on the allowlist',
+    rules: [],
+    timeoutMs: 5_000,
+  };
+  const SPINNER = /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/;
+
+  type Turn = (approve: () => Promise<unknown>, sink: (e: StreamEvent) => void) => Promise<string>;
+
+  /** Runs one turn, answering each of its `prompts` with "Allow once".
+   *  Returns the prompt message ids in the order they were posted. */
+  async function runTurn(
+    opts: Partial<TelegramAdapterOptions>,
+    turn: Turn,
+    prompts: number,
+    ctx = new FakeCtx(),
+  ) {
+    const adapter = createTelegramAdapter({ token: 't', allowedUserIds: [7], ...opts });
+    await adapter.start(async (msg, hopts) =>
+      turn(async () => adapter.promptApproval?.(msg.chatId, question), hopts?.sink ?? (() => {})),
+    );
+    const bot = fakeBotInstances.at(-1);
+    if (!bot?.handler) throw new Error('adapter never registered a message handler');
+    await bot.handler(ctx);
+
+    const promptIds: number[] = [];
+    for (let i = 1; i <= prompts; i++) {
+      await vi.waitFor(() => expect(bot.sent).toHaveLength(i));
+      // The turn is blocked on this prompt, so nothing has been posted since.
+      promptIds.push(messageIds.last);
+      const keyboard = bot.sent[i - 1]?.extra['reply_markup'] as {
+        inline_keyboard: Array<Array<{ callback_data: string }>>;
+      };
+      await bot.callbackHandler?.({
+        callbackQuery: { data: keyboard.inline_keyboard.flat()[0]?.callback_data },
+        from: { id: 7 },
+        answerCallbackQuery: async () => {},
+      });
+    }
+    await adapter.whenIdle();
+    return { ctx, promptIds };
+  }
+
+  /** What each message the turn posted shows at the end, deleted ones omitted. */
+  function finalState(ctx: FakeCtx): Map<number, string> {
+    const shown = new Map<number, string>();
+    for (const c of ctx.calls) {
+      if (c.messageId === undefined) continue;
+      if (c.method === 'deleteMessage') shown.delete(c.messageId);
+      else shown.set(c.messageId, c.text);
+    }
+    return shown;
+  }
+
+  it('writes the rest of the reply below the prompt and freezes the text above it', async () => {
+    const { ctx, promptIds } = await runTurn(
+      { streamMode: 'stream', parseMode: 'plain' },
+      async (approve, sink) => {
+        sink({ type: 'text', text: 'Let me check.' });
+        sink({ type: 'status', text: 'Bash · docker ps' });
+        await approve();
+        sink({ type: 'text', text: 'Three containers.' });
+        return 'Three containers.';
+      },
+      1,
+    );
+    const [prompt = 0] = promptIds;
+    const shown = [...finalState(ctx)];
+
+    // Frozen as streamed: no spinner, no status tail, no second copy.
+    expect(shown).toEqual([
+      [expect.any(Number), 'Let me check.'],
+      [expect.any(Number), 'Three containers.'],
+    ]);
+    expect(shown[0]?.[0]).toBeLessThan(prompt);
+    expect(shown[1]?.[0]).toBeGreaterThan(prompt);
+    expect(ctx.texts('deleteMessage')).toEqual([]);
+  });
+
+  it('deletes a placeholder that only held the spinner', async () => {
+    const { ctx, promptIds } = await runTurn(
+      { streamMode: 'status', parseMode: 'plain' },
+      async (approve, sink) => {
+        sink({ type: 'status', text: 'Bash · docker ps' });
+        await approve();
+        return 'done';
+      },
+      1,
+    );
+    const first = ctx.calls[0]?.messageId;
+    expect(ctx.calls.filter((c) => c.method === 'deleteMessage').map((c) => c.messageId)).toEqual([
+      first,
+    ]);
+    const shown = [...finalState(ctx)];
+    expect(shown).toEqual([[expect.any(Number), 'done']]);
+    expect(shown[0]?.[0]).toBeGreaterThan(promptIds[0] ?? Number.POSITIVE_INFINITY);
+  });
+
+  it('marks a spinner placeholder it may not delete instead of leaving it spinning', async () => {
+    // Telegram refuses deletes in some chats and for older messages.
+    const ctx = new FakeCtx().failAlways(
+      'deleteMessage',
+      telegramError("Bad Request: message can't be deleted"),
+    );
+    await runTurn(
+      { streamMode: 'status', parseMode: 'plain' },
+      async (approve) => {
+        await approve();
+        return 'done';
+      },
+      1,
+      ctx,
+    );
+    expect([...finalState(ctx).values()]).toEqual(['↓ continued below', 'done']);
+  });
+
+  it('moves the output below the second prompt too', async () => {
+    const { ctx, promptIds } = await runTurn(
+      { streamMode: 'stream', parseMode: 'plain' },
+      async (approve, sink) => {
+        sink({ type: 'text', text: 'First.' });
+        await approve();
+        await approve();
+        sink({ type: 'text', text: 'Second.' });
+        return 'Second.';
+      },
+      2,
+    );
+    const [first = 0, second = 0] = promptIds;
+    const shown = [...finalState(ctx)];
+    expect(shown).toEqual([
+      [expect.any(Number), 'First.'],
+      [expect.any(Number), 'Second.'],
+    ]);
+    expect(shown[0]?.[0]).toBeLessThan(first);
+    expect(shown[1]?.[0]).toBeGreaterThan(second);
+    // The placeholder posted between the prompts held nothing and is gone.
+    const deleted = ctx.calls.filter((c) => c.method === 'deleteMessage');
+    expect(deleted).toHaveLength(1);
+    expect(deleted[0]?.messageId).toBeGreaterThan(first);
+    expect(deleted[0]?.messageId).toBeLessThan(second);
+  });
+
+  it('puts every chunk of a long final reply below the prompt', async () => {
+    const long = 'x'.repeat(5000);
+    const { ctx, promptIds } = await runTurn(
+      { streamMode: 'status', parseMode: 'plain' },
+      async (approve) => {
+        await approve();
+        return long;
+      },
+      1,
+    );
+    const shown = [...finalState(ctx)];
+    expect(shown.map(([, text]) => text).join('')).toBe(long);
+    expect(shown.every(([id]) => id > (promptIds[0] ?? Number.POSITIVE_INFINITY))).toBe(true);
+  });
+
+  it('sends the final-mode reply below the prompt', async () => {
+    const { ctx, promptIds } = await runTurn(
+      { streamMode: 'final', parseMode: 'plain' },
+      async (approve) => {
+        await approve();
+        return 'done';
+      },
+      1,
+    );
+    expect(ctx.calls.map((c) => c.method)).toEqual(['reply']);
+    expect(ctx.calls[0]?.messageId).toBeGreaterThan(promptIds[0] ?? Number.POSITIVE_INFINITY);
+  });
+
+  it('keeps one placeholder, edited in place, when nothing asks', async () => {
+    const { ctx } = await runTurn(
+      { streamMode: 'stream', parseMode: 'plain' },
+      async (_approve, sink) => {
+        sink({ type: 'text', text: 'Hi' });
+        return 'Hi there';
+      },
+      0,
+    );
+    const placeholder = ctx.calls[0]?.messageId;
+    expect(ctx.texts('reply')).toHaveLength(1);
+    expect(ctx.texts('deleteMessage')).toEqual([]);
+    expect(
+      ctx.calls
+        .filter((c) => c.method === 'editMessageText')
+        .every((c) => c.messageId === placeholder),
+    ).toBe(true);
+    expect([...finalState(ctx)]).toEqual([[placeholder, 'Hi there']]);
+  });
+
+  it('leaves no spinner anywhere in the chat', async () => {
+    const { ctx } = await runTurn(
+      { streamMode: 'stream', parseMode: 'plain' },
+      async (approve, sink) => {
+        sink({ type: 'status', text: 'Bash · docker ps' });
+        await approve();
+        sink({ type: 'text', text: 'ok' });
+        await approve();
+        sink({ type: 'text', text: 'all good' });
+        return 'all good';
+      },
+      2,
+    );
+    expect([...finalState(ctx).values()].some((t) => SPINNER.test(t))).toBe(false);
   });
 });
 

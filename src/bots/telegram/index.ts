@@ -41,6 +41,15 @@ const SPIN = '{{spin}}';
 // Bump frame slightly slower than the rate-limit so we never starve the
 // schedule of a real-content edit. Telegram allows ~1 edit/sec/chat.
 const TICK_INTERVAL_MS = 1200;
+const THINKING = `${SPINNER_FRAMES[0]} thinking…`;
+/** What a retired spinner placeholder says when Telegram will not delete it. */
+const CONTINUED_BELOW = '↓ continued below';
+
+/**
+ * Runs a permission prompt for a chat whose turn has a live placeholder, so
+ * the turn's later output lands below the prompt — see `handleTurn`.
+ */
+type AroundPrompt = (ask: () => Promise<ApprovalOutcome>) => Promise<ApprovalOutcome>;
 
 export type TelegramStreamMode = 'final' | 'status' | 'stream';
 export type TelegramParseMode = 'plain' | 'html';
@@ -82,6 +91,8 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): TelegramAda
   const approvals = createApprovalController(allowed);
   /** Turns running outside the update stream — see the handler below. */
   const inFlight = new Set<Promise<void>>();
+  /** chatId → the running turn's placeholder handling around a prompt. */
+  const aroundPrompts = new Map<string, AroundPrompt>();
   let started = false;
 
   return {
@@ -101,7 +112,7 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): TelegramAda
         //
         // Ordering is not lost by letting go: the daemon runs turns through a
         // per-chat queue, so a second message still waits for the first.
-        const task = handleTurn(ctx, msg, handler, streamMode, throttleMs, parseMode)
+        const task = handleTurn(ctx, msg, handler, streamMode, throttleMs, parseMode, aroundPrompts)
           .catch(async (e: unknown) => {
             await ctx.reply(`asterisk error: ${(e as Error).message}`).catch(() => {});
           })
@@ -247,7 +258,9 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): TelegramAda
       );
     },
     promptApproval(chatId: string, prompt: ApprovalPrompt): Promise<ApprovalOutcome> {
-      return approvals.prompt(bot, chatId, prompt);
+      const ask = (): Promise<ApprovalOutcome> => approvals.prompt(bot, chatId, prompt);
+      const around = aroundPrompts.get(chatId);
+      return around ? around(ask) : ask();
     },
     cancelApprovals(chatId: string): number {
       return approvals.cancelChat(chatId);
@@ -265,6 +278,7 @@ async function handleTurn(
   mode: TelegramStreamMode,
   throttleMs: number,
   parseMode: TelegramParseMode,
+  aroundPrompts: Map<string, AroundPrompt>,
 ): Promise<void> {
   if (mode === 'final') {
     const result = await handler(msg);
@@ -282,18 +296,44 @@ async function handleTurn(
   }
 
   // Initial placeholder — the writer's tick interval will animate from here.
-  const placeholder = await ctx.reply(`${SPINNER_FRAMES[0]} thinking…`);
-  const writer = createPlaceholderWriter(
-    ctx,
-    chatId,
-    placeholder.message_id,
-    throttleMs,
-    parseMode,
-  );
+  // `null` once retired below a prompt and no fresh one could be posted.
+  let placeholderId: number | null = (await ctx.reply(THINKING)).message_id;
+  let writer = createPlaceholderWriter(ctx, chatId, placeholderId, throttleMs, parseMode);
 
   let assistantText = '';
   let lastStatus = '';
   let sawDelta = false;
+  let done = false;
+
+  // A permission prompt is a new message below the placeholder. Left alone,
+  // the answer kept being written into the placeholder above it — and above
+  // every later prompt — so the reply ended up far up the chat. Instead the
+  // placeholder is retired before the prompt goes out (deleted if it only
+  // spins, frozen if it already shows text) and a fresh one is posted once
+  // the prompt is answered, so the output always continues at the bottom.
+  const chatKey = String(chatId);
+  const around: AroundPrompt = async (ask) => {
+    await writer.flush();
+    if (placeholderId !== null) {
+      if (assistantText)
+        await fillPlaceholder(ctx, chatId, placeholderId, assistantText, parseMode);
+      else await removePlaceholder(ctx, chatId, placeholderId);
+      placeholderId = null;
+    }
+    // Frozen above; what streams from here on belongs to the new placeholder.
+    assistantText = '';
+    const outcome = await ask();
+    if (!done) {
+      try {
+        placeholderId = (await ctx.reply(THINKING)).message_id;
+        writer = createPlaceholderWriter(ctx, chatId, placeholderId, throttleMs, parseMode);
+      } catch {
+        // The final reply is then sent as new messages instead.
+      }
+    }
+    return outcome;
+  };
+  aroundPrompts.set(chatKey, around);
 
   const sink = (e: StreamEvent): void => {
     if (mode === 'status') {
@@ -334,24 +374,46 @@ async function handleTurn(
     const result = await handler(msg, { sink });
     out = asOutgoingMessage(result);
   } finally {
+    done = true;
+    if (aroundPrompts.get(chatKey) === around) aroundPrompts.delete(chatKey);
     await writer.flush();
   }
 
   // Final delivery: replace placeholder with the canonical final text.
   if (out.text) {
-    const rendered = parseMode === 'html' ? markdownToTelegramHtml(out.text) : out.text;
-    const chunks = chunkText(rendered, MAX_TELEGRAM_CHARS, parseMode);
-    const head = chunks[0] ?? '(empty)';
-    await safeEdit(ctx, chatId, placeholder.message_id, head, parseMode);
-    for (let i = 1; i < chunks.length; i++) {
-      const c = chunks[i];
-      if (c) await replyText(ctx, c, parseMode);
-    }
-  } else {
-    await safeEdit(ctx, chatId, placeholder.message_id, '(no reply)', parseMode);
+    await fillPlaceholder(ctx, chatId, placeholderId, out.text, parseMode);
+  } else if (placeholderId !== null) {
+    await safeEdit(ctx, chatId, placeholderId, '(no reply)', parseMode);
   }
 
   await sendAttachments(ctx, out.attachments);
+}
+
+/** Writes a reply into a placeholder — or, with none, as new messages — and
+ *  spills whatever exceeds one Telegram message into messages after it. */
+async function fillPlaceholder(
+  ctx: Context,
+  chatId: number,
+  messageId: number | null,
+  text: string,
+  parseMode: TelegramParseMode,
+): Promise<void> {
+  const rendered = parseMode === 'html' ? markdownToTelegramHtml(text) : text;
+  const chunks = chunkText(rendered, MAX_TELEGRAM_CHARS, parseMode);
+  const [head = '(empty)', ...rest] = chunks;
+  if (messageId === null) await replyText(ctx, head, parseMode);
+  else await safeEdit(ctx, chatId, messageId, head, parseMode);
+  for (const c of rest) await replyText(ctx, c, parseMode);
+}
+
+/** Deletes a spinner-only placeholder. Telegram can refuse (permissions,
+ *  message age); a still-spinning orphan is worse than a short marker. */
+async function removePlaceholder(ctx: Context, chatId: number, messageId: number): Promise<void> {
+  try {
+    await ctx.api.deleteMessage(chatId, messageId);
+  } catch {
+    await safeEdit(ctx, chatId, messageId, CONTINUED_BELOW, 'plain');
+  }
 }
 
 async function deliverFinal(
