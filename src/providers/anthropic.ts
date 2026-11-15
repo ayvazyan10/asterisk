@@ -17,8 +17,8 @@ interface AnthropicConfig {
   reasoningEffort: AsteriskConfig['anthropic']['reasoningEffort'];
 }
 
-// The current Opus model is the default for new configurations.
-const DEFAULT_MODEL = process.env['ANTHROPIC_MODEL'] ?? 'claude-opus-5-5';
+// The current Haiku is the default: cheap and capable for a personal assistant.
+const DEFAULT_MODEL = process.env['ANTHROPIC_MODEL'] ?? 'claude-haiku-5-5';
 
 /**
  * Bridges our content blocks to the Anthropic wire shape.

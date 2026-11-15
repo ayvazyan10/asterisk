@@ -108,10 +108,10 @@ const DeepSeekSchema = z.object({
 });
 
 const AnthropicSchema = z.object({
-  // Use the current Opus model for new configurations; stored model pins remain valid.
+  // The current Haiku for new configurations; stored model pins remain valid.
   model: z
     .string()
-    .default('claude-opus-5-5')
+    .default('claude-haiku-5-5')
     .describe('Anthropic model id. Requires ANTHROPIC_API_KEY.'),
   reasoningEffort: z
     .enum(['default', 'low', 'medium', 'high', 'xhigh', 'max'])

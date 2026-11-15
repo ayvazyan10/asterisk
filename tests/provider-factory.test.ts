@@ -141,7 +141,7 @@ describe('provider factory', () => {
     expect(cfg.deepseek.reasoningEffort).toBe('default');
     expect(cfg.anthropic.reasoningEffort).toBe('default');
     expect(cfg.providerFallback).toEqual(['deepseek']);
-    expect(cfg.anthropic.model).toBe('claude-opus-5-5');
+    expect(cfg.anthropic.model).toBe('claude-haiku-5-5');
   });
 
   it.each(['openai-compatible', 'deepseek'] as const)(
@@ -257,7 +257,7 @@ describe('Anthropic provider requests', () => {
         ),
       ).provider;
       await provider.send({ system: '', messages: [], tools: [] });
-      expect(bodies[0]?.['model']).toBe('claude-opus-5-5');
+      expect(bodies[0]?.['model']).toBe('claude-haiku-5-5');
       expect(bodies[0]?.['output_config']).toEqual(
         reasoningEffort === 'default' ? undefined : { effort: reasoningEffort },
       );
