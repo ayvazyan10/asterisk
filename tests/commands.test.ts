@@ -204,7 +204,8 @@ describe('command registry', () => {
     expect(out && typeof out === 'object' && (out as { kind?: string }).kind).toBe('list');
     if (out && typeof out === 'object' && 'items' in out) {
       const items = (out as { items: { value: string }[] }).items.map((i) => i.value);
-      expect(items).toEqual(['openai-compatible', 'anthropic', 'deepseek']);
+      // The last entry opens the reasoning-level form for the active backend.
+      expect(items).toEqual(['openai-compatible', 'anthropic', 'deepseek', 'reasoning']);
     }
   });
 

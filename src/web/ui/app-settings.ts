@@ -14,11 +14,16 @@
 // with the control in a real column, puts the whole schema in about 1600px —
 // which is a page you scroll, not a page you excavate.
 //
-// So: nothing is hidden. Every field is on the page under a sticky section
-// heading, with an index down the left that says where you are and jumps you
-// where you want. Search and the two filters narrow the same list rather than
-// opening things.
+// So: every field is on one page under a sticky section heading, with an
+// index down the left that says where you are and jumps you where you want.
 //
+// The third pass split that page by how often a field is touched. About ten
+// settings are what a person actually changes — which backend, its reasoning
+// level, Telegram, how replies read, how much the agent may do on its own —
+// and those are what the page opens on. The other thirty-odd are one button
+// away under Advanced, still generated from the schema, still searchable: a
+// search or a filter reaches into Advanced without opening it first.
+
 // One rule that removed a lot of noise: a control shows Reset only when it is
 // off its default. That was 40 identical "Default" buttons, most of them
 // no-ops, and it also collapses three vocabularies for one fact — a badge
@@ -29,11 +34,53 @@
 // scope, so the event wiring in APP_VIEWS still reaches stageEdit and friends.
 
 export const APP_SETTINGS = String.raw`
+// "Staged" used to be a third filter; the save bar already counts and holds
+// staged edits, so it was a second way to ask the same question.
 const SETTING_FILTERS = [
   { id: 'all', label: 'All' },
-  { id: 'changed', label: 'Staged' },
   { id: 'modified', label: 'Changed from default' },
 ];
+
+/**
+ * The settings a person changes on an ordinary day. Everything else — ports,
+ * timeouts, token budgets, sandbox paths, transcription plumbing — is still
+ * on the page, generated from the schema like before, but under Advanced.
+ * A reasoning level is always everyday, whichever backend it belongs to.
+ */
+const EVERYDAY_SETTINGS = new Set([
+  'provider',
+  'openaiCompatible.baseUrl',
+  'deepseek.model',
+  'anthropic.model',
+  'bots.telegram.enabled',
+  'bots.telegram.allowedUserIds',
+  'outputStyle',
+  'permissions.mode',
+  'stt.enabled',
+  'vision.enabled',
+]);
+
+function isEveryday(field) {
+  return EVERYDAY_SETTINGS.has(field.path) || /\.reasoningEffort$/.test(field.path);
+}
+
+/** Section names in the reader's words; the schema key stays in the anchors. */
+const GROUP_LABELS = {
+  provider: 'Backend',
+  openaiCompatible: 'Local model server',
+  deepseek: 'DeepSeek',
+  anthropic: 'Anthropic',
+  bots: 'Telegram',
+  stt: 'Voice messages',
+  vision: 'Images',
+  outputStyle: 'Replies',
+  web: 'Control panel',
+  daemon: 'Background service',
+};
+
+function groupLabel(group) {
+  return GROUP_LABELS[group.group] || group.label || group.group;
+}
 
 /** A field the user has moved off the schema default. */
 function isModified(field) {
@@ -42,7 +89,6 @@ function isModified(field) {
 }
 
 function fieldMatches(field) {
-  if (state.settingsFilter === 'changed' && !state.dirty.has(field.path)) return false;
   if (state.settingsFilter === 'modified' && !isModified(field)) return false;
 
   const q = (state.settingsQuery || '').trim().toLowerCase();
@@ -56,31 +102,52 @@ function narrowing() {
   return Boolean((state.settingsQuery || '').trim()) || state.settingsFilter !== 'all';
 }
 
-/** Groups paired with the fields currently passing the filter. */
-function visibleGroups() {
-  if (!state.settings) return [];
-  return state.settings.groups
-    .map((group) => ({ group, fields: group.fields.filter(fieldMatches) }))
-    .filter((g) => g.fields.length > 0);
+/** Advanced settings are drawn when asked for, or when a search reaches into them. */
+function showingAdvanced() {
+  return state.settingsAdvanced || narrowing();
 }
 
 /**
- * The index — where you are and where you can go.
- *
- * It replaces the accordion's only real job. The accordion answered "jump to a
- * section" by hiding the other eleven; this answers it without hiding anything,
- * and it doubles as a table of contents, which a shut accordion is not.
+ * Sections paired with the fields currently passing the filter. A schema
+ * group can appear twice — its everyday fields up top, the rest under
+ * Advanced — so each section carries its own key for the anchor and index.
+ */
+function visibleGroups() {
+  if (!state.settings) return [];
+  const pick = (everyday) => state.settings.groups
+    .map((group) => ({
+      group,
+      key: everyday ? group.group : group.group + '-advanced',
+      advanced: !everyday,
+      fields: group.fields.filter((f) => isEveryday(f) === everyday && fieldMatches(f)),
+    }))
+    .filter((g) => g.fields.length > 0);
+  return pick(true).concat(showingAdvanced() ? pick(false) : []);
+}
+
+/** How many settings sit under Advanced, for the button that opens it. */
+function advancedCount() {
+  if (!state.settings) return 0;
+  return state.settings.groups.reduce((n, g) => n + g.fields.filter((f) => !isEveryday(f)).length, 0);
+}
+
+/**
+ * The index — where you are and where you can go. It doubles as a table of
+ * contents, and marks the section on screen as you scroll.
  */
 function settingsIndex(groups) {
+  let advancedHeading = false;
   const rows = groups.map((g) => {
-    const staged = g.group.fields.filter((f) => state.dirty.has(f.path)).length;
+    const staged = g.group.fields.filter((f) => state.dirty.has(f.path) && isEveryday(f) !== g.advanced).length;
+    const heading = g.advanced && !advancedHeading
+      ? (advancedHeading = true, '<div class="toc-heading">Advanced</div>')
+      : '';
     // aria-current omitted rather than written as "false" on every row that
-    // is not the current section — see the matching note on .nav-item in
-    // app-core.ts's renderSidebar(). styles.ts matches .toc-item[aria-current]
+    // is not the current section — styles.ts matches .toc-item[aria-current]
     // on presence, so "page" costs the highlight nothing.
-    return '<button class="toc-item" data-jump="' + esc(g.group.group) + '"' +
-      (state.settingsSection === g.group.group ? ' aria-current="page"' : '') + '>' +
-      '<span class="toc-label">' + esc(g.group.label || g.group.group) + '</span>' +
+    return heading + '<button class="toc-item" data-jump="' + esc(g.key) + '"' +
+      (state.settingsSection === g.key ? ' aria-current="page"' : '') + '>' +
+      '<span class="toc-label">' + esc(groupLabel(g.group)) + '</span>' +
       (staged > 0
         ? '<span class="toc-staged" title="' + staged + ' staged">' + staged + '</span>'
         : '<span class="toc-count">' + g.fields.length + '</span>') +
@@ -89,48 +156,73 @@ function settingsIndex(groups) {
   return '<nav class="toc" aria-label="Settings sections">' + rows + '</nav>';
 }
 
+function settingsSection(g) {
+  return '<section class="settings-section" id="set_' + esc(g.key) + '">' +
+    '<header class="settings-section-head">' +
+      '<h2 class="settings-section-name">' + esc(groupLabel(g.group)) + '</h2>' +
+      '<span class="settings-section-count">' +
+        (narrowing() ? g.fields.length + ' of ' + g.group.fields.length : g.fields.length) +
+      '</span>' +
+    '</header>' +
+    g.fields.map(fieldRow).join('') +
+  '</section>';
+}
+
 function settingsSections(groups) {
   if (groups.length === 0) return ui.empty('Nothing matches that.');
-  return groups.map((g) =>
-    '<section class="settings-section" id="set_' + esc(g.group.group) + '">' +
-      '<header class="settings-section-head">' +
-        '<h2 class="settings-section-name">' + esc(g.group.label || g.group.group) + '</h2>' +
-        '<span class="settings-section-count">' +
-          (narrowing() ? g.fields.length + ' of ' + g.group.fields.length : g.fields.length) +
-        '</span>' +
-      '</header>' +
-      g.fields.map(fieldRow).join('') +
-    '</section>'
-  ).join('');
+  const everyday = groups.filter((g) => !g.advanced);
+  const advanced = groups.filter((g) => g.advanced);
+  // The disclosure is a button rather than <details>: the page re-renders on
+  // every toggle and filter, and a native element would forget it was open.
+  const disclosure = narrowing() ? '' :
+    '<button class="advanced-toggle" data-action="settings-advanced" aria-expanded="' +
+      state.settingsAdvanced + '">' +
+      icon(state.settingsAdvanced ? 'chevronDown' : 'chevronRight', 15) +
+      '<span class="advanced-toggle-text">' +
+        '<span class="advanced-toggle-title">' +
+          (state.settingsAdvanced ? 'Hide advanced settings' : 'Show advanced settings') + '</span>' +
+        '<span class="advanced-toggle-detail">' + advancedCount() +
+          ' more: ports, timeouts, token budgets, sandbox, transcription and the rest of the schema</span>' +
+      '</span>' +
+    '</button>';
+  return everyday.map(settingsSection).join('') + disclosure + advanced.map(settingsSection).join('');
+}
+
+/** Moved here from Home: where the data lives, and a copy of it. */
+function backupCard() {
+  const s = state.status;
+  return ui.card('Backup',
+    (s ? ui.listRow('Database', s.database.path, ui.badge(bytes(s.database.bytes), 'secondary')) : '') +
+    ui.listRow('Settings file', 'A JSON copy of every setting. Secrets are never included.',
+      ui.btn('Download', { attrs: ' data-action="export"', icon: 'download' }) +
+      ui.btn('Restore', { attrs: ' data-action="import"' })));
 }
 
 function viewSettings() {
   const header = ui.pageHeader('Settings',
-    'Every field Asterisk understands, generated from its schema with its own bounds. ' +
+    'The settings people change day to day. The rest of the schema is under Advanced. ' +
     'Edits are staged until you apply them.');
 
   if (!state.settings) return header + '<section class="card">' + ui.skeletonRows(4) + '</section>';
 
   const total = state.settings.groups.reduce((n, g) => n + g.fields.length, 0);
-  const staged = state.dirty.size;
   const changed = state.settings.groups
     .reduce((n, g) => n + g.fields.filter(isModified).length, 0);
 
   const toolbar = '<div class="toolbar">' +
     '<input class="input" type="search" id="settings-search" ' +
-      'placeholder="Search ' + total + ' settings by name, key or description" ' +
+      'placeholder="Search all ' + total + ' settings" ' +
       'value="' + esc(state.settingsQuery || '') + '" aria-label="Search settings">' +
     ui.tabs(SETTING_FILTERS, state.settingsFilter, 'settings-filter') +
     '<span class="toolbar-spacer"></span>' +
-    '<span class="form-hint">' + changed + ' of ' + total + ' changed from default' +
-      (staged > 0 ? ' · ' + staged + ' staged' : '') + '</span>' +
+    '<span class="form-hint">' + changed + ' changed from default</span>' +
   '</div>';
 
   const groups = visibleGroups();
   return header + toolbar +
     '<div class="settings-layout">' +
       settingsIndex(groups) +
-      '<div class="settings-body">' + settingsSections(groups) + '</div>' +
+      '<div class="settings-body">' + settingsSections(groups) + backupCard() + '</div>' +
     '</div>' +
     '<div id="save-bar"></div>';
 }
@@ -334,7 +426,7 @@ function refreshSettingsGroups() {
   const groups = visibleGroups();
   const body = $('.settings-body');
   const toc = $('.toc');
-  if (body) body.innerHTML = settingsSections(groups);
+  if (body) body.innerHTML = settingsSections(groups) + backupCard();
   if (toc) toc.outerHTML = settingsIndex(groups);
   watchSettingsSections();
 }

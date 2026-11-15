@@ -30,6 +30,7 @@ import { APP_VIEWS } from '../src/web/ui/app-views.ts';
 import { COMPONENTS } from '../src/web/ui/components.ts';
 import { APP_ICONS } from '../src/web/ui/icons.ts';
 import { renderIndexHtml } from '../src/web/ui/index.ts';
+import { FAVICON, MARK_PATH } from '../src/web/ui/logo.ts';
 import { STYLES } from '../src/web/ui/styles.ts';
 
 // The same concatenation ./index.ts inlines, in the same order. Every module
@@ -372,7 +373,7 @@ describe('the header model chip', () => {
   });
 
   it('gives each of the three states its own honest wording', () => {
-    // See resolveStatusModel() in src/web/api/system.ts for the shapes this
+    // See resolveBackend() in src/web/api/system.ts for the shapes this
     // renders: a detected model, a configured pin, or null.
     expect(CLIENT).toContain('function modelChip(model)');
     expect(CLIENT).toMatch(/no model detected/);
@@ -387,37 +388,53 @@ describe('the header model chip', () => {
   });
 });
 
-describe('the system figure', () => {
-  it('gives spokes role="button", not role="link" — Enter and Space both activate a button', () => {
-    expect(CLIENT).not.toMatch(/role="link"/);
-    expect(CLIENT).toMatch(/role="button" tabindex="0"/);
+describe('the answering chain', () => {
+  /** Runs a pure helper out of the client against fixture data. */
+  function run<T>(name: string, ...args: unknown[]): T {
+    const helpers = ['backendName', 'answeringIndex', 'answeringHeadline', name]
+      .filter((n, i, all) => all.indexOf(n) === i)
+      .map(functionSource)
+      .join('\n');
+    return new Function('args', `${helpers}\nreturn ${name}(...args);`)(args) as T;
+  }
+
+  const local = { provider: 'openai-compatible', endpoint: '127.0.0.1:8080', ready: true };
+  const deepseek = { provider: 'deepseek', ready: true };
+
+  it('says the first ready backend is the one answering', () => {
+    expect(run('answeringHeadline', [local, deepseek])).toBe('The local model is answering');
+    expect(run('answeringHeadline', [{ ...local, ready: false }, deepseek])).toBe(
+      'DeepSeek is answering',
+    );
+    expect(
+      run('answeringHeadline', [
+        { ...local, ready: false },
+        { ...deepseek, ready: false },
+      ]),
+    ).toBe('Nothing can answer right now');
   });
 
-  it('wires a delegated keydown listener so Enter and Space activate a focused spoke', () => {
-    // An SVG <g> does not synthesise a click from the keyboard the way a real
-    // <button> does — this is the fallback, delegated like the click listener
-    // rather than attached per-element, and scoped to role="button" so it
-    // never double-fires goto() for a data-tab control that already is one.
-    const at = CLIENT.indexOf("addEventListener('keydown'");
-    expect(at).toBeGreaterThan(-1);
-    const body = CLIENT.slice(at, CLIENT.indexOf('\n});', at));
-    expect(body).toContain("ev.key !== 'Enter'");
-    expect(body).toContain("ev.key !== ' '");
-    expect(body).toContain('[role="button"][data-tab]');
-    expect(body).toContain('goto(t.dataset.tab)');
+  it('calls a remote OpenAI-compatible server by what it is, not "local"', () => {
+    expect(run('backendName', { provider: 'openai-compatible', endpoint: 'api.example.com' })).toBe(
+      'OpenAI-compatible server',
+    );
   });
 
-  it('gives the provider spoke enough budget that neither real provider id is cut mid-word', () => {
-    // The two provider ids are 'openai-compatible' (18 chars) and 'anthropic'.
-    // The old 16-char budget truncated the longer one to "openai-compatib…".
-    const m = CLIENT.match(/clip\(s\.provider,\s*(\d+)\)/);
-    expect(m).toBeTruthy();
-    expect(Number(m?.[1])).toBeGreaterThanOrEqual('openai-compatible'.length);
+  it('builds the reasoning levels from the settings registry rather than a hard-coded list', () => {
+    const body = functionSource('reasoningControl');
+    expect(body).toContain('findField(path)');
+    expect(body).toContain('field.options.map(');
+    // A build without the setting says so instead of drawing an empty control.
+    expect(body).toContain('This build has no reasoning setting');
+    expect(body).toContain('role="radiogroup"');
+    expect(body).toContain('role="radio" aria-checked="');
   });
 
-  it('carries the untruncated reading as a native tooltip and an aria-label', () => {
-    expect(CLIENT).toContain("'<title>' + esc(spoke.title) + '</title>'");
-    expect(CLIENT).toContain('aria-label="\' + esc(spoke.title) + \'"');
+  it('writes a reasoning level through the same PATCH /settings the Settings page uses', () => {
+    const body = functionSource('setReasoning');
+    expect(body).toContain("api('/settings', {");
+    expect(body).toContain("method: 'PATCH'");
+    expect(body).toContain('updates: { [path]: value }');
   });
 
   it('reads the connectors count from the status payload, like every other counted tab', () => {
@@ -902,7 +919,8 @@ describe('list semantics for genuine collections', () => {
 
 describe('aria-current: never the literal string "false"', () => {
   it('omits aria-current from an inactive nav item instead of stringifying the boolean', () => {
-    const at = CLIENT.indexOf('function renderSidebar()');
+    // The row itself is built by navItem(), which renderSidebar() maps over.
+    const at = CLIENT.indexOf('function navItem(tab)');
     expect(at).toBeGreaterThan(-1);
     const body = CLIENT.slice(at, CLIENT.indexOf('\nfunction healthOf', at));
     // The old bug: `'aria-current="' + current + '"'` wrote the literal
@@ -1290,5 +1308,16 @@ describe('Connectors: the setup panel and custom-add form report empty-submit fa
       "!url ? 'A URL is required.' : badUrl ? 'URL must start with http:// or https://.' : ''",
     );
     expect(body).toContain("$('#connector-' + (name ? 'url' : 'name')).focus()");
+  });
+});
+
+describe('the emblem', () => {
+  it('is the same shape in the repository assets, the favicon, the rail and the client', () => {
+    for (const file of ['../assets/logo.svg', '../assets/logo-wordmark.svg']) {
+      expect(readFileSync(new URL(file, import.meta.url), 'utf8')).toContain(`d="${MARK_PATH}"`);
+    }
+    expect(decodeURIComponent(FAVICON)).toContain(MARK_PATH);
+    expect(renderIndexHtml({ nonce: 'n', authenticated: true })).toContain(MARK_PATH);
+    expect(CLIENT).toContain(MARK_PATH);
   });
 });

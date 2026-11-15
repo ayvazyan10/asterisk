@@ -1,147 +1,190 @@
-// The system figure: the asterisk drawn from live state. Styles live in
-// ./star.ts; this is the markup and the readings behind it.
+// The signature element: who is answering, drawn as a constellation.
 //
-// Concatenated after APP_CORE and before APP_VIEWS, sharing their scope.
-// viewOverview calls systemFigure() from APP_CORE — fine, because function
-// declarations hoist across the concatenated script and nothing runs until
-// the whole thing has been evaluated.
+// Asterisk tries its backends in order — the primary, then each fallback — and
+// uses the first one that answers. That chain is the most important fact on
+// the panel, so the home page draws it the way a star chart draws a
+// constellation: one star per backend, joined in the order they are tried. The
+// star that is answering right now is lit in starlight; the others are
+// outlines. Under each star sits the one control people change day to day —
+// how hard that backend reasons.
 //
-// Geometry is a table rather than trigonometry: six fixed spokes at 60°
-// intervals on a 620×400 field centred at (310, 200), inner radius 52, outer
-// 132. Written out because it never changes, and a table is easier to check
-// against the picture than a loop of sin and cos.
+// Styles live in ./star.ts. Concatenated after APP_CORE and before APP_VIEWS,
+// sharing their scope; function declarations hoist, so viewOverview can call
+// answeringChain() before this module appears in the source.
+//
+// The reasoning control is generated from the settings registry, not written
+// out here: the levels are whatever `<backend>.reasoningEffort` allows in the
+// schema, and a build without that setting simply shows no control.
+
+import { MARK_PATH } from './logo.ts';
 
 export const APP_STAR = String.raw`
-// hx/hy/hw/hh is the click target. A bare <g> of a hairline and two <text>
-// nodes is almost impossible to hit — the gaps between them are not part of
-// the element, so a pointer lands on the SVG behind it. Each spoke therefore
-// carries an invisible rect over its label block and a fat invisible line over
-// its stroke. Found by trying to click one.
-const SPOKE_GEOMETRY = {
-  90:  { x1: 310, y1: 148, x2: 310, y2: 68,  lx: 310, ly: 30,  vy: 48,  anchor: 'middle',
-         hx: 230, hy: 12,  hw: 160, hh: 64 },
-  30:  { x1: 355, y1: 174, x2: 424, y2: 134, lx: 438, ly: 128, vy: 146, anchor: 'start',
-         hx: 392, hy: 110, hw: 194, hh: 54 },
-  330: { x1: 355, y1: 226, x2: 424, y2: 266, lx: 438, ly: 260, vy: 278, anchor: 'start',
-         hx: 392, hy: 242, hw: 194, hh: 54 },
-  270: { x1: 310, y1: 252, x2: 310, y2: 332, lx: 310, ly: 360, vy: 378, anchor: 'middle',
-         hx: 230, hy: 320, hw: 160, hh: 70 },
-  210: { x1: 265, y1: 226, x2: 196, y2: 266, lx: 182, ly: 260, vy: 278, anchor: 'end',
-         hx: 34,  hy: 242, hw: 194, hh: 54 },
-  150: { x1: 265, y1: 174, x2: 196, y2: 134, lx: 182, ly: 128, vy: 146, anchor: 'end',
-         hx: 34,  hy: 110, hw: 194, hh: 54 },
+const MARK_PATH = '${MARK_PATH}';
+
+/** The emblem, inline, filled with currentColor so CSS decides the colour. */
+function markSvg(className) {
+  return '<svg class="' + className + '" viewBox="0 0 64 64" aria-hidden="true" focusable="false">' +
+    '<path fill="currentColor" d="' + MARK_PATH + '"/></svg>';
+}
+
+/** provider kind -> the settings group that configures it. */
+const BACKEND_GROUP = {
+  'openai-compatible': 'openaiCompatible',
+  anthropic: 'anthropic',
+  deepseek: 'deepseek',
 };
 
-function clip(value, max) {
-  const s = String(value == null ? '—' : value);
-  if (s.length <= max) return s;
-  // Prefer breaking at a word boundary over cutting mid-word, but only when
-  // that boundary keeps at least half the budget — one near the start would
-  // throw away more than it saves ("openai…" instead of "openai-compat…").
-  // Either way the untruncated value is still on the element as a hover
-  // title and an aria-label, so this is legibility, not the only way to read it.
-  const truncated = s.slice(0, max - 1);
-  const boundary = Math.max(truncated.lastIndexOf(' '), truncated.lastIndexOf('-'));
-  return (boundary >= max / 2 ? s.slice(0, boundary) : truncated) + '…';
+/** What a person calls each backend. A local server is "the local model". */
+function backendName(entry) {
+  if (entry.provider === 'deepseek') return 'DeepSeek';
+  if (entry.provider === 'anthropic') return 'Anthropic';
+  return /^(localhost|127\.|\[::1\]|0\.0\.0\.0)/.test(entry.endpoint || '')
+    ? 'Local model'
+    : 'OpenAI-compatible server';
+}
+
+/** The words for each reasoning level. Unknown values fall through as-is. */
+const REASONING_WORDS = {
+  default: 'Default', off: 'Off', low: 'Low', medium: 'Medium',
+  high: 'High', xhigh: 'Extra high', max: 'Max',
+};
+
+/** The /status chain, or a one-entry chain built from older payloads. */
+function chainOf(s) {
+  if (Array.isArray(s.chain) && s.chain.length > 0) return s.chain;
+  return [{ provider: s.provider, model: s.model, ready: Boolean(s.model) }];
+}
+
+/** Index of the backend that will answer: the first one that is ready. */
+function answeringIndex(chain) {
+  return chain.findIndex((entry) => entry.ready);
+}
+
+/** The home page's h1: one sentence that says who answers. */
+function answeringHeadline(chain) {
+  const at = answeringIndex(chain);
+  if (at === -1) return 'Nothing can answer right now';
+  const name = backendName(chain[at]);
+  const subject = name === 'Local model' ? 'The local model' : name;
+  return subject + ' is answering';
+}
+
+function answeringSummary(chain) {
+  const at = answeringIndex(chain);
+  if (at === -1) {
+    return 'None of the backends below is reachable. Start the local server or add an API key in Credentials.';
+  }
+  if (at > 0) {
+    const first = backendName(chain[0]);
+    return esc(first === 'Local model' ? 'The local model' : first) +
+      ' is unreachable, so Asterisk has fallen back to the next one in line.';
+  }
+  return chain.length > 1
+    ? 'Asterisk asks these in order and uses the first one that answers.'
+    : 'Every chat, bot message and scheduled task goes to this backend.';
+}
+
+/** The reasoning control for one backend, or a quiet line when there is none. */
+function reasoningControl(entry, name) {
+  const group = BACKEND_GROUP[entry.provider];
+  const path = group + '.reasoningEffort';
+  if (!state.settings) {
+    return '<div class="skeleton skeleton-line w60"></div>';
+  }
+  const field = findField(path);
+  if (!field || field.kind !== 'enum') {
+    return '<p class="chain-note">This build has no reasoning setting for ' + esc(name) + '.</p>';
+  }
+  const current = field.value === undefined ? field.default : field.value;
+  const labelId = 'reason-' + esc(group);
+  return '<div class="chain-reasoning">' +
+    '<span class="silk" id="' + labelId + '">Reasoning</span>' +
+    '<div class="tabs-list" role="radiogroup" aria-labelledby="' + labelId + '">' +
+      field.options.map((opt) =>
+        '<button class="tabs-trigger" role="radio" aria-checked="' + (opt === current) + '"' +
+          ' data-reasoning="' + esc(path) + '|' + esc(opt) + '"' +
+          (state.reasoningBusy === path ? ' disabled' : '') + '>' +
+          esc(REASONING_WORDS[opt] || opt) + '</button>'
+      ).join('') +
+    '</div>' +
+  '</div>';
+}
+
+/** The line under the model id: where it runs, or what is stopping it. */
+function chainDetail(entry) {
+  if (!entry.ready) return entry.reason || 'Not reachable';
+  if (entry.endpoint) {
+    return 'Served at ' + entry.endpoint +
+      (entry.contextWindow ? ', ' + entry.contextWindow.toLocaleString('en-US') + '-token context' : '');
+  }
+  return 'API key set';
+}
+
+function chainNode(entry, i, answering) {
+  const name = backendName(entry);
+  const live = i === answering;
+  const tone = live ? 'is-live' : entry.ready ? 'is-ready' : 'is-off';
+  const role = i === 0 ? 'First choice' : 'Fallback ' + i;
+  const status = live
+    ? ui.badge('Answering now', 'live', true)
+    : entry.ready
+      ? ui.badge('Standing by', 'secondary', true)
+      : ui.badge(entry.provider === 'openai-compatible' ? 'Unreachable' : 'No API key', 'muted', true);
+  const model = entry.model
+    ? '<code class="chain-model" title="' + esc(chip(entry.model)) + '">' + esc(entry.model.id) + '</code>'
+    : '<span class="chain-model chain-model-none">No model detected</span>';
+
+  return '<li class="chain-node ' + tone + '">' +
+    '<div class="chain-star">' + markSvg('chain-mark') + '</div>' +
+    '<div class="chain-body">' +
+      '<div class="chain-meta"><span class="chain-role">' + role + '</span>' + status + '</div>' +
+      '<h2 class="chain-name">' + esc(name) + '</h2>' +
+      model +
+      '<p class="chain-detail">' + esc(chainDetail(entry)) + '</p>' +
+      reasoningControl(entry, name) +
+    '</div>' +
+  '</li>';
+}
+
+/** modelChip's title, reused so a model id says how it was learnt. */
+function chip(model) {
+  return modelChip(model).title;
+}
+
+/** The hero: every backend in the order it is tried. */
+function answeringChain() {
+  const chain = chainOf(state.status);
+  const answering = answeringIndex(chain);
+  return '<section class="sky" aria-label="Backends, in the order Asterisk tries them">' +
+    '<ol class="chain' + (chain.length > 1 ? ' chain-many' : '') + '">' +
+      chain.map((entry, i) => chainNode(entry, i, answering)).join('') +
+    '</ol>' +
+    '<div class="sky-foot">' +
+      '<span class="form-hint">Change the order or the models in Settings.</span>' +
+      ui.btn('Backend settings', { size: 'sm', variant: 'ghost', attrs: ' data-tab="settings"' }) +
+    '</div>' +
+  '</section>';
 }
 
 /**
- * The six readings, in spoke order. Tone follows the palette's rule:
- * 'live' is happening now, 'rest' is configured and sitting there, 'off' is
- * nothing at all.
+ * Writes one reasoning level straight away. It goes through the same
+ * PATCH /settings the Settings page applies its staged edits with, so the
+ * server validates it against the schema exactly as it would there.
  */
-function systemSpokes() {
-  const s = state.status;
-  const running = s.daemon.running;
-  const c = s.counts;
-
-  const enabledTone = (on, all) => (on > 0 ? 'live' : all > 0 ? 'rest' : 'off');
-  const fileTone = (n) => (n === null ? 'off' : n > 0 ? 'rest' : 'off');
-
-  return [
-    // 20 rather than the old 16: the longer of the two provider ids,
-    // "openai-compatible" (18 chars), was truncating mid-word — measured
-    // against the spoke's own hit box, 20 monospace chars still sits inside
-    // it. Anything longer still clips, but the full value is always on the
-    // element as a hover title and an aria-label regardless.
-    { angle: 90, label: 'provider', value: clip(s.provider, 20),
-      tone: running ? 'live' : 'rest', tab: 'settings',
-      title: 'Provider: ' + s.provider },
-    { angle: 30, label: 'mcp', value: c.enabledMcpServers + '/' + c.mcpServers,
-      tone: enabledTone(c.enabledMcpServers, c.mcpServers), tab: 'mcp',
-      title: c.enabledMcpServers + ' of ' + c.mcpServers + ' MCP servers enabled' },
-    { angle: 330, label: 'hooks', value: c.enabledHooks + '/' + c.hooks,
-      tone: enabledTone(c.enabledHooks, c.hooks), tab: 'hooks',
-      title: c.enabledHooks + ' of ' + c.hooks + ' hooks enabled' },
-    { angle: 270, label: 'telegram', value: s.bots.telegram ? 'on' : 'off',
-      tone: s.bots.telegram ? 'live' : 'off', tab: 'settings',
-      title: 'Telegram bridge ' + (s.bots.telegram ? 'enabled' : 'disabled') },
-    // Skills report what resolved, not what is on disk — most are bundled and
-    // have no file, and an invalid file is not a skill.
-    { angle: 210, label: 'skills', value: clip(kindCount('skills'), 6),
-      tone: fileTone(kindCount('skills')), tab: 'skills',
-      title: (kindCount('skills') === null ? 'no' : kindCount('skills')) + ' skills resolved' },
-    // Resolved, not counted on disk — same as skills. A rule in the wrong
-    // language folder is a file, not a rule, and the figure sat next to a rail
-    // reading 4 while it said 8.
-    { angle: 150, label: 'rules', value: clip(kindCount('rules'), 6),
-      tone: fileTone(kindCount('rules')), tab: 'rules',
-      title: (kindCount('rules') === null ? 'no' : kindCount('rules')) + ' rules in effect' },
-  ];
-}
-
-function spokeSvg(spoke) {
-  const g = SPOKE_GEOMETRY[spoke.angle];
-  // role="button", not "link": a spoke does not open a resource of its own —
-  // there is nothing to open in a new tab, no distinct URL to follow — it
-  // flips the app's own hash route in place, the same thing the
-  // <button class="system-tile"> fallback below 820px does. Enter and Space
-  // both activate a button; only Enter activates a link, which is why Space
-  // did nothing here before. Wired by the delegated keydown listener in
-  // app-views.ts, matching the delegated click listener.
-  return '<g class="spoke is-' + spoke.tone + '" data-tab="' + esc(spoke.tab) +
-    '" role="button" tabindex="0" aria-label="' + esc(spoke.title) + '">' +
-    '<title>' + esc(spoke.title) + '</title>' +
-    '<line class="spoke-line" x1="' + g.x1 + '" y1="' + g.y1 + '" x2="' + g.x2 + '" y2="' + g.y2 + '"/>' +
-    '<circle class="spoke-node" cx="' + g.x2 + '" cy="' + g.y2 + '" r="4"/>' +
-    '<line class="spoke-hit" x1="' + g.x1 + '" y1="' + g.y1 + '" x2="' + g.x2 + '" y2="' + g.y2 + '"/>' +
-    '<rect class="spoke-hit" x="' + g.hx + '" y="' + g.hy + '" width="' + g.hw + '" height="' + g.hh + '"/>' +
-    '<text class="spoke-label" x="' + g.lx + '" y="' + g.ly + '" text-anchor="' + g.anchor + '">' +
-      esc(spoke.label) + '</text>' +
-    '<text class="spoke-value" x="' + g.lx + '" y="' + g.vy + '" text-anchor="' + g.anchor + '">' +
-      esc(spoke.value) + '</text>' +
-  '</g>';
-}
-
-function systemFigure() {
-  const s = state.status;
-  const spokes = systemSpokes();
-  const running = s.daemon.running;
-
-  const svg = '<svg class="system-figure ' + (running ? 'hub-live' : '') +
-    '" viewBox="0 0 620 400" role="group" aria-label="System overview">' +
-    spokes.map(spokeSvg).join('') +
-    '<circle class="hub-pulse" cx="310" cy="200" r="46"/>' +
-    '<circle class="hub-face" cx="310" cy="200" r="46"/>' +
-    '<circle class="hub-ring" cx="310" cy="200" r="46"/>' +
-    '<text class="hub-label" x="310" y="192">agent</text>' +
-    '<text class="hub-state" x="310" y="214">' + (running ? 'live' : 'idle') + '</text>' +
-  '</svg>';
-
-  // Same six readings for narrow screens, where the figure's labels would
-  // shrink past legibility. Only one of the two is ever displayed.
-  const tiles = '<div class="system-tiles">' + spokes.map((sp) =>
-    '<button class="system-tile is-' + sp.tone + '" data-tab="' + esc(sp.tab) +
-      '" aria-label="' + esc(sp.title) + '">' +
-      '<span class="silk">' + esc(sp.label) + '</span>' +
-      '<span class="tile-value">' + esc(sp.value) + '</span>' +
-    '</button>').join('') + '</div>';
-
-  return '<section class="system">' +
-    '<div class="system-caption">' +
-      '<span class="silk">system</span>' +
-      ui.stateBadge(running, 'daemon live', 'daemon idle') +
-    '</div>' + svg + tiles +
-  '</section>';
+async function setReasoning(path, value) {
+  const field = findField(path);
+  if (!field) return;
+  state.reasoningBusy = path;
+  render();
+  const ok = await guard(() => api('/settings', {
+    method: 'PATCH', body: JSON.stringify({ updates: { [path]: value } }),
+  }));
+  state.reasoningBusy = '';
+  if (ok) {
+    state.dirty.delete(path);
+    toast('Reasoning set to ' + (REASONING_WORDS[value] || value).toLowerCase(), 'good');
+    await loadSettings();
+  }
+  render();
 }
 `;

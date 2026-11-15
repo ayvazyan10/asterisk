@@ -38,7 +38,7 @@ beforeEach(async () => {
   db = openDriver(':memory:');
   migrate(db);
   writeConfig(db, ConfigSchema.parse({}));
-  // /api/status detects the live model (see resolveStatusModel in
+  // /api/status detects the live model (see resolveBackend in
   // src/web/api/system.ts), cached 60s by baseUrl — clear it so an earlier
   // test's detection (real or stubbed) can never leak into this one.
   clearDetectedModels();
@@ -786,6 +786,45 @@ describe('status and system', () => {
       const { body } = await call('/api/status');
       expect(body.model).toEqual({ id: readConfig(db).anthropic.model, source: 'configured' });
       expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('backend chain', () => {
+    const savedKey = process.env['DEEPSEEK_API_KEY'];
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      if (savedKey === undefined) delete process.env['DEEPSEEK_API_KEY'];
+      else process.env['DEEPSEEK_API_KEY'] = savedKey;
+    });
+
+    it('lists the primary then each fallback, with whether each can answer', async () => {
+      delete process.env['DEEPSEEK_API_KEY'];
+      vi.stubGlobal('fetch', async () => {
+        throw new Error('connect ECONNREFUSED');
+      });
+      writeConfig(db, ConfigSchema.parse({ providerFallback: ['deepseek', 'openai-compatible'] }));
+      const before = (await call('/api/status')).body;
+      expect(before.chain).toEqual([
+        {
+          provider: 'openai-compatible',
+          model: null,
+          ready: false,
+          endpoint: '127.0.0.1:8080',
+          reason: 'Nothing answered at 127.0.0.1:8080',
+        },
+        {
+          provider: 'deepseek',
+          model: { id: readConfig(db).deepseek.model, source: 'configured' },
+          ready: false,
+          reason: 'DEEPSEEK_API_KEY is not set',
+        },
+      ]);
+
+      await call('/api/secrets', send('PUT', { key: 'DEEPSEEK_API_KEY', value: 'sk-test' }));
+      const after = (await call('/api/status')).body;
+      expect(after.chain[1]).toMatchObject({ provider: 'deepseek', ready: true });
+      // The secret itself never rides along in the status payload.
+      expect(JSON.stringify(after)).not.toContain('sk-test');
     });
   });
 

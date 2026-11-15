@@ -31,12 +31,14 @@ const state = {
   editor: { kind: null, path: null, content: '', original: '' },
   loaded: new Set(),
 
-  // Settings shows everything and hides nothing — see ./app-settings.ts.
+  // Settings opens on the everyday fields; the rest is behind Advanced — see
+  // ./app-settings.ts.
   // settingsSection is the group the index marks as current, kept in step with
   // the scroll position rather than set by clicking.
   settingsQuery: '',
   settingsFilter: 'all',
   settingsSection: '',
+  settingsAdvanced: false,
 
   // The log reader parses pino's JSON lines rather than printing them.
   // logOrder applies to both records: the file arrives oldest-first and the
@@ -70,6 +72,13 @@ const state = {
   // The rail collapses to icons. A preference, so it is restored from
   // localStorage before the first render rather than reset on every reload.
   railTight: localStorage.getItem('asterisk-rail') === 'tight',
+
+  // Whether the rail's Advanced group is open. Also a remembered preference.
+  navAdvanced: localStorage.getItem('asterisk-nav-advanced') === 'open',
+
+  // The reasoning path being written from the home page, so its control can
+  // be disabled for the moment the request is in flight.
+  reasoningBusy: '',
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -346,28 +355,30 @@ function kindCount(id) {
 
 // Counts come from /status where possible so the rail is accurate on first
 // paint. A count of null renders nothing, which is honest about "not loaded".
+//
+// Two groups, by how often they are visited. The first is what a person opens
+// on an ordinary day: who is answering, the services Asterisk can reach, the
+// skills it knows, the log when something is off, and the settings. The
+// second holds the machinery — raw MCP entries, hooks, rules, agents, souls
+// and credentials — behind one disclosure, so it is one click away rather
+// than eleven rows of rail on every visit.
+const kindTab = (k) => ({ id: k.id, label: k.label, icon: k.icon, count: () => kindCount(k.id) });
+
 const TABS = [
-  { group: 'Monitor', items: [
-    { id: 'overview', label: 'Overview', icon: 'overview' },
-    { id: 'logs', label: 'Logs', icon: 'logs' },
-  ]},
-  { group: 'Configure', items: [
-    { id: 'settings', label: 'Settings', icon: 'settings' },
-    // Same shape as its neighbours: read from the /status payload so the
-    // badge exists on first paint, rather than only after the tab has been
-    // opened once and populated state.connectors.
+  { group: '', items: [
+    { id: 'overview', label: 'Home', icon: 'overview' },
+    // Read from the /status payload so the badge exists on first paint,
+    // rather than only after the tab has been opened once.
     { id: 'connectors', label: 'Connectors', icon: 'connectors',
       count: () => state.status && state.status.counts.connectedConnectors },
+    ...CONTENT_KINDS.filter((k) => k.id === 'skills').map(kindTab),
+    { id: 'logs', label: 'Logs', icon: 'logs' },
+    { id: 'settings', label: 'Settings', icon: 'settings' },
+  ]},
+  { group: 'Advanced', advanced: true, items: [
     { id: 'mcp', label: 'MCP servers', icon: 'mcp', count: () => state.status && state.status.counts.mcpServers },
     { id: 'hooks', label: 'Hooks', icon: 'hooks', count: () => state.status && state.status.counts.hooks },
-  ]},
-  { group: 'Author', items: CONTENT_KINDS.map((k) => ({
-    id: k.id,
-    label: k.label,
-    icon: k.icon,
-    count: () => kindCount(k.id),
-  })) },
-  { group: 'Access', items: [
+    ...CONTENT_KINDS.filter((k) => k.id !== 'skills').map(kindTab),
     // No count: the page holds two unlike things, and a single number beside
     // it would be read as whichever one the reader had in mind.
     { id: 'credentials', label: 'Credentials', icon: 'secrets' },
@@ -383,35 +394,44 @@ function findTab(id) {
   return null;
 }
 
+function navItem(tab) {
+  const count = tab.count ? tab.count() : null;
+  const current = state.tab === tab.id;
+  // The label is the accessible name when it is hidden by the collapsed
+  // rail, so title carries it and the icon stays aria-hidden.
+  //
+  // aria-current is only present on the current item, never written as the
+  // string "false" on the others. The value is "page", WAI-ARIA's token for
+  // the current page in a navigation landmark; styles.ts keys the highlight
+  // off the attribute's PRESENCE ([aria-current]) rather than its value.
+  return '<button class="nav-item" data-tab="' + esc(tab.id) + '"' +
+    (current ? ' aria-current="page"' : '') +
+    ' title="' + esc(tab.label) + '">' +
+    icon(tab.icon, 16, current ? 2 : 1.5) +
+    '<span class="nav-label">' + esc(tab.label) + '</span>' +
+    (count === null || count === undefined ? '' : '<span class="nav-count">' + count + '</span>') +
+    '</button>';
+}
+
 function renderSidebar() {
   $('.shell').dataset.rail = state.railTight ? 'tight' : 'wide';
 
-  $('.nav').innerHTML = TABS.map((section) => (
-    '<div class="nav-group">' + esc(section.group) + '</div>' +
-    section.items.map((tab) => {
-      const count = tab.count ? tab.count() : null;
-      const current = state.tab === tab.id;
-      // The label is the accessible name when it is hidden by the collapsed
-      // rail, so title carries it and the icon stays aria-hidden.
-      //
-      // aria-current is only present on the current item, never written as
-      // the string "false" on the other nine — an attribute a screen reader
-      // has to explain the absence of is worse than no attribute at all.
-      // The value is "page", WAI-ARIA's own token for the current page in a
-      // navigation landmark. styles.ts keys every one of these highlights off
-      // the attribute's PRESENCE ([aria-current]) rather than its value, so
-      // the token can be the semantically right one without the active-row
-      // styling depending on which word it is — the arrangement that made an
-      // earlier attempt at this migration risk dropping the highlight.
-      return '<button class="nav-item" data-tab="' + esc(tab.id) + '"' +
-        (current ? ' aria-current="page"' : '') +
-        ' title="' + esc(tab.label) + '">' +
-        icon(tab.icon, 15, current ? 2 : 1.5) +
-        '<span class="nav-label">' + esc(tab.label) + '</span>' +
-        (count === null || count === undefined ? '' : '<span class="nav-count">' + count + '</span>') +
-        '</button>';
-    }).join('')
-  )).join('');
+  $('.nav').innerHTML = TABS.map((section) => {
+    if (!section.advanced) {
+      return (section.group ? '<div class="nav-group">' + esc(section.group) + '</div>' : '') +
+        section.items.map(navItem).join('');
+    }
+    // The advanced group opens itself when you are on one of its pages, so
+    // the current page is never hidden behind a closed disclosure.
+    const holdsCurrent = section.items.some((t) => t.id === state.tab);
+    const open = state.navAdvanced || holdsCurrent;
+    return '<button class="nav-more" data-action="nav-advanced" aria-expanded="' + open + '"' +
+        (holdsCurrent ? ' disabled' : '') + ' title="' + esc(section.group) + '">' +
+        icon(open ? 'chevronDown' : 'chevronRight', 14) +
+        '<span class="nav-label">' + esc(section.group) + '</span>' +
+      '</button>' +
+      (open ? section.items.map(navItem).join('') : '');
+  }).join('');
 
   $('.rail-foot').innerHTML = ui.btn('Collapse', {
     size: 'sm', variant: 'ghost',
@@ -453,21 +473,18 @@ function renderHeader() {
   const health = healthOf(s);
   const chip = modelChip(s.model);
   $('.header').innerHTML =
-    '<nav class="crumbs" aria-label="Breadcrumb">' +
-      '<span class="crumb-root">Asterisk</span>' +
-      '<span class="crumb-sep">' + icon('chevronRight', 12) + '</span>' +
-      '<span class="crumb-leaf">' + esc(tab ? tab.label : state.tab) + '</span>' +
-    '</nav>' +
+    '<div class="crumb-leaf">' + esc(tab ? tab.label : state.tab) + '</div>' +
     '<div class="header-spacer"></div>' +
     '<div class="status-pill" data-state="' + health.state + '" title="' + esc(health.label) + '">' +
       '<span class="status-dot"></span>' +
+      '<span class="status-label">' + esc(health.label) + '</span>' +
       '<span class="status-value" title="' + esc(chip.title) + '">' + esc(chip.label) + '</span>' +
     '</div>' +
     '<div class="header-actions">' +
-      ui.btn('', { variant: 'outline', size: 'sm', square: true,
+      ui.btn('', { variant: 'ghost', size: 'sm', square: true,
         attrs: ' data-action="theme" title="Switch theme" aria-label="Switch theme"',
-        icon: 'sun' }) +
-      ui.btn('', { variant: 'outline', size: 'sm', square: true,
+        icon: document.documentElement.dataset.theme === 'light' ? 'moon' : 'sun' }) +
+      ui.btn('', { variant: 'ghost', size: 'sm', square: true,
         attrs: ' data-action="refresh" title="Reload data" aria-label="Reload data"',
         icon: 'refresh' }) +
     '</div>';
@@ -478,32 +495,36 @@ function renderHeader() {
 function viewOverview() {
   const s = state.status;
   if (!s) {
-    return ui.pageHeader('Overview', 'Reading the state of this install.') +
+    return ui.pageHeader('Home', 'Reading the state of this install.') +
       '<section class="card">' + ui.skeletonRows(3) + '</section>';
   }
-
-  const daemon = ui.card('Daemon',
-    ui.listRow('Background process', s.daemon.message,
-      ui.btn('Start', { attrs: ' data-daemon="start"', disabled: s.daemon.running }) +
-      ui.btn('Restart', { attrs: ' data-daemon="restart"', disabled: !s.daemon.running }) +
-      ui.btn('Stop', { variant: 'outline-destructive', attrs: ' data-daemon="stop"', disabled: !s.daemon.running })
-    ) +
-    ui.listRow('Telegram bridge',
-      s.bots.telegram ? 'Answers messages while the daemon runs.' : 'Turn it on in Settings.',
+  const chain = chainOf(s);
+  const c = s.counts;
+  const skills = kindCount('skills');
+  const daemon = ui.card('Background service',
+    ui.listRow('Daemon', s.daemon.running
+        ? 'Running. Bots and scheduled tasks are being answered.'
+        : 'Stopped. Nothing answers Telegram or runs on a schedule until it starts.',
+      s.daemon.running
+        ? ui.btn('Restart', { attrs: ' data-daemon="restart"' }) +
+          ui.btn('Stop', { variant: 'outline-destructive', attrs: ' data-daemon="stop"' })
+        : ui.btn('Start', { variant: 'default', attrs: ' data-daemon="start"' })) +
+    ui.listRow('Telegram', s.bots.telegram
+        ? 'Answers your messages while the daemon runs.'
+        : 'Off. Turn it on in Settings to chat from your phone.',
       ui.stateBadge(s.bots.telegram)),
     { aside: ui.stateBadge(s.daemon.running, 'running', 'stopped') });
-
-  const store = ui.card('On disk',
-    ui.listRow('Database', s.database.path, ui.badge(bytes(s.database.bytes), 'secondary')) +
-    ui.listRow('Settings backup', 'A JSON copy of every setting. Secrets are never included.',
-      ui.btn('Download', { attrs: ' data-action="export"' }) +
-      ui.btn('Restore', { attrs: ' data-action="import"' })));
-
-  return ui.pageHeader('Overview',
-      'Everything Asterisk is wired to, running on this machine. Pick a spoke to go to it.') +
-    '<div class="overview-grid">' + systemFigure() +
-      '<div>' + daemon + store + '</div>' +
-    '</div>';
+  const glance = ui.card('Shortcuts',
+    ui.listRow('Connectors', c.connectedConnectors === 1
+        ? '1 service connected'
+        : c.connectedConnectors + ' services connected',
+      ui.btn('Open', { size: 'sm', attrs: ' data-tab="connectors"' })) +
+    ui.listRow('Skills', skills === null ? 'Counting…' : skills + ' ready to use',
+      ui.btn('Open', { size: 'sm', attrs: ' data-tab="skills"' })) +
+    ui.listRow('Diagnostics', 'Checks the model server, keys and daemon when something is off.',
+      ui.btn('Run checks', { size: 'sm', attrs: ' data-tab="doctor"' })));
+  return ui.pageHeader(answeringHeadline(chain), answeringSummary(chain)) +
+    answeringChain() +
+    '<div class="overview-grid mt">' + daemon + glance + '</div>';
 }
-
 `;

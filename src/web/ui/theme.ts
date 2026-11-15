@@ -1,156 +1,114 @@
 // Design tokens for the control panel.
 //
-// Direction: a console. Near-black ground, one violet accent that means
-// "interactive", small dense type, icons on everything that is a destination or
-// an action. The reference is the user's own Mission Control app, and the
-// borrowing is deliberate down to the ramp — two panels the same person keeps
-// open at once should not argue with each other about what a card looks like.
+// Direction: a star atlas. Asterisk is Greek for "little star", and the panel
+// borrows the two materials of an old celestial chart — the night it describes
+// and the paper it is printed on.
 //
-// What that replaced, and why the note matters: this file used to hold a warm
-// slate-and-amber "equipment" palette, argued for at length on the grounds that
-// near-black-plus-one-accent is the most worn look in dashboard design. That is
-// still true in general, and it is not the point here. The panel is not
-// competing for attention in a gallery; it sits beside another tool, and
-// matching that tool is worth more than being distinct from every other
-// dashboard.
+//   The sky.    The rail is a deep indigo night in BOTH themes, with the
+//               emblem in starlight at the top of it. The light theme is a
+//               printed chart laid beside the sky, not a white page with a
+//               grey stripe; the dark theme is the sky itself.
+//   The paper.  Light content sits on a cool, faintly blue atlas paper with
+//               prussian ink — never warm cream, never pure white.
+//   Starlight.  One gold, --star, spent almost nowhere: the emblem, and the
+//               backend that is answering right now. When the eye finds gold
+//               it has found the thing that is live.
+//   Ink.        --signal is the interactive colour, an ultramarine that
+//               lightens to periwinkle at night. Primary buttons at night are
+//               light fills with dark ink, which is what lets the fill and
+//               the text role share one hue and both clear AA.
 //
-// Three things survive from the old direction because they were right:
+// Colour that means something survives from the previous direction because it
+// was right: --tide is healthy, --warn is degraded, --oxide is failed or
+// destructive, --ink-faint is absent. Those are read without the label.
 //
-//   Two type roles.  Anything the machine owns — paths, config keys, model
-//                    tags, counts, log lines — is monospace. Anything addressed
-//                    to the person is humanist.
-//   The chassis.     The rail keeps its own near-black in *both* themes, so the
-//                    light theme is a sheet clamped into a dark instrument
-//                    rather than a white page with a grey stripe.
-//   Colour that means something. --tide is healthy, --warn is degraded,
-//                    --oxide is failed. Those three are read without the label.
-//
-// No webfont. The reference uses Geist; `default-src 'none'` with no font-src
-// would have to be widened to data: to carry it, every byte lands in a page
-// that is deliberately one request, and a bundled face needs licence care in an
-// Apache-2.0 repo. The system stack is close enough at 13px and honest.
+// Type has three roles. A serif from the system's Palatino family names
+// things — page titles, the answering backend, the wordmark — the way a
+// chart's legend is set. The system sans carries everything addressed to the
+// person. Monospace is reserved for what the machine owns: paths, keys, model
+// ids, counts in a log. No webfont: the page is one request, works offline,
+// and `default-src 'none'` has no font-src to load one from.
 
 const LIGHT_TOKENS = String.raw`
-  --bg:            oklch(98% 0 0);
-  --surface:       oklch(100% 0 0);
-  --surface-high:  oklch(96.8% 0.001 286);
-  --border:        oklch(92% 0.003 286);
-  /* 87% measured 1.48:1 against --surface -- a form control's edge needs to
-     be found, not just implied by padding, and WCAG 1.4.11 puts the floor
-     for that at 3:1. --surface-high (96.8%) is the closest neighbour a
-     border sits against and so the real floor, not --surface (100%): 60%
-     clears it at 3.59:1 (3.94:1 against --surface) without turning every
-     input into a boxed-in field; --border stays the quiet default for rows
-     and dividers, this is only for edges that must be seen. */
-  --border-strong: oklch(60% 0.004 286);
+  --bg:            oklch(96.4% 0.009 255);
+  --surface:       oklch(99.2% 0.003 255);
+  --surface-high:  oklch(94.6% 0.012 258);
+  --border:        oklch(89.5% 0.014 260);
+  /* The edge a form control needs to be found by: >= 3:1 against
+     --surface-high, the closest surface it sits on (WCAG 1.4.11). */
+  --border-strong: oklch(57% 0.025 262);
 
-  --ink:           oklch(14% 0.004 286);
-  --ink-dim:       oklch(44% 0.008 286);
-  /* 64% measured 3.38:1 on --surface (log timestamps, field paths, list-row
-     detail text, the breadcrumb) -- under the 4.5:1 AA floor for text this
-     small. .badge-muted puts this same token directly on --surface-high
-     (96.8%, the closest surface to it and so the real floor): 52% clears
-     that at 5.03:1 (5.53:1 against --surface) while staying well short of
-     --ink-dim's 44%, so "faint" still reads quieter than "dim", just by a
-     smaller margin than before. */
-  --ink-faint:     oklch(52% 0.010 286);
+  --ink:           oklch(23% 0.055 268);
+  --ink-dim:       oklch(40% 0.045 266);
+  /* >= 4.5:1 on --surface-high, the brightest neighbour it is ever set on
+     (.badge-muted). Checked by tests/web-ui.test.ts. */
+  --ink-faint:     oklch(48% 0.035 264);
 
-  --signal:        oklch(51% 0.230 288);
-  --signal-ink:    oklch(100% 0 0);
-  --signal-wash:   oklch(51% 0.230 288 / 0.10);
-  /* The solid-fill variant of --signal, for a filled control under
-     --signal-ink text (.btn-default). Here it is just --signal again: at
-     this lightness --signal already clears 4.5:1 both as that fill (6.42:1
-     under white) and as itself-on-page text (6.42:1 on --surface, e.g.
-     .log-warn, .link) -- see the dark block for why the two roles need to
-     split. */
-  --signal-strong: oklch(51% 0.230 288);
+  --signal:        oklch(48% 0.19 268);
+  --signal-ink:    oklch(99% 0 0);
+  --signal-wash:   oklch(48% 0.19 268 / 0.10);
+  /* The fill role of --signal, under --signal-ink. On paper the two roles
+     agree; at night they split — see the dark block. */
+  --signal-strong: oklch(48% 0.19 268);
 
-  /* .badge-success pairs this WITH --tide-wash as its own background, so the
-     floor is the composited pair, not --tide alone: at 58% the text measured
-     3.38:1 against tide-wash-over-surface, and .check-mark (--tide as plain
-     text on --surface) was worse still heading the other way -- 58% alone is
-     3.93:1 there. --surface-high is the closest surface the badge sits on
-     and so the tightest composite: 44% clears it at 5.17:1 (5.65:1 on
-     --surface, 6.81:1 as plain .check-mark text). --tide-wash is kept at
-     the same L/C/H so the wash stays "the same colour, fainter" rather than
-     drifting from the token it is a tint of. */
-  --tide:          oklch(44% 0.140 163);
-  --tide-wash:     oklch(44% 0.140 163 / 0.12);
+  /* Starlight. On paper it is the ochre of a printed star rather than the
+     glow of a real one, so it holds up as a mark on a light ground. */
+  --star:          oklch(68% 0.145 72);
+  --star-wash:     oklch(68% 0.145 72 / 0.16);
 
-  --warn:          oklch(64% 0.150 70);
-  --warn-wash:     oklch(64% 0.150 70 / 0.12);
+  /* .badge-success sets --tide on --tide-wash, so the floor is that pair
+     composited over --surface-high, not --tide alone. */
+  --tide:          oklch(45% 0.115 168);
+  --tide-wash:     oklch(45% 0.115 168 / 0.12);
 
-  --oxide:         oklch(55% 0.210 27);
-  --oxide-wash:    oklch(55% 0.210 27 / 0.10);
+  --warn:          oklch(60% 0.14 62);
+  --warn-wash:     oklch(60% 0.14 62 / 0.14);
 
-  --shadow-tint:   286;
-  --shadow-alpha:  0.08;
+  --oxide:         oklch(52% 0.19 25);
+  --oxide-wash:    oklch(52% 0.19 25 / 0.10);
+
+  --shadow-tint:   265;
+  --shadow-alpha:  0.10;
 `;
 
-// Dark is the authored one — it is what the reference is — and light is derived
-// from it rather than the other way round. The accents lighten because
-// violet-600 on near-black is a bruise, and the surface *rises* above the
-// ground here while in light it sits flush and the border does the separating.
+// Night. The ground is indigo rather than black — the sky the rail already is,
+// a step darker — so the two themes are one place at two times of day.
 const DARK_TOKENS = String.raw`
-  --bg:            oklch(14.5% 0.002 286);
-  --surface:       oklch(17.5% 0.003 286);
-  --surface-high:  oklch(21% 0.004 286);
-  --border:        oklch(22.5% 0.004 286);
-  /* 28% measured 1.36:1 against --bg / 1.30:1 against --surface -- both far
-     under the 3:1 WCAG 1.4.11 floor for a form-control boundary. Unlike
-     light, closing that gap here means going LIGHTER, not darker: the
-     control sits on a dark ground, so the edge needs lift, not shade.
-     --surface-high (21%, the brightest surface in the theme) is the real
-     floor: 55% clears it at 3.64:1 (4.07:1 on --bg, 3.91:1 on --surface). */
-  --border-strong: oklch(55% 0.005 286);
+  --bg:            oklch(16.5% 0.03 268);
+  --surface:       oklch(20% 0.034 268);
+  --surface-high:  oklch(24% 0.038 268);
+  --border:        oklch(28.5% 0.036 268);
+  --border-strong: oklch(56% 0.04 266);
 
-  --ink:           oklch(98.5% 0 0);
-  --ink-dim:       oklch(71% 0.013 286);
-  /* 47% measured 2.78-2.89:1 across --surface/--bg (log timestamps, field
-     paths, list-row detail, the breadcrumb) -- and .badge-muted puts this
-     same token as text directly on --surface-high (21%, the brightest
-     surface in the theme), which is the real floor: at 47% that pairing
-     never reached even 2.6:1. 63% clears --surface-high at 5.04:1 (5.63:1
-     on --bg, 5.40:1 on --surface), which means every dimmer surface it also
-     sits on clears with more room still, while staying 8pt under
-     --ink-dim's 71% so "faint" is still visibly quieter than "dim". */
-  --ink-faint:     oklch(63% 0.012 286);
+  --ink:           oklch(95.5% 0.012 260);
+  --ink-dim:       oklch(80% 0.025 262);
+  --ink-faint:     oklch(70% 0.03 264);
 
-  --signal:        oklch(63% 0.215 293);
-  --signal-ink:    oklch(100% 0 0);
-  --signal-wash:   oklch(63% 0.215 293 / 0.16);
-  /* --signal-ink on --signal measured 3.83:1 here -- the label on every
-     .btn-default (Apply / Save / Connect) fails AA. The obvious fix,
-     darkening --signal, breaks a DIFFERENT passing use of the same token:
-     --signal is also read as running text on the page (.log-warn, .link,
-     .tile-value), where it currently clears 4.97:1 against --surface. The
-     two roles pull opposite ways -- a background wants to go darker under
-     white text, a foreground wants to go lighter against a dark page -- and
-     a full sweep of this hue/chroma across both lightness and chroma found
-     no single value that clears 4.5:1 in both roles at once (the closest
-     joint optimum, ~58% chroma flattened to near grey, still tops out
-     ~4.36:1 on each). --signal stays put so the text role keeps passing;
-     this is the value the *fill* role needs instead. 56% clears 5.13:1
-     under --signal-ink.
-     .btn-default in components.ts fills with this rather than --signal. */
-  --signal-strong: oklch(56% 0.215 293);
+  --signal:        oklch(78% 0.115 272);
+  /* Dark ink on a light periwinkle fill: the one arrangement in which the
+     fill and the text role of the same hue both clear 4.5:1 at night. */
+  --signal-ink:    oklch(18% 0.04 270);
+  --signal-wash:   oklch(78% 0.115 272 / 0.16);
+  --signal-strong: oklch(80% 0.11 272);
 
-  --tide:          oklch(77% 0.145 163);
-  --tide-wash:     oklch(77% 0.145 163 / 0.14);
+  --star:          oklch(84% 0.135 85);
+  --star-wash:     oklch(84% 0.135 85 / 0.14);
 
-  --warn:          oklch(83% 0.150 82);
-  --warn-wash:     oklch(83% 0.150 82 / 0.14);
+  --tide:          oklch(80% 0.13 165);
+  --tide-wash:     oklch(80% 0.13 165 / 0.14);
 
-  --oxide:         oklch(70% 0.170 22);
-  --oxide-wash:    oklch(70% 0.170 22 / 0.14);
+  --warn:          oklch(84% 0.13 75);
+  --warn-wash:     oklch(84% 0.13 75 / 0.14);
 
-  --shadow-tint:   286;
-  --shadow-alpha:  0.5;
+  --oxide:         oklch(72% 0.16 22);
+  --oxide-wash:    oklch(72% 0.16 22 / 0.14);
+
+  --shadow-tint:   270;
+  --shadow-alpha:  0.45;
 `;
 
 /**
- * Three theme states, matching what the toggle in ./app-core.ts can put on the
+ * Three theme states, matching what the toggle in ./app-views.ts can put on the
  * root element: no data-theme follows the OS; data-theme=light|dark is
  * explicit and wins. The media query is guarded with :not([data-theme="light"])
  * rather than relying on source order, so an explicit light choice survives on
@@ -161,51 +119,48 @@ export const THEME = String.raw`
   color-scheme: light dark;
 ${LIGHT_TOKENS}
 
-  /* The chassis — the same near-black in both themes. */
-  --rail-bg:      oklch(12.5% 0.002 286);
-  --rail-high:    oklch(19% 0.004 286);
-  --rail-ink:     oklch(100% 0 0);
-  /* Same near-black chassis in both themes, so one value covers both --
-     measured identically either way: 3.33:1 for .nav-count (its own pill
-     sits on --rail-high), 3.67:1 for .nav-label on 9 of the 10 sidebar
-     rows -- both under 4.5:1. --rail-high (19%) is the brighter of the two
-     backgrounds this token sits on, so it sets the floor: 62% clears it at
-     5.03:1, with more room still against --rail-bg (12.5%, 5.53:1). Stays
-     38pt under --rail-ink's 100%, so the active row still reads as clearly
-     promoted. */
-  --rail-dim:     oklch(62% 0.012 286);
-  --rail-border:  oklch(19.5% 0.004 286);
+  /* The sky — the same night in both themes. */
+  --rail-bg:      oklch(19.5% 0.045 270);
+  --rail-high:    oklch(26% 0.05 270);
+  --rail-ink:     oklch(97% 0.01 260);
+  /* >= 4.5:1 on --rail-high, the brighter of its two backgrounds. */
+  --rail-dim:     oklch(77% 0.035 265);
+  --rail-border:  oklch(27.5% 0.045 270);
+  --rail-star:    oklch(84% 0.135 85);
+  --rail-signal:  oklch(78% 0.115 272);
 
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "URW Palladio L", P052,
+                  "Book Antiqua", Georgia, serif;
   --font-human: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  --font-machine: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", "Cascadia Mono", Menlo, monospace;
+  --font-machine: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, "DejaVu Sans Mono", monospace;
 
-  /* Softer than the corners this file used to argue for. A console next to
-     another console, and that one has radii. */
+  /* Radius follows rank: a control, a panel, the one hero. */
   --r-sm: 6px;
-  --r-md: 8px;
-  --r-lg: 12px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
 
-  --t-2xs:   0.625rem;
-  --t-xs:    0.6875rem;
+  /* A classical scale (11 12 13 14 16 21 28 36), not a ratio — at these
+     sizes the steps a reader can tell apart matter more than the maths. */
+  --t-2xs:   0.6875rem;
+  --t-xs:    0.75rem;
   --t-sm:    0.8125rem;
   --t-base:  0.875rem;
   --t-lg:    1rem;
-  --t-title: 1.5rem;
+  --t-xl:    1.3125rem;
+  --t-title: 1.75rem;
+  --t-hero:  2.25rem;
 
-  /* Silkscreen: the tiny wide-tracked machine labels on the rail and on card
-     headers. Named for what it is so it is used for that and nothing else. */
-  --track-silk: 0.12em;
+  --rail: 232px;
+  --rail-tight: 64px;
+  --bar: 52px;
 
-  --rail: 220px;
-  --rail-tight: 60px;
-  --bar: 48px;
-
-  --dur: 150ms;
+  --dur: 160ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
 
   --shadow-1: 0 1px 2px oklch(0% 0 var(--shadow-tint) / var(--shadow-alpha));
-  --shadow-2: 0 4px 16px -4px oklch(0% 0 var(--shadow-tint) / var(--shadow-alpha));
-  --shadow-3: 0 16px 40px -12px oklch(0% 0 var(--shadow-tint) / var(--shadow-alpha));
+  --shadow-2: 0 6px 18px -6px oklch(0% 0 var(--shadow-tint) / var(--shadow-alpha));
+  --shadow-3: 0 18px 44px -14px oklch(0% 0 var(--shadow-tint) / var(--shadow-alpha));
 }
 
 @media (prefers-color-scheme: dark) {
@@ -248,7 +203,7 @@ code, pre, kbd, samp { font-family: var(--font-machine); }
 
 :focus-visible { outline: none; }
 
-button:focus-visible, a:focus-visible, [role="tab"]:focus-visible {
+button:focus-visible, a:focus-visible, [role="tab"]:focus-visible, summary:focus-visible {
   outline: 2px solid var(--signal);
   outline-offset: 2px;
 }

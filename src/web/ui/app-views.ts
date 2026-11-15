@@ -11,8 +11,11 @@ export const APP_VIEWS = String.raw`
 function addPanel(id, label, form) {
   const open = state.expanded === id;
   return '<div class="section-actions mb">' +
+    // Outline, not filled: on these pages the filled button belongs to the
+    // thing in the list you act on, and an always-present "Add" competing
+    // with it made every page look like its main job was adding.
     ui.btn(open ? 'Cancel' : label,
-      { variant: open ? 'ghost' : 'default', attrs: ' data-expand="' + id + '"' }) +
+      { variant: open ? 'ghost' : 'outline', icon: open ? '' : 'plus', attrs: ' data-expand="' + id + '"' }) +
   '</div>' + (open ? ui.card(label, '<div class="card-content">' + form + '</div>') : '');
 }
 
@@ -545,7 +548,12 @@ async function loadDoctor()   { state.doctor = await guard(() => api('/doctor'))
 // The Logs tab shows one record at a time but fetches both, so switching the
 // segmented control is instant. Two small requests on a monitoring page is the
 // right trade against a spinner every time you toggle.
-async function loadLogRecords() { await Promise.all([loadLogs(), loadAudit()]); }
+async function loadLogRecords() {
+  await Promise.all([loadLogs(), loadAudit()]);
+  // Arriving on Diagnostics directly — from Home's "Run checks" or an old
+  // #doctor link — has to run the checks, since no record switch will.
+  if (state.logsTab === 'doctor' && !state.doctor) await loadDoctor();
+}
 
 /** Same trade for Credentials: two small queries beats a spinner on every toggle. */
 async function loadCredentials() { await Promise.all([loadSecrets(), loadTokens()]); }
@@ -556,8 +564,13 @@ async function loadCredentials() { await Promise.all([loadSecrets(), loadTokens(
 // The rail's counts and the system figure both read resolved sets, so the
 // landing page fetches them alongside /status rather than leaving the numbers
 // blank until you happen to open the section they came from.
+//
+// Settings come too: the reasoning control under each backend is generated
+// from the settings registry, and it would otherwise draw empty.
 async function loadOverview() {
-  await Promise.all([loadStatus(), loadContent(), loadSkills(), loadRulesReport(), loadAgentsReport()]);
+  await Promise.all([
+    loadStatus(), loadSettings(), loadContent(), loadSkills(), loadRulesReport(), loadAgentsReport(),
+  ]);
 }
 
 const LOADERS = {
@@ -651,11 +664,15 @@ document.addEventListener('click', async (ev) => {
     '[data-hook-toggle],[data-hook-delete],' +
     '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-record],' +
     '[data-skill-open],[data-agent-open],[data-jump],[data-settings-filter],[data-log-level],' +
-    '[data-expand]');
+    '[data-expand],[data-reasoning]');
   if (!t) return;
   const d = t.dataset;
 
   if (d.tab) return goto(d.tab);
+  if (d.reasoning) {
+    const [path, value] = d.reasoning.split('|');
+    return setReasoning(path, value);
+  }
   if (d.skillOpen) return openSkill(d.skillOpen);
   if (d.agentOpen) return openAgent(d.agentOpen);
   if (d.expand) {
@@ -802,11 +819,19 @@ document.addEventListener('click', async (ev) => {
       try { localStorage.setItem('asterisk-theme', now); } catch {}
       return renderHeader();
     }
+    case 'nav-advanced': {
+      state.navAdvanced = !state.navAdvanced;
+      try { localStorage.setItem('asterisk-nav-advanced', state.navAdvanced ? 'open' : 'closed'); } catch {}
+      return renderSidebar();
+    }
     case 'rail': {
       state.railTight = !state.railTight;
       try { localStorage.setItem('asterisk-rail', state.railTight ? 'tight' : 'wide'); } catch {}
       return renderSidebar();
     }
+    case 'settings-advanced':
+      state.settingsAdvanced = !state.settingsAdvanced;
+      return render();
     case 'apply': return applySettings();
     case 'discard': state.dirty.clear(); return render();
     case 'mcp-save': return saveMcp();
@@ -893,21 +918,6 @@ document.addEventListener('click', async (ev) => {
       return render();
     }
   }
-});
-
-// Keyboard parity for the system figure's spokes (role="button" — see
-// app-star.ts). A real <button> already turns Enter/Space into a click, which
-// the listener above already handles; an SVG <g> does not, so it needs this.
-// Scoped to [role="button"] rather than [data-tab] generally so it never
-// double-fires goto() for a data-tab control that is a real button — those
-// keep getting there through the native click the browser already gives them.
-document.addEventListener('keydown', (ev) => {
-  if (ev.key !== 'Enter' && ev.key !== ' ') return;
-  const t = ev.target.closest('[role="button"][data-tab]');
-  if (!t) return;
-  // Space's default is scrolling the page; Enter has none worth keeping here.
-  ev.preventDefault();
-  goto(t.dataset.tab);
 });
 
 document.addEventListener('change', (ev) => {

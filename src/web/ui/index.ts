@@ -15,24 +15,13 @@ import { APP_SKILLS } from './app-skills.ts';
 import { APP_STAR } from './app-star.ts';
 import { APP_VIEWS } from './app-views.ts';
 import { APP_ICONS } from './icons.ts';
+import { FAVICON, markSvg } from './logo.ts';
 import { STYLES } from './styles.ts';
 
 export interface RenderOptions {
   nonce: string;
   authenticated: boolean;
 }
-
-/**
- * Inline SVG favicon. Data URI rather than a served file so the page stays a
- * single request and the browser stops asking for /favicon.ico.
- */
-const FAVICON = `data:image/svg+xml,${encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
-    '<rect width="32" height="32" rx="8" fill="#0a0a0a"/>' +
-    '<text x="16" y="23" font-family="monospace" font-size="24" font-weight="700" ' +
-    'text-anchor="middle" fill="#8b5cf6">*</text>' +
-    '</svg>',
-)}`;
 
 /** Escapes a value for interpolation into an HTML attribute. */
 function attr(value: string): string {
@@ -72,7 +61,8 @@ function gate(nonce: string): string {
 <body>
 <main class="gate">
   <div class="gate-card">
-    <h1 class="gate-title">Asterisk<span class="brand-mark">*</span></h1>
+    ${markSvg('gate-mark')}
+    <h1 class="gate-title">Asterisk</h1>
     <p class="gate-text">This panel needs an access token. Start it from a terminal and follow the
        printed link, which carries the token as a query parameter and exchanges it for a session
        cookie.</p>
@@ -94,7 +84,7 @@ export function renderIndexHtml(opts: RenderOptions): string {
 <div class="shell">
   <aside class="rail">
     <div class="brand">
-      <span class="brand-mark">*</span>
+      ${markSvg('brand-mark')}
       <!-- Deliberately a <div>, not an h1: the app's one h1 per view is the
            page title ui.pageHeader() renders in app-core.ts, which changes
            with every tab; this brand mark sits beside all of them unchanged

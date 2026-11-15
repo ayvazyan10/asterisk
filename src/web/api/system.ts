@@ -3,18 +3,20 @@
 
 import { existsSync, statSync } from 'node:fs';
 
-import type { AsteriskConfig } from '../../config/schema.ts';
+import type { AsteriskConfig, SecretKey } from '../../config/schema.ts';
 import { readConfig } from '../../config/store.ts';
 import { logs, restart, start, status, stop } from '../../daemon/lifecycle.ts';
 import { asteriskPaths } from '../../daemon/paths.ts';
 import { listHooks, listMcpServers } from '../../db/collections.ts';
+import type { SqliteDriver } from '../../db/driver.ts';
+import { getSecret } from '../../db/settings.ts';
 import { detectActiveModel } from '../../providers/model-detect.ts';
 import { getVersion } from '../../version.ts';
 import { issueToken, listTokens, revokeToken } from '../auth.ts';
 import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
 import { listConnectors } from './connectors.ts';
 
-/** What the header chip renders — see `resolveStatusModel` below. */
+/** What the header chip renders — see `resolveBackend` below. */
 export interface StatusModel {
   id: string;
   /** 'detected' from the server itself; 'configured' from a pin in settings. */
@@ -22,28 +24,104 @@ export interface StatusModel {
 }
 
 /**
- * The model that will actually answer, for the header chip.
+ * The model a given backend will answer with.
  *
- * The Anthropic provider has no detection endpoint, so its pin is always
- * "configured" — `anthropic.model` is never blank (see the schema default).
- * The openai-compatible provider is asked what it is serving; that call is
- * cached 60s by `detectActiveModel`, so this is cheap, and a short timeout
- * keeps the status endpoint responsive when the server is unreachable. A
- * pinned `openaiCompatible.model` is the fallback when detection fails, and
- * `null` — never a placeholder string — means there is nothing to report.
+ * The Anthropic and DeepSeek providers have no detection endpoint, so their
+ * pin is always "configured" — neither model setting is ever blank (see the
+ * schema defaults). The openai-compatible provider is asked what it is
+ * serving; that call is cached 60s by `detectActiveModel`, so this is cheap,
+ * and a short timeout keeps the status endpoint responsive when the server is
+ * unreachable. A pinned `openaiCompatible.model` is the fallback when
+ * detection fails, and `null` — never a placeholder string — means there is
+ * nothing to report.
  */
-async function resolveStatusModel(config: AsteriskConfig): Promise<StatusModel | null> {
-  if (config.provider === 'deepseek') {
-    return { id: config.deepseek.model, source: 'configured' };
+async function resolveBackend(
+  config: AsteriskConfig,
+  kind: AsteriskConfig['provider'],
+): Promise<{ model: StatusModel | null; reachable: boolean; contextWindow?: number }> {
+  if (kind === 'deepseek') {
+    return { model: { id: config.deepseek.model, source: 'configured' }, reachable: false };
   }
-  if (config.provider === 'anthropic') {
-    return { id: config.anthropic.model, source: 'configured' };
+  if (kind === 'anthropic') {
+    return { model: { id: config.anthropic.model, source: 'configured' }, reachable: false };
   }
   const base = config.openaiCompatible.baseUrl.replace(/\/$/, '');
   const detected = await detectActiveModel(base, '', { timeoutMs: 1500 });
-  if (detected) return { id: detected.id, source: 'detected' };
+  if (detected) {
+    return {
+      model: { id: detected.id, source: 'detected' },
+      reachable: true,
+      ...(detected.contextWindow ? { contextWindow: detected.contextWindow } : {}),
+    };
+  }
   const pinned = config.openaiCompatible.model;
-  return pinned ? { id: pinned, source: 'configured' } : null;
+  return { model: pinned ? { id: pinned, source: 'configured' } : null, reachable: false };
+}
+
+/** One backend in the order the agent loop tries them — see `getStatus`. */
+export interface ChainEntry {
+  provider: AsteriskConfig['provider'];
+  model: StatusModel | null;
+  /**
+   * Whether this backend can be expected to answer: a local server that
+   * reported a model, or a hosted API with its key present. Not a live call
+   * to a hosted API — that would spend the user's quota on every refresh.
+   */
+  ready: boolean;
+  /** What stands in the way when `ready` is false, in the user's words. */
+  reason?: string;
+  /** Where a local server is reached, for the person reading the panel. */
+  endpoint?: string;
+  contextWindow?: number;
+}
+
+/** Which secret a hosted backend needs. Local servers need none. */
+const KEY_FOR: Partial<Record<AsteriskConfig['provider'], SecretKey>> = {
+  deepseek: 'DEEPSEEK_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+};
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * The primary provider followed by `providerFallback`, de-duplicated the way
+ * the fallback chain is built — the order the daemon logs as
+ * `openai-compatible:auto → deepseek:deepseek-flash`.
+ */
+async function resolveChain(db: SqliteDriver, config: AsteriskConfig): Promise<ChainEntry[]> {
+  const kinds = [config.provider, ...config.providerFallback].filter(
+    (kind, i, all) => all.indexOf(kind) === i,
+  );
+  return Promise.all(
+    kinds.map(async (kind): Promise<ChainEntry> => {
+      const backend = await resolveBackend(config, kind);
+      const key = KEY_FOR[kind];
+      if (!key) {
+        const endpoint = hostOf(config.openaiCompatible.baseUrl);
+        return {
+          provider: kind,
+          model: backend.model,
+          ready: backend.reachable,
+          endpoint,
+          ...(backend.reachable ? {} : { reason: `Nothing answered at ${endpoint}` }),
+          ...(backend.contextWindow ? { contextWindow: backend.contextWindow } : {}),
+        };
+      }
+      const hasKey = Boolean(process.env[key] || getSecret(db, key));
+      return {
+        provider: kind,
+        model: backend.model,
+        ready: hasKey,
+        ...(hasKey ? {} : { reason: `${key} is not set` }),
+      };
+    }),
+  );
 }
 
 /** Snapshot for the dashboard header. */
@@ -66,7 +144,9 @@ export const getStatus: Handler = async ({ db }) => {
     // Same.
   }
 
-  const model = await resolveStatusModel(config);
+  const chain = await resolveChain(db, config);
+  // The header chip reports the primary backend, as it always has.
+  const model = chain[0]?.model ?? null;
 
   return json({
     version: getVersion(),
@@ -76,6 +156,7 @@ export const getStatus: Handler = async ({ db }) => {
     daemon: { running: daemon.message.startsWith('running'), message: daemon.message },
     provider: config.provider,
     model,
+    chain,
     outputStyle: config.outputStyle,
     counts: {
       mcpServers: listMcpServers(db).length,

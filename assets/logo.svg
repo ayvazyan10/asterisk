@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="512" height="512" role="img" aria-label="Asterisk">
+  <title>Asterisk</title>
+  <style>
+    path { fill: #1b2150; }
+    @media (prefers-color-scheme: dark) { path { fill: #f2c45a; } }
+  </style>
+  <path d="M32 32L38.23 14.18A6.6 6.6 0 1 0 25.77 14.18ZM34.6 36.5L46.92 50.81A6.6 6.6 0 1 0 53.15 40.02ZM29.4 36.5L10.85 40.02A6.6 6.6 0 1 0 17.08 50.81ZM34.6 33.5L48.42 31.33A5.4 5.4 0 1 0 43.39 22.61ZM32 38L26.96 51.06A5.4 5.4 0 1 0 37.04 51.06ZM29.4 33.5L20.61 22.61A5.4 5.4 0 1 0 15.58 31.33Z"/>
+</svg>

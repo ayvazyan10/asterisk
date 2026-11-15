@@ -1,4 +1,4 @@
-# Asterisk
+<h1 align="center"><img src="assets/logo-wordmark.svg" alt="Asterisk" width="320"></h1>
 
 A lightweight, personal AI assistant. Asterisk gives you an interactive
 agent in your terminal and an optional long-running daemon that bridges the
