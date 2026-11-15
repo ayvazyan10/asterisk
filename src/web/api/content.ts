@@ -5,19 +5,11 @@
 // caller-supplied path: every request therefore goes through `resolveInside`,
 // which refuses anything that escapes its content root.
 
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
-import { resolvesInside } from '../../utils/fs-safe.ts';
+import { ensureOwnerOnlyDir, resolvesInside, writeOwnerOnly } from '../../utils/fs-safe.ts';
 import { type Handler, HttpError, audit, json, readJsonObject } from '../http.ts';
 
 export type ContentKind = 'rules' | 'skills' | 'agents' | 'souls';
@@ -214,8 +206,8 @@ export const writeContent: Handler = async ({ db, params, req }) => {
   if (typeof content !== 'string') throw new HttpError('"content" must be a string');
 
   const abs = contentPath(kind, rel);
-  mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, content, 'utf8');
+  ensureOwnerOnlyDir(dirname(abs));
+  writeOwnerOnly(abs, content);
   audit(db, 'content.write', `${kind}/${rel}`, { bytes: content.length });
 
   return json({ ok: true, kind, path: rel, bytes: content.length });

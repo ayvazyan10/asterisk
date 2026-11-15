@@ -64,9 +64,9 @@ function allowedHostnames({ host }: OriginGuardOptions): Set<string> {
  * let a page on any other loopback port — a dev server the user is running
  * for an unrelated project is the ordinary case — pass the Origin check
  * purely on hostname, leaving Sec-Fetch-Site as the only thing standing
- * between that page and a mutating request. Building full origin strings
- * against the panel's actual port (which reflects `--port`/config, not a
- * hardcoded default) restores Origin as an independent check.
+ * between that page and a mutating request. Full origin strings allow the
+ * panel's actual port (`--port`/config) and HTTPS on the default port 443 for
+ * a TLS reverse proxy, while refusing unrelated ports.
  */
 function allowedOrigins(opts: OriginGuardOptions): Set<string> {
   const hostnames = new Set(['127.0.0.1', 'localhost', '::1']);
@@ -75,6 +75,8 @@ function allowedOrigins(opts: OriginGuardOptions): Set<string> {
   for (const hostname of hostnames) {
     const bracketed = hostname.includes(':') ? `[${hostname}]` : hostname;
     origins.add(`http://${bracketed}:${opts.port}`);
+    origins.add(`https://${bracketed}:${opts.port}`);
+    origins.add(`https://${bracketed}`);
   }
   return origins;
 }

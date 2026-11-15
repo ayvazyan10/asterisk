@@ -50,11 +50,29 @@ describe('parseRetryAfter', () => {
     expect(parseRetryAfter('5')).toBe(5);
   });
 
+  it.each(['60', '61', '86400'])('caps Retry-After: %s at 60 seconds', (header) => {
+    expect(parseRetryAfter(header)).toBe(60);
+  });
+
   it('returns undefined for HTTP dates and garbage', () => {
     expect(parseRetryAfter('Wed, 21 Oct 2026 07:28:00 GMT')).toBeUndefined();
     expect(parseRetryAfter('')).toBeUndefined();
     expect(parseRetryAfter(null)).toBeUndefined();
     expect(parseRetryAfter(undefined)).toBeUndefined();
+  });
+});
+
+describe('retryAfterMs', () => {
+  it.each([
+    [-1, 0],
+    [0, 0],
+    [7, 7000],
+    [60, 60_000],
+    [61, 60_000],
+    [86_400, 60_000],
+  ])('bounds a directly supplied delay of %s seconds to %s ms', (seconds, expected) => {
+    const error = new ProviderError('rate-limit', 'limited', { retryAfterSeconds: seconds });
+    expect(retryAfterMs(error)).toBe(expected);
   });
 });
 

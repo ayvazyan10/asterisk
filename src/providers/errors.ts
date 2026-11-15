@@ -70,9 +70,11 @@ export function isAbort(error: unknown): boolean {
   return false;
 }
 
+const MAX_RETRY_AFTER_SECONDS = 60;
+
 export function retryAfterMs(error: unknown): number | undefined {
   if (error instanceof ProviderError && error.retryAfterSeconds !== undefined) {
-    return Math.max(0, error.retryAfterSeconds * 1000);
+    return Math.min(MAX_RETRY_AFTER_SECONDS, Math.max(0, error.retryAfterSeconds)) * 1000;
   }
   return undefined;
 }
@@ -108,7 +110,7 @@ export function classifyHttpError(
 export function parseRetryAfter(header: string | null | undefined): number | undefined {
   if (!header) return undefined;
   const seconds = Number.parseInt(header, 10);
-  if (Number.isFinite(seconds) && seconds >= 0) return seconds;
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds, MAX_RETRY_AFTER_SECONDS);
   // Per HTTP RFC 7231 §7.1.3, Retry-After can also be an HTTP date. We don't
   // parse those here — the caller falls through to exponential backoff if we
   // return undefined.

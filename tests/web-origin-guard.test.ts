@@ -102,6 +102,57 @@ describe('checkRequestOrigin', () => {
     ).toBeNull();
   });
 
+  it.each([
+    ['192.168.1.5', 4321, 'https://192.168.1.5:4321'],
+    ['192.168.1.5', 4321, 'https://192.168.1.5'],
+    ['192.168.1.5', 4321, 'https://192.168.1.5:443'],
+    ['192.168.1.5', 443, 'https://192.168.1.5'],
+    ['localhost', 9999, 'https://localhost:9999'],
+    ['::1', 4321, 'https://[::1]'],
+    ['::1', 4321, 'https://[::1]:4321'],
+  ])('accepts HTTPS origin %s on panel port %s via %s', (host, port, origin) => {
+    expect(
+      checkRequestOrigin(
+        req(
+          '/api/hooks',
+          { host: new URL(origin).host, origin, 'sec-fetch-site': 'same-origin' },
+          'PUT',
+        ),
+        { host, port },
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
+    'https://192.168.1.5:3000',
+    'https://192.168.1.5:8443',
+    'http://192.168.1.5',
+    'https://evil.example.com',
+  ])('refuses unrelated origin %s behind a TLS proxy', (origin) => {
+    expect(
+      checkRequestOrigin(req('/api/hooks', { host: '192.168.1.5', origin }, 'PUT'), {
+        host: '192.168.1.5',
+        port: 4321,
+      }),
+    ).toContain('cross-origin');
+  });
+
+  it('still checks Host and Sec-Fetch-Site for an allowed HTTPS origin', () => {
+    const origin = 'https://192.168.1.5';
+    const opts = { host: '192.168.1.5', port: 4321 };
+    expect(
+      checkRequestOrigin(req('/api/hooks', { host: 'evil.example.com', origin }, 'PUT'), opts),
+    ).toContain('unexpected Host');
+    for (const site of ['cross-site', 'same-site']) {
+      expect(
+        checkRequestOrigin(
+          req('/api/hooks', { host: '192.168.1.5', origin, 'sec-fetch-site': site }, 'PUT'),
+          opts,
+        ),
+      ).toContain('cross-site');
+    }
+  });
+
   it('refuses a foreign Origin', () => {
     const reason = checkRequestOrigin(
       req('/api/hooks', { host: '127.0.0.1:4321', origin: 'https://evil.example.com' }, 'POST'),

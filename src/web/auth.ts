@@ -13,6 +13,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { SqliteDriver } from '../db/driver.ts';
 
 const COOKIE_NAME = 'asterisk_session';
+const BROWSER_SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 
 export interface TokenRow {
   id: number;
@@ -28,10 +29,17 @@ function hash(token: string): string {
 /** Creates a token, stores its hash, and returns the plaintext exactly once. */
 export function issueToken(db: SqliteDriver, label = 'cli'): string {
   const token = randomBytes(32).toString('base64url');
+  const createdAt = Date.now();
+  if (label === 'browser-session') {
+    db.run('DELETE FROM web_tokens WHERE label = ? AND created_at <= ?', [
+      label,
+      createdAt - BROWSER_SESSION_MAX_AGE_SECONDS * 1000,
+    ]);
+  }
   db.run('INSERT INTO web_tokens (label, token_hash, created_at) VALUES (?, ?, ?)', [
     label,
     hash(token),
-    Date.now(),
+    createdAt,
   ]);
   return token;
 }
@@ -73,7 +81,10 @@ function digestsMatch(a: string, b: string): boolean {
 export function verifyToken(db: SqliteDriver, token: string): boolean {
   if (!token) return false;
   const candidate = hash(token);
-  const rows = db.all<{ id: number; token_hash: string }>('SELECT id, token_hash FROM web_tokens');
+  const rows = db.all<{ id: number; token_hash: string }>(
+    'SELECT id, token_hash FROM web_tokens WHERE label != ? OR created_at > ?',
+    ['browser-session', Date.now() - BROWSER_SESSION_MAX_AGE_SECONDS * 1000],
+  );
 
   // Every row is compared even after a match so the work is independent of
   // which token was supplied.
@@ -127,14 +138,14 @@ export function authenticate(
     // A `?token=` link may be a short-lived handoff token that is revoked
     // seconds later, so the browser gets a session token of its own. A bearer
     // caller keeps its own token: minting one per request would grow
-    // web_tokens without bound, since tokens never expire.
+    // web_tokens with a redundant session for every request.
     const session = bearer ? supplied : issueToken(db, 'browser-session');
     const attrs = [
       `${COOKIE_NAME}=${session}`,
       'Path=/',
       'HttpOnly',
       'SameSite=Strict',
-      'Max-Age=604800',
+      `Max-Age=${BROWSER_SESSION_MAX_AGE_SECONDS}`,
       ...(opts.secure ? ['Secure'] : []),
     ];
     return { ok: true, setCookie: attrs.join('; ') };

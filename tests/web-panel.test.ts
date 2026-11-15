@@ -1,7 +1,7 @@
 // Control-panel API tests. The handler is a pure Request -> Response
 // function, so nothing here binds a port.
 
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,7 +13,7 @@ import { writeMcpCredentials } from '../src/db/mcp-credentials.ts';
 import { migrate } from '../src/db/migrations.ts';
 import { getSecret } from '../src/db/settings.ts';
 import { clearDetectedModels } from '../src/providers/model-detect.ts';
-import { issueToken, verifyToken } from '../src/web/auth.ts';
+import { authenticate, issueToken, listTokens, verifyToken } from '../src/web/auth.ts';
 import { matchRoute } from '../src/web/router.ts';
 import { createRequestHandler } from '../src/web/server.ts';
 
@@ -604,6 +604,7 @@ describe('content API', () => {
 
   it('reads and writes a nested file', async () => {
     expect((await call('/api/content/rules/common/style.md')).body.content).toBe('# Style\n');
+    await chmod(join(home, 'rules', 'common', 'style.md'), 0o644);
 
     const written = await call(
       '/api/content/rules/common/style.md',
@@ -611,6 +612,21 @@ describe('content API', () => {
     );
     expect(written.status).toBe(200);
     expect(await readFile(join(home, 'rules', 'common', 'style.md'), 'utf8')).toBe('# Updated\n');
+    expect((await stat(join(home, 'rules', 'common', 'style.md'))).mode & 0o777).toBe(0o600);
+  });
+
+  it('creates rule files with mode 0600 and directories with mode 0700', async () => {
+    const { status } = await call(
+      '/api/content/rules/private/nested/rule.md',
+      send('PUT', { content: '# Private\n' }),
+    );
+    expect(status).toBe(200);
+    expect((await stat(join(home, 'rules', 'private', 'nested', 'rule.md'))).mode & 0o777).toBe(
+      0o600,
+    );
+    for (const dir of [join(home, 'rules', 'private'), join(home, 'rules', 'private', 'nested')]) {
+      expect((await stat(dir)).mode & 0o777).toBe(0o700);
+    }
   });
 
   it('creates intermediate directories on write', async () => {
@@ -958,6 +974,10 @@ describe('status and system', () => {
 });
 
 describe('tokens and auth', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('issues a token and verifies it', () => {
     const token = issueToken(db, 'test');
     expect(verifyToken(db, token)).toBe(true);
@@ -1009,6 +1029,65 @@ describe('tokens and auth', () => {
     const res = await guarded(new Request(`http://localhost/?token=${token}`));
     expect(res.status).toBe(200);
     expect(await res.text()).toContain('Asterisk');
+  });
+
+  it('expires query-issued browser sessions after seven days without extending on use', () => {
+    const issuedAt = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(issuedAt);
+    const token = issueToken(db);
+    const opts = { required: true, secure: false };
+    const login = authenticate(db, new Request(`http://localhost/?token=${token}`), opts);
+    expect(login.ok).toBe(true);
+    expect(login.setCookie).toContain('Max-Age=604800');
+    const cookie = login.setCookie?.split(';')[0] ?? '';
+    const session = cookie.slice(cookie.indexOf('=') + 1);
+    expect(session).not.toBe(token);
+    expect(verifyToken(db, session)).toBe(true);
+
+    clock.mockReturnValue(issuedAt + 7 * 24 * 60 * 60 * 1000 - 1);
+    expect(
+      authenticate(db, new Request('http://localhost/', { headers: { cookie } }), opts).ok,
+    ).toBe(true);
+
+    clock.mockReturnValue(issuedAt + 7 * 24 * 60 * 60 * 1000);
+    expect(
+      authenticate(db, new Request('http://localhost/', { headers: { cookie } }), opts).ok,
+    ).toBe(false);
+    expect(verifyToken(db, session)).toBe(false);
+    expect(
+      authenticate(
+        db,
+        new Request('http://localhost/', { headers: { authorization: `Bearer ${session}` } }),
+        opts,
+      ).ok,
+    ).toBe(false);
+    expect(authenticate(db, new Request(`http://localhost/?token=${session}`), opts).ok).toBe(
+      false,
+    );
+
+    clock.mockReturnValue(issuedAt + 365 * 24 * 60 * 60 * 1000);
+    expect(verifyToken(db, token)).toBe(true);
+  });
+
+  it('prunes expired browser sessions on query login and keeps fresh sessions and CLI tokens', () => {
+    const issuedAt = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(issuedAt);
+    const token = issueToken(db);
+    const expired = issueToken(db, 'browser-session');
+    clock.mockReturnValue(issuedAt + 1);
+    const fresh = issueToken(db, 'browser-session');
+
+    clock.mockReturnValue(issuedAt + 7 * 24 * 60 * 60 * 1000);
+    const login = authenticate(db, new Request(`http://localhost/?token=${token}`), {
+      required: true,
+      secure: false,
+    });
+    expect(login.ok).toBe(true);
+    expect(listTokens(db)).toHaveLength(3);
+    expect(listTokens(db).filter((row) => row.label === 'browser-session')).toHaveLength(2);
+    expect(verifyToken(db, expired)).toBe(false);
+    expect(verifyToken(db, fresh)).toBe(true);
+    expect(verifyToken(db, token)).toBe(true);
   });
 
   it('revokes a token', async () => {
