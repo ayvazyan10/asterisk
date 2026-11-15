@@ -628,7 +628,15 @@ transcript.
 
 # whisper.cpp (prints to stdout)
 "command": "whisper-cli -m ~/models/ggml-large-v3.bin -f {input} --no-timestamps"
+
+# a Whisper service already running on this machine with its own HTTP API —
+# here one that takes the raw audio as the body and answers {"text": "…"}.
+# Put your own host and port in the URL; the command runs through a shell.
+"command": "curl -sSf --max-time 120 --data-binary @{input} http://127.0.0.1:5951/ | jq -er .text"
 ```
+
+A long-running service also avoids loading the model for every message, which
+is most of the wait with a command that starts Whisper each time.
 
 **HTTP.** Any endpoint that speaks OpenAI's audio API — Groq's free tier,
 OpenAI, a local `whisper-server`. The key, when the service needs one, is the

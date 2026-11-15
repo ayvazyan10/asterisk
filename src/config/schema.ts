@@ -221,7 +221,7 @@ const SttSchema = z.object({
     .string()
     .default('')
     .describe(
-      'Local transcription command. {input} is the audio file; {model} and {language} are substituted when set; if {output_dir} appears, the transcript is read from the .txt it leaves there instead of stdout. Example: whisper-ctranslate2 {input} --model {model} --language {language} --output_format txt --output_dir {output_dir}',
+      'Local transcription command. {input} is the audio file; {model} and {language} are substituted when set; if {output_dir} appears, the transcript is read from the .txt it leaves there instead of stdout. Example: whisper-ctranslate2 {input} --model {model} --language {language} --output_format txt --output_dir {output_dir}. For a Whisper service on your own host/port that is not OpenAI-compatible, call it from here, e.g. curl -sSf --data-binary @{input} http://127.0.0.1:5951/ | jq -er .text',
     ),
   baseUrl: z
     .string()
