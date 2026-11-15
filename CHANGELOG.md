@@ -5,6 +5,42 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-11-15
+
+### Added
+
+- **`permissions.mode: relaxed`** — everything runs except dangerous
+  commands, which still ask: recursive or forced `rm`, `sudo`, `chmod`/`chown`,
+  `kill`, `systemctl` changes, `git push`/`reset --hard`/`clean`, package
+  installs, `docker`/`ssh`/`rsync`, network sends and `curl … | sh`,
+  redirection outside the workspace, inline shell code and command
+  substitution. It needs a verified Bash sandbox and behaves exactly like
+  `ask` without one. `ask` stays the default.
+- **`/permissions` in Telegram** — see the mode, switch between `ask` and
+  `relaxed`, list and revoke remembered grants. `allowlist` and
+  `unrestricted` cannot be set from chat.
+- **An MCP memory server as primary memory** (`memory.backend`, default
+  `auto`; `memory.mcpServer`, default `engram`). Remember/Recall/Forget go to
+  the server directly. Before each turn relevant notes are recalled and sent
+  with that turn's message (never stored in history, never in the system
+  prompt, so prefix caches keep working); after each turn the exchange is
+  saved, and compaction summaries too. Secrets are never stored.
+
+### Changed
+
+- Far fewer false approval prompts in every mode: globs and braces that
+  cannot turn into a flag (`src/*.ts`, `--include=*.ts`), `"$VAR"` in
+  double quotes, leading `DISPLAY=…`-style assignments and read-only `sed`
+  no longer ask. `LD_*`, `PATH`, `GIT_*`, `PAGER`, `EDITOR` and similar
+  assignments, `sed -i`, and variables the same command sets itself still do.
+- Telegram: after a permission prompt the reply continues in a new message
+  below it, so the answer is always the newest message in the chat.
+
+### Fixed
+
+- Tests no longer touch the developer's real `~/.asterisk`: every test file
+  gets a temporary home.
+
 ## [0.7.1] - 2026-11-15
 
 ### Changed
