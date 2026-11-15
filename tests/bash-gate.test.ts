@@ -21,6 +21,7 @@ import {
   onApprovalRequest,
   resolveApproval,
 } from '../src/tools/approval.ts';
+import { authoriseBashCommand } from '../src/tools/bash-gate.ts';
 import { bashTool } from '../src/tools/bash.ts';
 
 let home: string;
@@ -156,18 +157,77 @@ describe('Bash tool with the permission gate', () => {
     const first = await bashTool.execute({ command: 'printf one' });
     expect(first.isError).toBe(false);
     expect(asked).toBe(1);
-    expect(grantedAllowRules(getDb())).toEqual(['printf one']);
+    expect(grantedAllowRules(getDb())).toEqual(['printf']);
 
-    // The grant is scoped to `printf one`, so the same rule matches again…
+    // An ordinary program's grant covers later argument changes too.
     const second = await bashTool.execute({ command: 'printf one' });
     expect(second.isError).toBe(false);
     expect(asked).toBe(1);
 
-    // …but a different subcommand is still a fresh decision.
     const third = await bashTool.execute({ command: 'printf two' });
     expect(third.isError).toBe(false);
-    expect(asked).toBe(2);
+    expect(asked).toBe(1);
     stop();
+  });
+
+  it.each([
+    [
+      "ps -eo pid,etime,cmd --sort=-etime | grep -E 'next|bun|node|playwright' | grep -v grep | head -12",
+      ['ps'],
+    ],
+    [
+      'cd ~/.asterisk && sqlite3 asterisk.db "select id from memories limit 1"',
+      ['sqlite3', 'read:asterisk-home'],
+    ],
+    [
+      'cd /tmp/mission-control-app && timeout 240 node --test --experimental-strip-types lib/x.test.ts 2>&1 | tail -25',
+      ['node --test'],
+    ],
+  ])('shows exactly the missing rules for %s', async (command, rules) => {
+    const seen: string[][] = [];
+    onApprovalRequest((req) => {
+      seen.push([...req.rules]);
+      resolveApproval(req.id, 'deny');
+    });
+    expect((await authoriseBashCommand(command)).allowed).toBe(false);
+    expect(seen).toEqual([rules]);
+  });
+
+  it('omits existing grants from a mixed prompt', async () => {
+    withPermissions({ allow: ['ps'] });
+    const seen: string[][] = [];
+    onApprovalRequest((req) => {
+      seen.push([...req.rules]);
+      resolveApproval(req.id, 'deny');
+    });
+    await authoriseBashCommand('ps aux | head -5; printf hello');
+    expect(seen).toEqual([['printf']]);
+  });
+
+  it('reuses a ps grant when its flags change', async () => {
+    let asked = 0;
+    onApprovalRequest((req) => {
+      asked += 1;
+      resolveApproval(req.id, 'allow-always');
+    });
+    expect((await authoriseBashCommand('ps -eo pid,etime,cmd --sort=-etime')).allowed).toBe(true);
+    expect(grantedAllowRules(getDb())).toEqual(['ps']);
+    expect((await authoriseBashCommand('ps aux | head -5')).allowed).toBe(true);
+    expect(asked).toBe(1);
+  });
+
+  it('reuses a wrapped node test grant while still prompting for inline code', async () => {
+    let asked = 0;
+    onApprovalRequest((req) => {
+      asked += 1;
+      resolveApproval(req.id, asked === 1 ? 'allow-always' : 'deny');
+    });
+    expect((await authoriseBashCommand('timeout 240 node --test x.test.ts')).allowed).toBe(true);
+    expect(grantedAllowRules(getDb())).toEqual(['node --test']);
+    expect((await authoriseBashCommand('timeout 100 node --test other.ts')).allowed).toBe(true);
+    expect(asked).toBe(1);
+    expect((await authoriseBashCommand('node -e "1"')).allowed).toBe(false);
+    expect(asked).toBe(2);
   });
 
   it('honours permissions.deny ahead of everything, without prompting', async () => {
@@ -222,7 +282,7 @@ describe('Bash tool with the permission gate', () => {
     expect(plain.isError).toBe(false);
   });
 
-  it('remembers the payload, not the binary, when a flag leads the command', async () => {
+  it('remembers the payload when an interpreter receives inline code', async () => {
     // The suggested rule used to collapse to the bare binary whenever the
     // first word was a flag, so one "allow always" on `node -e "…"` granted
     // every future `node` invocation.
@@ -232,16 +292,16 @@ describe('Bash tool with the permission gate', () => {
       resolveApproval(req.id, 'allow-always');
     });
 
-    const first = await bashTool.execute({ command: 'printf -- one' });
+    const first = await bashTool.execute({ command: 'node -e "1"' });
     expect(first.isError).toBe(false);
-    expect(grantedAllowRules(getDb())).toEqual(['printf -- one']);
+    expect(grantedAllowRules(getDb())).toEqual(['node -e 1']);
 
     // The grant covers the invocation it was given for…
-    await bashTool.execute({ command: 'printf -- one' });
+    await bashTool.execute({ command: 'node -e "1"' });
     expect(asked).toBe(1);
 
     // …and not the next payload behind the same flag.
-    await bashTool.execute({ command: 'printf -- two' });
+    await bashTool.execute({ command: 'node -e "2"' });
     expect(asked).toBe(2);
   });
 
@@ -344,8 +404,8 @@ describe('/permissions', () => {
     onApprovalRequest((req) => resolveApproval(req.id, 'allow-always'));
     await bashTool.execute({ command: 'printf remembered' });
 
-    expect(await run('')).toContain('printf remembered');
-    expect(await run('revoke printf remembered')).toContain('Revoked');
+    expect(await run('')).toContain('printf');
+    expect(await run('revoke printf')).toContain('Revoked');
     expect(grantedAllowRules(getDb())).toEqual([]);
   });
 

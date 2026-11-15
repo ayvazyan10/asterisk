@@ -10,7 +10,12 @@ import { loadConfig } from '../config/load.ts';
 import { getDb } from '../db/index.ts';
 import { grantRules, grantedAllowRules } from '../db/permissions.ts';
 import { requestApproval } from './approval.ts';
-import { type PolicyInput, evaluateCommand, suggestRules } from './bash-permissions.ts';
+import {
+  ASTERISK_HOME_READ_RULE,
+  type PolicyInput,
+  evaluateCommand,
+  suggestRules,
+} from './bash-permissions.ts';
 import { checkOutboundUrl } from './ssrf-guard.ts';
 import type { Tool } from './types.ts';
 import { isAsteriskHomePath, protectedWriteReason } from './write-policy.ts';
@@ -87,7 +92,7 @@ export async function authoriseBashCommand(
     return { allowed: false, message: `refused: ${decision.reason}.` };
   }
 
-  const rules = suggestRules(decision.segments);
+  const rules = suggestRules(decision.segments, policy.allow);
   return approve(command, decision.reason, rules, policy, signal);
 }
 
@@ -104,6 +109,7 @@ export async function authoriseTool(
   if ((tool.name === 'Write' || tool.name === 'Edit') && path) {
     reason = protectedWriteReason(path);
   } else if (tool.name === 'Read' && path && isAsteriskHomePath(path)) {
+    rules.push(ASTERISK_HOME_READ_RULE);
     reason = 'the Asterisk home can contain secrets';
   } else if (tool.name === 'RemoteTrigger' || tool.name === 'PushNotification') {
     const url =
@@ -137,8 +143,7 @@ export async function authoriseTool(
   if (policy.mode === 'allowlist') {
     return { allowed: false, message: `refused: ${reason} (permissions.mode is allowlist).` };
   }
-  // Protected paths deliberately have no persistent grant: writes there and
-  // reads of the secret store require a fresh decision every time.
+  // Protected writes deliberately have no persistent grant.
   return approve(`${tool.name} ${JSON.stringify(input)}`, reason, rules, policy, signal);
 }
 

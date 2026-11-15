@@ -140,6 +140,56 @@ describe('protected file access', () => {
     expect(seen).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['Bash', 'Read'])(
+    'shares an Asterisk-home grant remembered by %s with both tools',
+    async (name) => {
+      const first = join(home, 'a.txt');
+      const second = join(home, 'b.txt');
+      await writeFile(first, 'first');
+      await writeFile(second, 'second');
+      await symlink(home, join(workspace, 'alias'));
+      const seen = answer('allow-always');
+      const input = name === 'Bash' ? { command: `cat ${first}` } : { path: first };
+      expect((await execute(name, input)).isError).toBe(false);
+      expect(seen.mock.calls[0]?.[0].rules).toEqual(['read:asterisk-home']);
+      expect(grantedAllowRules(getDb())).toEqual(['read:asterisk-home']);
+
+      expect((await execute('Bash', { command: `cat ${second}` })).isError).toBe(false);
+      expect((await execute('Read', { path: second })).isError).toBe(false);
+      expect((await execute('Read', { path: join(workspace, 'alias/a.txt') })).isError).toBe(false);
+      expect(seen).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('still asks every time for environment dumps and protected writes with a home-read grant', async () => {
+    grantRules(getDb(), ['read:asterisk-home', 'env']);
+    const seen = answer('allow-always');
+    for (let i = 0; i < 2; i += 1) {
+      expect((await execute('Bash', { command: 'env' })).isError).toBe(false);
+      expect((await execute('Write', { path: join(home, 'a'), content: 'old' })).isError).toBe(
+        false,
+      );
+      expect(
+        (await execute('Edit', { path: join(home, 'a'), oldString: 'old', newString: 'new' }))
+          .isError,
+      ).toBe(false);
+    }
+    expect(seen).toHaveBeenCalledTimes(6);
+    expect(grantedAllowRules(getDb())).toEqual(['env', 'read:asterisk-home']);
+    expect(seen.mock.calls.every(([req]) => req.rules.length === 0)).toBe(true);
+  });
+
+  it('applies a home-read deny rule to Bash and Read before a remembered grant', async () => {
+    const path = join(home, 'a.txt');
+    await writeFile(path, 'secret');
+    grantRules(getDb(), ['read:asterisk-home']);
+    configure({ deny: ['read:asterisk-home'] });
+    const seen = answer();
+    expect((await execute('Read', { path })).isError).toBe(true);
+    expect((await execute('Bash', { command: `cat ${path}` })).isError).toBe(true);
+    expect(seen).not.toHaveBeenCalled();
+  });
+
   it('recognises a symlink to Git config before a write', async () => {
     await mkdir(join(workspace, '.git'));
     await symlink(join(workspace, '.git/config'), join(workspace, 'config-alias'));
@@ -152,6 +202,7 @@ describe('protected file access', () => {
 
   it('asks for install-directory writes even with the workspace guard disabled', async () => {
     vi.stubEnv('ASTERISK_NO_WORKSPACE_GUARD', '1');
+    grantRules(getDb(), ['read:asterisk-home']);
     const seen = answer('deny');
     const result = await execute('Write', {
       path: join(PROJECT_ROOT, 'permission-test-must-not-exist'),
@@ -163,12 +214,13 @@ describe('protected file access', () => {
   });
 
   it('requires fresh consent for protected paths after allow-always', async () => {
+    grantRules(getDb(), ['read:asterisk-home']);
     const seen = answer('allow-always');
     const input = { path: join(workspace, '.git/config'), content: '[core]' };
     await execute('Write', input);
     await execute('Write', input);
     expect(seen).toHaveBeenCalledTimes(2);
-    expect(grantedAllowRules(getDb())).toEqual([]);
+    expect(grantedAllowRules(getDb())).toEqual(['read:asterisk-home']);
   });
 });
 

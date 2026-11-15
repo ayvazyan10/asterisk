@@ -146,6 +146,8 @@ describe('policy — commands that run without asking', () => {
   it.each([
     'ls -la',
     'pwd',
+    'cd /some/path',
+    'cd ~/.asterisk',
     'cat package.json',
     'git status',
     'git status --short',
@@ -178,6 +180,61 @@ describe('policy — commands that run without asking', () => {
     // `head` is allowlisted, `npm` is not, and a pipeline is only as
     // auto-approvable as its least approvable stage.
     expect(decide('npm test 2>&1 | head -50').action).toBe('ask');
+  });
+});
+
+describe('transparent command wrappers', () => {
+  it.each([
+    'nice -n 5 git status',
+    'nice --adjustment=-5 git status',
+    'nice -n5 git status',
+    'timeout --signal=KILL 5 ls',
+    'timeout -s TERM -k 2s --preserve-status 5s ls',
+    'timeout -sKILL -k1 0.5m ls',
+    'nohup ls',
+    'nohup -- ls',
+    'time ls',
+    'time -p ls',
+    'stdbuf -oL ls',
+    'stdbuf -i 0 -e0 --output=L ls',
+    'timeout 5 nice -n 5 nohup stdbuf -oL git status',
+  ])('judges the inner command in %s', (command) => {
+    expect(decide(command).action).toBe('allow');
+    expect(suggestRules(parseCommand(command).segments)).toEqual([]);
+  });
+
+  it('uses inner grants and suggests only the inner program', () => {
+    expect(decide('timeout 100 node --test other.ts', { allow: ['node --test'] }).action).toBe(
+      'allow',
+    );
+    expect(decide('timeout 100 node -e "1"', { allow: ['node --test'] }).action).toBe('ask');
+    expect(decide('timeout 5s rm -rf x').action).toBe('ask');
+    expect(suggestRules(parseCommand('timeout 5s rm -rf x').segments)).toEqual(['rm']);
+  });
+
+  it.each([
+    'timeout --unknown 5 ls',
+    'timeout -s',
+    'timeout later ls',
+    'timeout 5',
+    'nice -n nope ls',
+    'nice -n',
+    'nohup --help ls',
+    'time -o /tmp/timing ls',
+    'stdbuf ls',
+    'stdbuf -o',
+  ])('keeps an unparseable wrapper opaque: %s', (command) => {
+    expect(decide(command, { allow: ['timeout', 'nice', 'nohup', 'time', 'stdbuf'] }).action).toBe(
+      'ask',
+    );
+    expect(suggestRules(parseCommand(command).segments)).toEqual([]);
+  });
+
+  it('keeps deny rules and forbidden arguments effective through wrappers', () => {
+    expect(decide('timeout 5 git status', { deny: ['git'] }).action).toBe('deny');
+    expect(decide('timeout 5 git status', { deny: ['timeout'] }).action).toBe('deny');
+    expect(decide('nice -n 5 rg --pre=sh x', { allow: ['rg'] }).action).toBe('ask');
+    expect(decide('timeout 5 ./git status').action).toBe('ask');
   });
 });
 
@@ -334,6 +391,18 @@ describe('policy — arguments that break a read-only promise', () => {
     expect(d.reason).toContain('--compress-program=/bin/sh');
   });
 
+  it.each([
+    ['find', 'find . -name x', "find . -exec rm '{}' \\;", '-exec'],
+    ['sort', 'sort file', 'sort -o /tmp/out file', '-o'],
+    ['git log', 'git log --oneline', 'git log -c core.pager=sh', '-c'],
+    ['rg', 'rg x file', 'rg --pre=sh x file', '--pre'],
+  ])('keeps forbidden arguments above a remembered %s grant', (rule, safe, unsafe, flag) => {
+    expect(decide(safe, { allow: [rule] }).action).toBe('allow');
+    const decision = decide(unsafe, { allow: [rule] });
+    expect(decision.action).toBe('ask');
+    expect(decision.reason).toContain(flag);
+  });
+
   it('names the operand a read-only command would have written', () => {
     // `uniq [INPUT [OUTPUT]]` writes its second operand — a write primitive
     // with no flag to key on, which is why the operand count is checked too.
@@ -359,7 +428,7 @@ describe('policy — deny covers the spellings a ban has to reach', () => {
 
   it('denies before anything can be remembered under another spelling', () => {
     expect(suggestRules(parseCommand('/usr/bin/curl http://x').segments)).toEqual([
-      '/usr/bin/curl http://x',
+      '/usr/bin/curl',
     ]);
     expect(decide('/usr/bin/curl http://x', { deny: ['curl'] }).action).toBe('deny');
   });
@@ -395,8 +464,8 @@ describe('policy — modes and rule precedence', () => {
     expect(decide('npm test', { allow: ['npm test'] }).action).toBe('allow');
   });
 
-  it('does not interpret MCP or network grants as Bash rules', () => {
-    for (const rule of ['mcp:fake/send', 'network:https://example.com']) {
+  it('does not interpret tool grants as Bash rules', () => {
+    for (const rule of ['mcp:fake/send', 'network:https://example.com', 'read:asterisk-home']) {
       expect(decide(rule, { allow: [rule] }).action).toBe('ask');
     }
   });
@@ -422,6 +491,20 @@ describe('policy — secret reads', () => {
     'cat ~/.asterisk/key=backup',
     'grep --file=~/.asterisk/secrets.env README.md',
     'grep -a sk- ~/.asterisk/asterisk.db',
+    'cd ~/.asterisk && cat secrets.env',
+  ])('requires a separate home-read grant for %s', (command) => {
+    expect(decide(command, { allow: ['cat', 'grep'] }).action).toBe('ask');
+    expect(decide(command, { allow: ['read:asterisk-home'] }).action).toBe('allow');
+    expect(decide(command, { mode: 'allowlist', allow: ['read:asterisk-home'] }).action).toBe(
+      'allow',
+    );
+    expect(decide(command, { mode: 'allowlist' }).action).toBe('deny');
+    expect(
+      decide(command, { allow: ['read:asterisk-home'], deny: ['read:asterisk-home'] }).action,
+    ).toBe('deny');
+  });
+
+  it.each([
     'env',
     'printenv',
     'jq -n env',
@@ -435,10 +518,26 @@ describe('policy — secret reads', () => {
   ])('requires fresh approval for %s, even with a matching allow rule', (command) => {
     expect(decide(command).action).toBe('ask');
     expect(
-      decide(command, { allow: [command, ...suggestRules(parseCommand(command).segments)] }).action,
+      decide(command, {
+        allow: ['read:asterisk-home', command, ...suggestRules(parseCommand(command).segments)],
+      }).action,
     ).toBe('ask');
     expect(decide(command, { mode: 'allowlist' }).action).toBe('deny');
     expect(decide(command, { mode: 'unrestricted' }).action).toBe('allow');
+  });
+
+  it('does not let a home argument hide an environment read', () => {
+    expect(
+      decide('cat ~/.asterisk/x /proc/self/environ', { allow: ['read:asterisk-home'] }).action,
+    ).toBe('ask');
+    expect(decide('cd ~/.asterisk && jq -n env', { allow: ['read:asterisk-home'] }).action).toBe(
+      'ask',
+    );
+  });
+
+  it('still considers earlier directories when cd runs conditionally or in a pipeline', () => {
+    expect(decide('cd ~/.asterisk && cd /tmp || cat secrets.env').action).toBe('ask');
+    expect(decide('cd ~/.asterisk && cd /tmp | cat secrets.env').action).toBe('ask');
   });
 
   it('still allows ordinary reads and jq filters', () => {
@@ -472,16 +571,64 @@ describe('rule matching', () => {
   it('suggests binary-plus-subcommand granularity', () => {
     expect(suggestRules(parseCommand('npm test --run').segments)).toEqual(['npm test']);
     expect(suggestRules(parseCommand('npm test && npm test').segments)).toEqual(['npm test']);
-    expect(suggestRules(parseCommand('pwd').segments)).toEqual(['pwd']);
+    expect(suggestRules(parseCommand('pwd').segments)).toEqual([]);
   });
 
-  it('remembers a trailing flag as written instead of collapsing to the binary', () => {
-    // Contract change: `ls -la` used to suggest bare `ls`. A flag-led command
-    // has no subcommand to narrow to, and the binary alone is not a narrowing.
-    // A flag with nothing after it is the whole command, so it is remembered
-    // exactly as the user read it.
-    expect(suggestRules(parseCommand('ls -la').segments)).toEqual(['ls -la']);
-    expect(suggestRules(parseCommand('tsc --noEmit').segments)).toEqual(['tsc --noEmit']);
+  it.each([
+    ['ps -eo pid,etime,cmd --sort=-etime', ['ps']],
+    ['sqlite3 -json asterisk.db "select 1"', ['sqlite3']],
+    ['sqlite3 asterisk.db "select 1"', ['sqlite3']],
+    ['tsc --noEmit', ['tsc']],
+    ['docker ps -a', ['docker ps']],
+    ['docker -H tcp://10.0.0.1:2375 ps', ['docker']],
+    ['python3 -m pytest -q', ['python3 -m']],
+    ['node --test lib/x.test.ts', ['node --test']],
+    ['bun test lib/x.test.ts', ['bun test']],
+    ['ls -la', []],
+    ['cd /some/path', []],
+    ['cd ~/.asterisk', []],
+    ['git log --oneline -5 | wc -l', []],
+  ])('suggests useful program rules for %s', (command, rules) => {
+    expect(suggestRules(parseCommand(command).segments)).toEqual(rules);
+  });
+
+  it.each([
+    'git',
+    'npm',
+    'pnpm',
+    'yarn',
+    'bun',
+    'cargo',
+    'docker',
+    'kubectl',
+    'systemctl',
+    'gh',
+    'go',
+    'pip',
+    'apt',
+  ])('keeps the subcommand for %s', (bin) => {
+    expect(suggestRules(parseCommand(`${bin} custom extra`).segments)).toEqual([`${bin} custom`]);
+  });
+
+  it('suggests only missing grants in the observed pipelines', () => {
+    const ps =
+      "ps -eo pid,etime,cmd --sort=-etime | grep -E 'next|bun|node|playwright' | grep -v grep | head -12";
+    expect(suggestRules(parseCommand(ps).segments)).toEqual(['ps']);
+    expect(suggestRules(parseCommand(ps).segments, ['ps'])).toEqual([]);
+    expect(decide('ps aux | head -5', { allow: ['ps'] }).action).toBe('allow');
+    const sqlite = 'cd ~/.asterisk && sqlite3 asterisk.db "select id from memories limit 1"';
+    expect(suggestRules(parseCommand(sqlite).segments)).toEqual(['sqlite3', 'read:asterisk-home']);
+    expect(suggestRules(parseCommand(sqlite).segments, ['sqlite3'])).toEqual([
+      'read:asterisk-home',
+    ]);
+    expect(suggestRules(parseCommand(sqlite).segments, ['read:asterisk-home'])).toEqual([
+      'sqlite3',
+    ]);
+    expect(decide(sqlite, { allow: ['sqlite3', 'read:asterisk-home'] }).action).toBe('allow');
+    const node =
+      'cd /tmp/mission-control-app && timeout 240 node --test --experimental-strip-types lib/x.test.ts 2>&1 | tail -25';
+    expect(suggestRules(parseCommand(node).segments)).toEqual(['node --test']);
+    expect(suggestRules(parseCommand(node).segments, ['node --test'])).toEqual([]);
   });
 
   it('pins the payload a flag carries instead of collapsing to the binary', () => {
@@ -494,10 +641,32 @@ describe('rule matching', () => {
       'node -e console.log(1)',
     ]);
     expect(suggestRules(parseCommand('bash -lc make').segments)).toEqual(['bash -lc make']);
-    expect(suggestRules(parseCommand('python3 -m pytest').segments)).toEqual(['python3 -m pytest']);
-    expect(suggestRules(parseCommand('docker -H tcp://10.0.0.1:2375 ps').segments)).toEqual([
-      'docker -H tcp://10.0.0.1:2375 ps',
-    ]);
+    expect(suggestRules(parseCommand('bash -lc "ls"').segments)).toEqual(['bash -lc ls']);
+    expect(suggestRules(parseCommand('node -e "1"').segments)).toEqual(['node -e 1']);
+  });
+
+  it.each([
+    ['node --test -e "1"', ['node --test -e 1']],
+    ['node --eval=1', ['node --eval=1']],
+    ['node -p "1"', ['node -p 1']],
+    ['python3 -c "print(1)"', ['python3 -c print(1)']],
+    ['perl -E "1"', ['perl -E 1']],
+    ['perl -ne "1"', ['perl -ne 1']],
+    ['ruby -ne "1"', ['ruby -ne 1']],
+    ['perl -i backup file', ['perl -i backup file']],
+    ['php -r "1"', ['php -r 1']],
+    ['deno eval "1"', ['deno eval 1']],
+    ['pwsh -Command "1"', ['pwsh -Command 1']],
+    ['eval echo hi', ['eval echo hi']],
+    ['sudo ls /tmp', ['sudo ls /tmp']],
+    ['su owner -c ls', ['su owner -c ls']],
+    ['ssh host ls /tmp', ['ssh host ls /tmp']],
+    ['env FOO=1 node file.js', ['env FOO=1 node file.js']],
+    ['xargs -n 1 rm', ['xargs -n 1 rm']],
+    ['/usr/bin/node -e "1"', ['/usr/bin/node -e 1']],
+    ['bash -lc "make test"', []],
+  ])('pins command-line code and re-entry in %s', (command, rules) => {
+    expect(suggestRules(parseCommand(command).segments)).toEqual(rules);
   });
 
   it('remembers only the payload that was approved', () => {
@@ -517,15 +686,14 @@ describe('rule matching', () => {
     expect(suggestRules(parseCommand('sh -c "rm -rf /"').segments)).toEqual([]);
   });
 
-  it('never suggests a bare interpreter or container runtime', () => {
+  it('never suggests a bare interpreter for code or script execution', () => {
     // The rule the prompt offers must never widen to the binary itself.
-    const forbidden = new Set(['bash', 'sh', 'node', 'python3', 'docker']);
+    const forbidden = new Set(['bash', 'sh', 'node', 'python3']);
     for (const command of [
       'node -e "console.log(1)"',
       'bash -lc "make"',
       'sh -c "id"',
       'python3 -m pytest',
-      'docker -H tcp://10.0.0.1:2375 ps',
       'bash --norc',
       'node --experimental-vm-modules',
     ]) {
@@ -618,6 +786,38 @@ describe('remembered grants', () => {
     grantRules(db, ['npm test']);
     expect(grantedAllowRules(db)).toEqual(['npm test']);
     expect(decide('npm test', { allow: grantedAllowRules(db) }).action).toBe('allow');
+  });
+
+  it('keeps existing invocation grants working without a migration', () => {
+    const db = fresh();
+    const oldRules = [
+      'ps -eo pid,etime,cmd --sort=-etime',
+      'sqlite3 asterisk.db',
+      'python3 -m pytest -q',
+    ];
+    grantRules(db, oldRules);
+    for (const command of oldRules) {
+      expect(decide(command, { allow: grantedAllowRules(db) }).action).toBe('allow');
+    }
+    expect(decide('ps aux', { allow: grantedAllowRules(db) }).action).toBe('ask');
+    expect(grantedAllowRules(db)).toEqual([...oldRules].sort());
+  });
+
+  it('does not let an old wrapper grant cover whatever the wrapper runs', () => {
+    const db = fresh();
+    grantRules(db, ['timeout 240']);
+    const allow = grantedAllowRules(db);
+    const command = 'timeout 240 node --test x.test.ts';
+    expect(decide(command, { allow }).action).toBe('ask');
+    expect(suggestRules(parseCommand(command).segments, allow)).toEqual(['node --test']);
+    expect(decide('timeout 240 rm -rf /tmp/x', { allow }).action).toBe('ask');
+    expect(decide('timeout 240 ls', { allow }).action).toBe('allow');
+    expect(decide("timeout 240 find . -exec rm '{}' \\;", { allow }).action).toBe('ask');
+    expect(decide('timeout 240 cat ~/.asterisk/x', { allow }).action).toBe('ask');
+    expect(decide('timeout 240 env', { allow: [...allow, 'read:asterisk-home'] }).action).toBe(
+      'ask',
+    );
+    expect(decide('timeout --unknown 240 ls', { allow }).action).toBe('ask');
   });
 
   it('is idempotent and keeps the original grant time', () => {

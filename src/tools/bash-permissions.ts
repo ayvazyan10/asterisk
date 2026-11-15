@@ -30,6 +30,8 @@ export interface PolicyInput {
   deny: readonly string[];
 }
 
+export const ASTERISK_HOME_READ_RULE = 'read:asterisk-home';
+
 /**
  * Options that turn an otherwise read-only command into an execution or
  * write primitive. Checked against every argument of a command
@@ -109,9 +111,10 @@ const MAX_OPERANDS: Record<string, number> = { uniq: 1 };
  * from this list simply prompts once and can be remembered by the user.
  *
  * Notably absent, and not by oversight — `sed` (`-i` writes, GNU `e`
- * executes), `awk` (`system()`), `env`/`xargs`/`timeout`/`nohup` (they run
+ * executes), `awk` (`system()`), `env`/`xargs` (they run
  * another program), `sh`/`bash`/`eval`/`source` (they re-enter the shell),
- * and `curl`/`wget` (network egress is not read-only).
+ * and `curl`/`wget` (network egress is not read-only). Transparent wrappers
+ * such as timeout and nohup are judged by their inner command instead.
  */
 const DEFAULT_ALLOW: readonly string[] = [
   'ls',
@@ -186,13 +189,30 @@ export function evaluateCommand(command: string, input: PolicyInput): Permission
     return { action: 'allow', reason: 'permissions.mode is unrestricted' };
   }
 
+  const segments = parsed.segments.map((segment) => {
+    const inner = unwrapSegment(segment);
+    if (inner) return inner;
+    parsed.opaque.push(`an unrecognised ${segment.bin} wrapper`);
+    return segment;
+  });
+  const reads = secretReads(segments);
+
   // Deny is absolute — it outranks the defaults, the user's allow list and
   // anything previously remembered, and it never reaches a prompt.
-  const denied = firstDenied(parsed.segments, input.deny);
+  const denied = firstDenied([...parsed.segments, ...segments], input.deny);
   if (denied) {
     return {
       action: 'deny',
       reason: `"${denied.segment.raw}" matches the deny rule "${denied.rule}"`,
+    };
+  }
+  if (
+    input.deny.includes(ASTERISK_HOME_READ_RULE) &&
+    [...reads.values()].some((read) => read.rule === ASTERISK_HOME_READ_RULE)
+  ) {
+    return {
+      action: 'deny',
+      reason: `reading the Asterisk home matches "${ASTERISK_HOME_READ_RULE}"`,
     };
   }
 
@@ -210,10 +230,15 @@ export function evaluateCommand(command: string, input: PolicyInput): Permission
   }
 
   const allow = [...DEFAULT_ALLOW, ...input.allow];
-  for (const segment of parsed.segments) {
-    const secret = secretRead(segment);
-    if (secret) return refuse(`"${segment.raw}" ${secret}`);
+  for (const [index, segment] of segments.entries()) {
+    const secret = reads.get(segment);
+    if (secret && (!secret.rule || !input.allow.includes(secret.rule))) {
+      return refuse(`"${segment.raw}" ${secret.reason}`);
+    }
 
+    // Only the inner command decides. An old grant for a wrapper invocation
+    // (`timeout 240`) must not cover whatever is wrapped: it would have
+    // approved `timeout 240 rm -rf ~` as readily as the test run it was for.
     const rule = matchingRule(segment, allow);
     if (!rule) return refuse(`"${segment.raw}" is not on the allowlist`);
 
@@ -226,53 +251,136 @@ export function evaluateCommand(command: string, input: PolicyInput): Permission
   return { action: 'allow', reason: 'every part of the command is allowlisted' };
 }
 
-/** Secret access is never covered by an ordinary read-only or remembered
- *  binary rule. Expansions and redirections already require consent above. */
-function secretRead(segment: CommandSegment): string | null {
-  for (const form of denyForms(segment)) {
-    if (
-      form.bin === 'env' ||
-      form.bin === 'printenv' ||
-      form.bin === 'set' ||
-      (form.bin === 'jq' && form.args.some((arg) => /\benv\b|\$ENV\b/.test(arg))) ||
-      (form.bin === 'export' && form.args.some((arg) => /^-[^-]*p/.test(arg))) ||
-      (form.bin === 'declare' && form.args.some((arg) => /^-[^-]*x/.test(arg)))
-    ) {
-      return 'can dump environment variables';
+/** Binary grants never cover secrets. Home reads have their own grant;
+ *  environment dumps still require fresh consent. */
+function secretReads(
+  segments: readonly CommandSegment[],
+): Map<CommandSegment, { reason: string; rule: string | null }> {
+  const reads = new Map<CommandSegment, { reason: string; rule: string | null }>();
+  let directories = [process.cwd()];
+  for (const segment of segments) {
+    // cd itself reads no file. Keep possible earlier directories too: a cd
+    // can fail or run in a pipeline, so later relative reads may use either.
+    if (segment.bin === 'cd') {
+      const path = segment.args.find((arg) => !arg.startsWith('-')) ?? '~';
+      directories = [
+        ...new Set([...directories, ...directories.map((dir) => resolve(dir, expandHome(path)))]),
+      ];
+      continue;
+    }
+    let reason: string | null = null;
+    let homeRead = false;
+    for (const form of denyForms(segment)) {
+      if (
+        form.bin === 'env' ||
+        form.bin === 'printenv' ||
+        form.bin === 'set' ||
+        (form.bin === 'jq' && form.args.some((arg) => /\benv\b|\$ENV\b/.test(arg))) ||
+        (form.bin === 'export' && form.args.some((arg) => /^-[^-]*p/.test(arg))) ||
+        (form.bin === 'declare' && form.args.some((arg) => /^-[^-]*x/.test(arg)))
+      ) {
+        reason = 'can dump environment variables';
+      }
+    }
+    for (const arg of segment.args) {
+      // Include option values such as grep --file=PATH and jq --from-file=PATH.
+      const value =
+        arg.startsWith('-') && arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg;
+      for (const directory of directories) {
+        const path = resolve(directory, expandHome(value));
+        if (isAsteriskHomePath(path)) homeRead = true;
+        if ([path, resolveWriteTarget(path)].some((p) => /^\/proc\/[^/]+\/environ$/.test(p))) {
+          reason = 'reads a process environment';
+        }
+      }
+    }
+    if (reason) reads.set(segment, { reason, rule: null });
+    else if (homeRead) {
+      reads.set(segment, {
+        reason: 'reads the Asterisk home, which can contain secrets',
+        rule: ASTERISK_HOME_READ_RULE,
+      });
     }
   }
-  for (const arg of segment.args) {
-    // Include option values such as grep --file=PATH and jq --from-file=PATH.
-    const value = arg.startsWith('-') && arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg;
-    const path = resolve(expandHome(value));
-    if (isAsteriskHomePath(path)) return 'reads the Asterisk home, which can contain secrets';
-    if ([path, resolveWriteTarget(path)].some((p) => /^\/proc\/[^/]+\/environ$/.test(p))) {
-      return 'reads a process environment';
-    }
-  }
-  return null;
+  return reads;
 }
 
 /**
- * The rules a "always allow this" answer would store, one per segment.
+ * The rules an "always allow this" answer would store for parts still needing
+ * approval. Ordinary programs are remembered by binary, so changing a flag or
+ * filename does not prompt again. Subcommand tools keep `npm test` rather than
+ * bare `npm`, which would also cover `npm publish`. The prompt shows exactly
+ * what gets remembered; defaults and existing grants contribute no noise.
  *
- * Granularity is binary plus its first non-flag word, so approving
- * `npm test --run` remembers `npm test` rather than either the exact
- * invocation (useless — the next one differs) or bare `npm` (too broad, it
- * would cover `npm publish`). A command that starts with a flag has no such
- * word and is handled below, where the exact invocation is the right answer
- * rather than the useless one. The prompt shows these back to the user, so
- * what gets remembered is never a surprise — and a segment that cannot be
- * expressed as a rule contributes none, which the prompt renders as a plain
- * "allow always" with nothing listed.
+ * Interpreters keep their first argument even when it is a flag (`node --test`,
+ * `python3 -m`). Inline code and command re-entry need the payload pinned below.
  */
-export function suggestRules(segments: readonly CommandSegment[]): string[] {
-  return [...new Set(segments.flatMap(suggestRule))];
+export function suggestRules(
+  segments: readonly CommandSegment[],
+  granted: readonly string[] = [],
+): string[] {
+  const inner = segments.map(unwrapSegment);
+  const reads = secretReads(inner.filter((segment) => segment !== null));
+  const allow = [...DEFAULT_ALLOW, ...granted];
+  const rules: string[] = [];
+  for (const [index, segment] of inner.entries()) {
+    if (!segment) continue;
+    if (!matchingRule(segment, allow)) {
+      rules.push(...suggestRule(segment));
+    }
+    const readRule = reads.get(segment)?.rule;
+    if (readRule && !granted.includes(readRule)) rules.push(readRule);
+  }
+  return [...new Set(rules)];
 }
 
+const SUBCOMMAND_TOOLS = new Set([
+  'git',
+  'npm',
+  'pnpm',
+  'yarn',
+  'bun',
+  'cargo',
+  'docker',
+  'kubectl',
+  'systemctl',
+  'gh',
+  'go',
+  'pip',
+  'apt',
+]);
+
+const INTERPRETERS = new Set([
+  'bash',
+  'sh',
+  'zsh',
+  'fish',
+  'node',
+  'deno',
+  'bun',
+  'python',
+  'python3',
+  'perl',
+  'ruby',
+  'php',
+  'lua',
+  'Rscript',
+  'osascript',
+  'pwsh',
+  'eval',
+  'exec',
+  'xargs',
+  'env',
+  'sudo',
+  'su',
+  'ssh',
+]);
+
+const COMMAND_REENTRY = new Set(['sudo', 'su', 'ssh', 'env', 'xargs', 'eval']);
+
 /**
- * A flag-led command has no subcommand to narrow to, and the binary alone is
- * no narrowing at all: `bash -lc "make"` used to be remembered as `bash` — the
+ * For inline code, the binary alone is no narrowing at all:
+ * `bash -lc "make"` used to be remembered as `bash` — the
  * binary DEFAULT_ALLOW excludes by name because it re-enters the shell — and
  * `node -e "console.log(1)"` as `node`. One keystroke handed over exactly the
  * arbitrary execution the allowlist exists to withhold.
@@ -280,9 +388,8 @@ export function suggestRules(segments: readonly CommandSegment[]): string[] {
  * Stopping one word later would not fix it: because rules match a prefix of
  * the argument vector, `node -e` still covers every future `-e` payload. What
  * the user approved was the payload, so the payload is what gets remembered —
- * the whole invocation becomes the rule. It stays reusable for the commands
- * people actually repeat (`tsc --noEmit`, `ls -la`, `python3 -m pytest`) and
- * authorises nothing else.
+ * the whole invocation becomes the rule. Re-entry through sudo, ssh, env or
+ * xargs has the same problem, regardless of its first argument.
  *
  * A word containing whitespace cannot be written as a rule at all (rules are
  * whitespace-separated), so those get no suggestion rather than one that
@@ -290,11 +397,77 @@ export function suggestRules(segments: readonly CommandSegment[]): string[] {
  * one-liners that reach this branch.
  */
 function suggestRule(segment: CommandSegment): string[] {
+  const bin = segment.bin.slice(segment.bin.lastIndexOf('/') + 1);
   const first = segment.args[0];
-  if (first === undefined) return [segment.bin];
-  if (!first.startsWith('-')) return [`${segment.bin} ${first}`];
-  const words = [segment.bin, ...segment.args];
+  const words = [segment.bin];
+  if (INTERPRETERS.has(bin)) {
+    const inline = segment.args.some(
+      (arg) =>
+        /^-[ecpE]|^--(?:eval|print)(?:=|$)|^-[A-Za-z]*c$/.test(arg) ||
+        ((bin === 'perl' || bin === 'ruby') && /^-[^-]*[eEp]/.test(arg)) ||
+        (bin === 'perl' && /^-[^-]*i/.test(arg)) ||
+        (bin === 'php' && /^-r/.test(arg)) ||
+        (bin === 'pwsh' && /^-(?:command|encodedcommand|c|ec)$/i.test(arg)) ||
+        (bin === 'deno' && arg === 'eval'),
+    );
+    if (inline || COMMAND_REENTRY.has(bin)) words.push(...segment.args);
+    else if (first !== undefined) words.push(first);
+    else return [];
+  } else if (SUBCOMMAND_TOOLS.has(bin) && first !== undefined && !first.startsWith('-')) {
+    words.push(first);
+  }
   return words.some((w) => /\s/.test(w)) ? [] : [words.join(' ')];
+}
+
+const TRANSPARENT_WRAPPERS = new Set(['timeout', 'nice', 'nohup', 'time', 'stdbuf']);
+
+/** Only unwrap option forms we understand; an unknown wrapper must still ask. */
+function unwrapSegment(segment: CommandSegment): CommandSegment | null {
+  let inner = segment;
+  while (TRANSPARENT_WRAPPERS.has(inner.bin)) {
+    const { bin, args } = inner;
+    let i = 0;
+    while (i < args.length && args[i]?.startsWith('-')) {
+      const arg = args[i] as string;
+      i += 1;
+      if (arg === '--') break;
+      if (bin === 'timeout') {
+        if (['--foreground', '--preserve-status', '--verbose', '-v'].includes(arg)) continue;
+        if (['--signal', '--kill-after', '-s', '-k'].includes(arg)) {
+          if (!args[i] || args[i]?.startsWith('-')) return null;
+          i += 1;
+          continue;
+        }
+        if (/^--(?:signal|kill-after)=.+$|^-[sk].+$/.test(arg)) continue;
+      } else if (bin === 'nice') {
+        if (arg === '-n' || arg === '--adjustment') {
+          if (!/^[+-]?\d+$/.test(args[i] ?? '')) return null;
+          i += 1;
+          continue;
+        }
+        if (/^(?:-n|--adjustment=)[+-]?\d+$|^-\d+$/.test(arg)) continue;
+      } else if (bin === 'time') {
+        if (arg === '-p') continue;
+      } else if (bin === 'stdbuf') {
+        if (/^-[ioe]$|^--(?:input|output|error)$/.test(arg)) {
+          if (!args[i] || args[i]?.startsWith('-')) return null;
+          i += 1;
+          continue;
+        }
+        if (/^-[ioe].+$|^--(?:input|output|error)=.+$/.test(arg)) continue;
+      }
+      return null;
+    }
+    if (bin === 'timeout') {
+      if (!/^(?:\d+(?:\.\d*)?|\.\d+)[smhd]?$/.test(args[i] ?? '')) return null;
+      i += 1;
+    }
+    if (bin === 'stdbuf' && i === 0) return null;
+    const command = args[i];
+    if (!command || command.startsWith('-')) return null;
+    inner = { bin: command, args: args.slice(i + 1), raw: segment.raw };
+  }
+  return inner;
 }
 
 /**
@@ -310,7 +483,8 @@ export function ruleMatches(rule: string, segment: CommandSegment): boolean {
   // These grants share the table, not the shell matcher. A local executable
   // named `mcp:server/tool` must not inherit an MCP grant.
   const trimmed = rule.trim();
-  if (trimmed.startsWith('mcp:') || trimmed.startsWith('network:')) return false;
+  if (trimmed.startsWith('mcp:') || trimmed.startsWith('network:') || trimmed.startsWith('read:'))
+    return false;
   const words = trimmed.split(/\s+/).filter(Boolean);
   if (words.length === 0) return false;
   const argv = [segment.bin, ...segment.args];
