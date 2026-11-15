@@ -5,6 +5,80 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-11-15
+
+A security pass driven by a full code audit, a local-first provider chain
+with a reasoning level per backend, and a redesigned control panel.
+
+### Security
+
+- **One consent layer for every side-effecting tool, not just Bash.** The
+  registry's execution wrapper — the single path the REPL, bots, ACP and
+  RunCode all take — now asks before: Write/Edit to `.git/config`,
+  `.git/hooks`, the Asterisk home or the install directory (every time);
+  Read inside the Asterisk home and Bash secret reads or environment dumps
+  (every time); RemoteTrigger and PushNotification (SSRF-checked first, then
+  "allow always" per origin); and each MCP tool on first use (grant stored
+  as `mcp:<server>/<tool>`, revocable with `/permissions`). Bash children no
+  longer inherit API keys or tokens.
+- **Bash gate bypasses closed.** Unquoted brace and glob expansion
+  (`find . {-exec,touch,X,\;}`, `find . -delet?`), attached and clustered
+  short flags (`sort -oFILE`, `sort -uo`), abbreviated long options
+  (`git show --outp=`), `file -C`, `git --textconv`, and prefix rules that
+  admitted `git remote --verbose add` / `git branch --list -D` now ask
+  instead of running.
+- **The daemon no longer runs in its own install directory.** Its workspace
+  is `ASTERISK_WORKSPACE` or `~/asterisk-workspace` (0700), so a bot turn can
+  no longer rewrite Asterisk's `dist/`, `bin/` or git hooks.
+- Panel browser sessions expire with their 7-day cookie; files written from
+  the panel are 0600.
+
+### Added
+
+- **Local model first, DeepSeek as the automatic fallback.**
+  `providerFallback` defaults to `['deepseek']` (dropped without a key). A
+  backend that fails for availability is skipped for 60 s instead of costing
+  its full timeout every turn, and a known-unreachable local server fails
+  over immediately.
+- **Reasoning level per backend** (`openaiCompatible`, `deepseek`,
+  `anthropic` → `reasoningEffort`; `default` sends nothing). Pick it on the
+  panel's Home, in Settings, or with `/model reasoning` / `/provider
+  reasoning`.
+- **Redesigned control panel** with a new asterisk emblem (favicon, README,
+  REPL banner). Home draws the backend chain, shows which backend is
+  answering, edits its order, and sets the reasoning level; power-user pages
+  and settings move under "Advanced".
+- **Scheduled results reach the chat that asked.** A reminder set from
+  Telegram is delivered there, not only to `daemon.log`.
+- **The daemon picks up provider, chain, model and reasoning changes without
+  a restart**, reconnects an MCP server whose transport died, and connects
+  MCP servers in parallel at startup.
+- `tests-bun/`: a smoke suite under real Bun (bun:sqlite, the web listener,
+  hooks, Bash), run in CI.
+
+### Changed
+
+- Model lists: Claude Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5 first;
+  Sonnet 4.5 (retiring 2026-11-30) removed. `anthropic.model` defaults to
+  `claude-haiku-5-5`, and Claude windows are reported as 1M (Haiku 4.5:
+  200K). DeepSeek picker: `deepseek-flash`, `deepseek-v4-pro`.
+- The history budget is computed from the real request (system prompt, tool
+  schemas, reply reserve) instead of a flat 60% of the window, so 8k–16k
+  local models work; small windows defer tool schemas automatically, and a
+  context overflow compacts once more and retries.
+- Diagnostics flag a missing hosted key only when that backend is in the
+  chain.
+
+### Fixed
+
+- **DeepSeek with tools:** `reasoning_content` from earlier turns was dropped,
+  which the API rejects once tools are in play. It is now passed back on the
+  DeepSeek link only.
+- A hook that does not read its stdin no longer crashes the daemon with an
+  uncaught EPIPE on a large payload.
+- `Retry-After` is honoured up to 60 s instead of without limit.
+- The panel works behind a TLS reverse proxy (HTTPS origins were refused).
+
 ## [0.6.4] - 2026-10-30
 
 Two cron bugs reported by @mattabate (#1, #2), plus a provider to fall back to
