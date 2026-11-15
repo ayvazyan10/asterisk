@@ -47,6 +47,7 @@ export const MAX_TOOL_SCHEMA_FRACTION = 0.25;
  *   out step by step.
  * - Attach — the only way to hand a file to the user, and in the Telegram
  *   daemon that is a routine reply, not an edge case.
+ * - Remember/Recall/Forget — persistent memory, available without discovery.
  * - Enter/ExitPlanMode — ExitPlanMode especially: plan mode filters the tool
  *   list down to read-only tools, and a model that cannot see the exit is
  *   stuck in it.
@@ -69,6 +70,9 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   'WebSearch',
   'WebFetch',
   'Attach',
+  'Remember',
+  'Recall',
+  'Forget',
   'EnterPlanMode',
   'ExitPlanMode',
 ]);

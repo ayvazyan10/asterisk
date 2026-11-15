@@ -3,6 +3,7 @@
 
 import { loadConfig } from '../config/load.ts';
 import type { McpServerConfig } from '../config/schema.ts';
+import { setMemoryMcpManager } from '../memory/backend.ts';
 import type { Tool } from '../tools/types.ts';
 import { type ConnectedMcpServer, asLocalTool, connectMcpServer } from './client.ts';
 import { setMcpServerProvider } from './resources.ts';
@@ -14,7 +15,7 @@ export interface McpManager {
   shutdown(): Promise<void>;
 }
 
-export function createMcpManager(): McpManager {
+export function createMcpManager(memoryDebug?: (message: string) => void): McpManager {
   const state: { servers: ConnectedMcpServer[]; tools: Tool[] } = {
     servers: [],
     tools: [],
@@ -27,7 +28,7 @@ export function createMcpManager(): McpManager {
     state.tools = [];
   }
 
-  return {
+  const manager: McpManager = {
     get servers() {
       return state.servers;
     },
@@ -64,4 +65,6 @@ export function createMcpManager(): McpManager {
       await disconnectAll();
     },
   };
+  setMemoryMcpManager(manager, memoryDebug);
+  return manager;
 }

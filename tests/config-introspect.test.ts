@@ -14,6 +14,10 @@ describe('settings registry', () => {
     expect(paths).toContain('openaiCompatible.model');
     expect(paths).toContain('bots.telegram.allowedUserIds');
     expect(paths).toContain('web.port');
+    expect(paths).toContain('memory.backend');
+    expect(paths).toContain('memory.mcpServer');
+    expect(paths).toContain('memory.autoRecall');
+    expect(paths).toContain('memory.autoSave');
     expect(paths).toContain('outputStyle');
   });
 
@@ -91,6 +95,7 @@ describe('settings registry', () => {
       'sandbox',
       'vision',
       'tools',
+      'memory',
       'outputStyle',
     ]);
   });

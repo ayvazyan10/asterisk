@@ -74,7 +74,7 @@ function pickProvider(latest: LoadedConfig): Provider {
 pickProvider(loaded);
 
 const MCP_STARTUP_TIMEOUT_MS = 15_000;
-const mcp = createMcpManager();
+const mcp = createMcpManager((message) => log.debug(message));
 const mcpReady = mcp
   .reload()
   .then((res) => {
@@ -268,7 +268,7 @@ manager
         // it as one would act on a homophone.
         const handled = msg.voice
           ? null
-          : await runWithSession({ id: sessionId, scope: 'unknown' }, async () =>
+          : await runWithSession({ id: sessionId, scope: 'telegram' }, async () =>
               tryHandleBotCommand(userText, { state, providerName: provider.name }),
             );
         if (handled) {
@@ -282,7 +282,7 @@ manager
         }
 
         const rules = loadRules();
-        const session = { id: sessionId, scope: 'unknown' as const };
+        const session = { id: sessionId, scope: 'telegram' as const };
         const souls = loadSouls(process.cwd(), session);
         const cfg = latest.config;
         const hooks = cfg.hooks;

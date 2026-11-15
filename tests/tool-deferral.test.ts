@@ -222,7 +222,10 @@ describe('prompt size under deferral', () => {
     const search = promptToolDefinitions().find((t) => t.name === 'ToolSearch');
     expect(search?.description).toContain('BrowserNavigate');
     expect(search?.description).toContain('RunCode');
-    expect(search?.description).toContain('Remember');
+    for (const memory of ['Remember', 'Recall', 'Forget']) {
+      expect(names).toContain(memory);
+      expect(search?.description).not.toContain(memory);
+    }
   });
 
   it('spends the pointer budget on the groups in front, not all or nothing', () => {

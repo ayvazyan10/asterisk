@@ -1,12 +1,12 @@
-// Remember / Recall — the agent's long-term memory.
+// Remember / Recall / Forget — the agent's persistent memory tools.
 //
 // Distinct from the task list and from conversation history: both of those are
 // per-session and both eventually go away, whereas anything written here
-// survives compaction, restarts and the session itself. Storage and search
-// live in src/memory/store.ts; this file is only the model-facing surface.
+// survives compaction, restarts and the session itself. backend.ts routes to
+// the configured MCP server or the local FTS5 store; no ToolSearch is needed.
 
-import { currentSession } from '../agent/context.ts';
 import { getDb } from '../db/index.ts';
+import { callMemoryTool, resolveMemoryBackend, storeMemory } from '../memory/backend.ts';
 import {
   type MemoryRecord,
   forgetMemory,
@@ -14,7 +14,6 @@ import {
   queryTerms,
   recallMemories,
   recentMemories,
-  rememberMemory,
   searchIndexReady,
 } from '../memory/store.ts';
 import { type Tool, err, ok } from './types.ts';
@@ -57,7 +56,7 @@ export const rememberTool: Tool = {
     required: ['content'],
     additionalProperties: false,
   },
-  async execute(input) {
+  async execute(input, opts) {
     const raw = typeof input['content'] === 'string' ? input['content'].trim() : '';
     if (!raw) return err('content is required');
     if (raw.length > MAX_CONTENT) {
@@ -65,15 +64,14 @@ export const rememberTool: Tool = {
     }
 
     try {
-      const stored = rememberMemory(getDb(), {
-        content: raw,
-        tags: asStringArray(input['tags']),
-        // The channel, not the chat id: memory is install-wide, and a chat id
-        // would put a phone number in a column nothing filters on.
-        source: currentSession().scope,
-      });
-      const tags = stored.tags.length > 0 ? ` · tags: ${stored.tags.join(' ')}` : '';
-      return ok(`remembered #${stored.id}${tags}`);
+      return await storeMemory(
+        raw,
+        asStringArray(input['tags']),
+        'semantic',
+        0.7,
+        resolveMemoryBackend(),
+        opts?.signal,
+      );
     } catch (e) {
       return err(`could not store memory: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -84,8 +82,8 @@ export const recallTool: Tool = {
   name: 'Recall',
   description:
     'Search long-term memory for notes saved earlier with Remember, in this session or any ' +
-    'previous one. Plain keywords work best — the query is matched as text, not as a boolean ' +
-    'expression. Returns the most recent notes when the query has nothing searchable in it.',
+    'previous one. Returns memory ids for Forget. MCP memory uses semantic search; local ' +
+    'memory matches plain keywords and returns recent notes for an empty query.',
   input_schema: {
     type: 'object',
     properties: {
@@ -95,11 +93,26 @@ export const recallTool: Tool = {
     required: ['query'],
     additionalProperties: false,
   },
-  async execute(input) {
+  async execute(input, opts) {
     const query = typeof input['query'] === 'string' ? input['query'] : '';
     const limit = typeof input['limit'] === 'number' ? input['limit'] : undefined;
 
     try {
+      const backend = resolveMemoryBackend();
+      if (backend.kind === 'mcp') {
+        return await callMemoryTool(
+          backend.server,
+          'search_memory',
+          {
+            query,
+            topK:
+              limit === undefined || !Number.isFinite(limit)
+                ? 10
+                : Math.max(1, Math.min(50, Math.trunc(limit))),
+          },
+          opts?.signal,
+        );
+      }
       const db = getDb();
       // A query with no searchable term in it — an empty string, or nothing but
       // punctuation — is far more likely to be the model reaching for "what do
@@ -134,17 +147,25 @@ export const forgetTool: Tool = {
   input_schema: {
     type: 'object',
     properties: {
-      id: { type: 'number', description: 'Id of the note to delete, as shown by Recall.' },
+      id: {
+        type: ['number', 'string'],
+        description: 'Exact id of the note to delete, as shown by Recall.',
+      },
     },
     required: ['id'],
     additionalProperties: false,
   },
-  async execute(input) {
+  async execute(input, opts) {
     const raw = input['id'];
-    const id = typeof raw === 'number' ? raw : Number.NaN;
-    if (!Number.isInteger(id) || id <= 0) return err('id must be a positive integer from Recall');
 
     try {
+      const backend = resolveMemoryBackend();
+      if (backend.kind === 'mcp') {
+        if (typeof raw !== 'string' || !raw.trim()) return err('id must be a string from Recall');
+        return await callMemoryTool(backend.server, 'forget', { ids: [raw] }, opts?.signal);
+      }
+      const id = typeof raw === 'number' ? raw : Number.NaN;
+      if (!Number.isInteger(id) || id <= 0) return err('id must be a positive integer from Recall');
       const db = getDb();
       // Read it back before deleting so the confirmation says what actually
       // went, not what the model believed it was deleting.

@@ -374,6 +374,27 @@ const ToolsSchema = z.object({
     ),
 });
 
+const MemorySchema = z.object({
+  backend: z
+    .enum(['auto', 'local', 'mcp'])
+    .default('auto')
+    .describe(
+      'auto uses the configured MCP server when connected with store_memory and search_memory tools, otherwise local storage. local always uses SQLite; mcp prefers that server and falls back to local storage when unavailable.',
+    ),
+  mcpServer: z
+    .string()
+    .default('engram')
+    .describe('Name of the MCP server used for persistent memory.'),
+  autoRecall: z
+    .boolean()
+    .default(true)
+    .describe('Recall relevant notes before each user turn, for that request only.'),
+  autoSave: z
+    .boolean()
+    .default(true)
+    .describe('Save completed user exchanges and conversation summaries to persistent memory.'),
+});
+
 // Hooks fire at agent-loop lifecycle events. Each hook is a shell command
 // run with the event payload on stdin (JSON). Stdout is logged into the
 // transcript as a system note; non-zero exit logs the stderr too.
@@ -472,6 +493,7 @@ export const ConfigSchema = z.object({
   sandbox: SandboxSchema.default({}),
   vision: VisionSchema.default({}),
   tools: ToolsSchema.default({}),
+  memory: MemorySchema.default({}),
   outputStyle: OutputStyleSchema.default('default').describe(
     'Behaviour modifier spliced into the system prompt.',
   ),

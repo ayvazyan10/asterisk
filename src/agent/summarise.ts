@@ -14,6 +14,7 @@
 // notice. A summary is an improvement on dropping, never a precondition for
 // it: an unreachable model must not be able to fail a turn.
 
+import { saveSessionMemory } from '../memory/backend.ts';
 import type { Message, Provider } from '../types/messages.ts';
 import { SUMMARY_TOKEN_RESERVE } from './compaction.ts';
 import { estimateTextTokens } from './tokens.ts';
@@ -115,7 +116,9 @@ export async function summariseMessages(
       );
     }
 
-    return text.length > 0 ? text : null;
+    if (!text) return null;
+    saveSessionMemory(text, ['session-summary'], 0.6);
+    return text;
   } catch {
     // Unreachable model, timeout, abort, malformed response — all the same
     // answer here. The caller drops the messages either way.

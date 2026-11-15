@@ -9,6 +9,7 @@
 import type { HookConfig } from '../config/schema.ts';
 import { getDb } from '../db/index.ts';
 import { type HookResult, fireHooks } from '../hooks/runner.ts';
+import { memorySystemPrompt, recallTurnMemory, saveTurnMemory } from '../memory/backend.ts';
 import { type OutputStyle, outputStyleToPromptSection } from '../output-styles/styles.ts';
 import { ProviderError, isAbort, isRetryable, retryAfterMs } from '../providers/errors.ts';
 import { recoverToolCallsFromText } from '../providers/text-tool-calls.ts';
@@ -273,11 +274,33 @@ async function runAgentTurnInner(
   // Without this a model asked what it is guesses — from training, or from
   // whatever model id it finds in the config (an unused anthropic.model).
   const modelSection = `Model: ${provider.name}. When asked which model you are, answer from this line, not from config files, environment variables or your training.`;
-  const systemPrompt = [SYSTEM_PROMPT, modelSection, soulSection, rulesSection, styleSection]
+  const systemPrompt = [
+    SYSTEM_PROMPT,
+    modelSection,
+    memorySystemPrompt(),
+    soulSection,
+    rulesSection,
+    styleSection,
+  ]
     .filter((s) => s && s.length > 0)
     .join('\n\n');
 
   await pushUserTurn(state.history, userInput, opts.images ?? []);
+
+  // Recalled notes ride on this turn's user message in each request, never in
+  // history and never in the system prompt: a system prompt that changed every
+  // turn would defeat the server's prefix cache (llama.cpp re-reads the whole
+  // history; Anthropic's prompt cache misses), turning every turn into a cold one.
+  const memoryContext = await recallTurnMemory(userInput, signal);
+  const turnMessage = state.history[state.history.length - 1];
+  const withMemory = (history: Message[]): Message[] =>
+    memoryContext && turnMessage
+      ? history.map((m) =>
+          m === turnMessage
+            ? { ...m, content: [{ type: 'text' as const, text: memoryContext }, ...m.content] }
+            : m,
+        )
+      : history;
 
   // before_turn hooks fire-and-log; failures don't abort the turn.
   if (hooks.length > 0) {
@@ -347,7 +370,12 @@ async function runAgentTurnInner(
           ? toolDefinitions().filter((t) => opts.allowedTools?.includes(t.name))
           : promptToolDefinitions();
       const request = { system: systemPrompt, tools };
-      let budget = compactionThreshold(provider.contextWindow, request);
+      // The recalled-memory block is sent with every request of this turn but
+      // lives outside history, so it is budgeted like the system prompt.
+      let budget = compactionThreshold(provider.contextWindow, {
+        ...request,
+        system: `${request.system}\n\n${memoryContext}`,
+      });
       if (overflowRetried) budget = Math.floor(budget / 2);
       state.history = repairHistory(
         opts.summariseDropped === false
@@ -383,7 +411,11 @@ async function runAgentTurnInner(
             }
             if (opts.onAssistantThinking) sendOpts.onThinking = opts.onAssistantThinking;
             try {
-              return await provider.send({ ...request, messages: state.history, ...sendOpts });
+              return await provider.send({
+                ...request,
+                messages: withMemory(state.history),
+                ...sendOpts,
+              });
             } catch (error) {
               if (
                 emitted ||
@@ -409,7 +441,11 @@ async function runAgentTurnInner(
               // clamped tail. Retrying that request cannot fit this budget.
               if (estimateTokens(state.history) > budget) throw error;
               opts.onRetry?.(1, 0, `context-overflow: ${error.message.split('\n')[0]}`);
-              return provider.send({ ...request, messages: state.history, ...sendOpts });
+              return provider.send({
+                ...request,
+                messages: withMemory(state.history),
+                ...sendOpts,
+              });
             }
           },
           {
@@ -773,6 +809,8 @@ async function runAgentTurnInner(
     const after = await fireHooks(hooks, { event: 'after_turn', finalText }, signal);
     for (const r of after) opts.onHook?.(r);
   }
+
+  if (reason === 'end-turn') saveTurnMemory(userInput, finalText);
 
   return { finalText, reason };
 }

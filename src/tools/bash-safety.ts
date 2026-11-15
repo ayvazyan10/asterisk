@@ -39,6 +39,11 @@ export interface SafetyResult {
   warnings: string[];
 }
 
+/** Shared with memory writes so credentials are never persisted as notes. */
+export function containsSecret(text: string): boolean {
+  return SECRET_PATTERNS.some(({ pattern }) => pattern.test(text));
+}
+
 export function checkBashSafety(command: string): SafetyResult {
   const warnings: string[] = [];
 

@@ -1,6 +1,6 @@
-// Durable agent memory — the notes the model writes for itself and reads back
-// in a later session, long after the conversation that produced them has been
-// compacted away.
+// Local persistent memory — the SQLite backend used explicitly or as a
+// fallback when the configured memory MCP server is unavailable. Routing and
+// automatic session memory live in backend.ts; this module owns local records.
 //
 // Memory is install-wide on purpose: a note taken in the REPL has to be
 // findable from a Telegram turn, which is the entire point. That does mean two
@@ -13,6 +13,7 @@
 
 import type { SqlParam, SqliteDriver } from '../db/driver.ts';
 import { MEMORY_FTS_SQL, applyOptionalSql } from '../db/migrations.ts';
+import { containsSecret } from '../tools/bash-safety.ts';
 
 export interface MemoryRecord {
   id: number;
@@ -146,6 +147,7 @@ function probeIndex(db: SqliteDriver): boolean {
 export function rememberMemory(db: SqliteDriver, input: NewMemory): MemoryRecord {
   const content = input.content.trim();
   if (!content) throw new Error('memory content is empty');
+  if (containsSecret(JSON.stringify(input))) throw new Error('memory contains a potential secret');
 
   const tags = normaliseTags(input.tags ?? []);
   const packed = tags.join(' ');
