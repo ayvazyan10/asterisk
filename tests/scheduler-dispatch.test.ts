@@ -96,7 +96,7 @@ describe('scheduler — cron dedup across a dispatch that outlives one tick', ()
     scheduler.start();
     try {
       await vi.advanceTimersByTimeAsync(30_000);
-      expect(dispatch.mock.calls).toEqual([['30', 'cron:30']]);
+      expect(dispatch.mock.calls).toEqual([['30', 'cron:30', undefined]]);
     } finally {
       scheduler.stop();
     }
@@ -123,8 +123,8 @@ describe('scheduler — cron dedup across a dispatch that outlives one tick', ()
       vi.setSystemTime(new Date(2026, 9, 19, 11, 0));
       await vi.advanceTimersByTimeAsync(30_000);
       expect(dispatch.mock.calls).toEqual([
-        ['0 10 * * *', 'cron:0 10 * * *'],
-        ['0 11 * * *', 'cron:0 11 * * *'],
+        ['0 10 * * *', 'cron:0 10 * * *', undefined],
+        ['0 11 * * *', 'cron:0 11 * * *', undefined],
       ]);
     } finally {
       scheduler.stop();

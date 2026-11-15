@@ -419,35 +419,50 @@ const keepAlive = setInterval(() => {}, 1 << 30);
 const { createScheduler } = await import('../daemon/scheduler.ts');
 const scheduler = createScheduler({
   log: (event) => log.info(event, 'scheduler'),
-  dispatch: async (prompt, source) => {
-    const sched = createAgentState();
-    const rules = loadRules();
-    const session = { id: `scheduled:${source}`, scope: 'scheduled' as const };
-    const souls = loadSouls(process.cwd(), session);
-    const sCfg = loadConfig().config;
-    const hooks = sCfg.hooks;
-    // Same session-aware resolution as the bot-turn path above, mirroring
-    // how loadSouls is already applied uniformly to both. In practice a
-    // `scheduled:<source>` session never has a style override on disk —
-    // nothing writes one for that id, since /style only ever runs inside a
-    // real chat's `bot:<chatId>` session — so this reduces to the daemon
-    // default for cron/schedule runs today. Left uniform rather than
-    // special-cased so the two dispatch paths can't quietly drift apart,
-    // and so a scheduled run tied to a real chat id would pick up that
-    // chat's own style for free if one is ever wired to it.
-    const sStyle = resolveOutputStyle(session, sCfg.outputStyle);
-    const result = await runAgentTurn(provider, sched, prompt, {
-      session,
-      rules,
-      souls,
-      hooks,
-      ...(sStyle ? { outputStyle: sStyle } : {}),
-      onToolUse: (name) => log.debug({ tool: name }, 'scheduled tool_use'),
-    });
-    log.info(
-      { source, reason: result.reason, finalText: result.finalText.slice(0, 200) },
-      'scheduled run finished',
-    );
+  dispatch: async (prompt, source, origin) => {
+    let text = 'Scheduled run failed. Please try again.';
+    try {
+      const sched = createAgentState();
+      const rules = loadRules();
+      const session = { id: `scheduled:${source}`, scope: 'scheduled' as const };
+      const souls = loadSouls(process.cwd(), session);
+      const sCfg = loadConfig().config;
+      const hooks = sCfg.hooks;
+      // Same session-aware resolution as the bot-turn path above, mirroring
+      // how loadSouls is already applied uniformly to both. In practice a
+      // `scheduled:<source>` session never has a style override on disk —
+      // nothing writes one for that id, since /style only ever runs inside a
+      // real chat's `bot:<chatId>` session — so this reduces to the daemon
+      // default for cron/schedule runs today. Left uniform rather than
+      // special-cased so the two dispatch paths can't quietly drift apart,
+      // and so a scheduled run tied to a real chat id would pick up that
+      // chat's own style for free if one is ever wired to it.
+      const sStyle = resolveOutputStyle(session, sCfg.outputStyle);
+      const result = await runAgentTurn(provider, sched, prompt, {
+        session,
+        rules,
+        souls,
+        hooks,
+        ...(sStyle ? { outputStyle: sStyle } : {}),
+        onToolUse: (name) => log.debug({ tool: name }, 'scheduled tool_use'),
+      });
+      text = result.finalText;
+      if (result.reason !== 'end-turn') {
+        text += `${text ? '\n\n' : ''}Scheduled run failed (${result.reason}).`;
+      }
+      log.info(
+        { source, reason: result.reason, finalText: result.finalText.slice(0, 200) },
+        'scheduled run finished',
+      );
+    } finally {
+      if (origin) {
+        try {
+          await manager.sendMessage(origin.transport, origin.chatId, text);
+        } catch (err) {
+          log.warn({ source, ...origin, err }, 'scheduled delivery failed');
+        }
+      }
+    }
   },
 });
 scheduler.start();

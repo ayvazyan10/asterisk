@@ -24,6 +24,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { currentSession } from '../agent/context.ts';
 import { validateCron } from '../daemon/scheduler.ts';
 import { ensureOwnerOnlyDir, writeOwnerOnlyAtomic } from '../utils/fs-safe.ts';
 import { type Tool, err, ok } from './types.ts';
@@ -49,6 +50,7 @@ export interface OneShot {
   prompt: string;
   fireAt: number;
   createdAt: number;
+  origin?: { transport: string; chatId: string };
 }
 
 export interface CronJob {
@@ -58,6 +60,7 @@ export interface CronJob {
   enabled: boolean;
   createdAt: number;
   lastRunAt?: number;
+  origin?: { transport: string; chatId: string };
 }
 
 function readJsonl<T>(file: string): T[] {
@@ -106,7 +109,7 @@ function nextId(prefix: string): string {
 export const scheduleWakeupTool: Tool = {
   name: 'ScheduleWakeup',
   description:
-    'Schedule a one-shot agent prompt to fire after a delay. The Asterisk daemon picks it up and dispatches a fresh agent turn at fireAt. Useful for "remind me in 1 hour" or polling a long-running external job.',
+    'Schedule a one-shot agent prompt to fire after a delay. The Asterisk daemon picks it up and dispatches a fresh agent turn at fireAt. When created in a bot chat, the result is delivered to that chat. Useful for "remind me in 1 hour" or polling a long-running external job.',
   input_schema: {
     type: 'object',
     properties: {
@@ -133,6 +136,10 @@ export const scheduleWakeupTool: Tool = {
       fireAt: Date.now() + delay * 1000,
       createdAt: Date.now(),
     };
+    const sessionId = currentSession().id;
+    if (sessionId.startsWith('bot:')) {
+      job.origin = { transport: 'telegram', chatId: sessionId.slice(4) };
+    }
     const all = readOneShots();
     all.push(job);
     writeOneShots(all);
@@ -144,7 +151,7 @@ export const scheduleWakeupTool: Tool = {
 export const cronCreateTool: Tool = {
   name: 'CronCreate',
   description:
-    'Schedule a recurring agent prompt using a 5-field cron expression (minute hour dom month dow) in the daemon machine\'s local time. When dom and dow both do not start with *, either may match. Examples: "0 9 * * 1-5" weekday 9am, "*/15 * * * *" every 15 minutes.',
+    'Schedule a recurring agent prompt using a 5-field cron expression (minute hour dom month dow) in the daemon machine\'s local time. When dom and dow both do not start with *, either may match. When created in a bot chat, each result is delivered to that chat. Examples: "0 9 * * 1-5" weekday 9am, "*/15 * * * *" every 15 minutes.',
   input_schema: {
     type: 'object',
     properties: {
@@ -167,6 +174,10 @@ export const cronCreateTool: Tool = {
       enabled: true,
       createdAt: Date.now(),
     };
+    const sessionId = currentSession().id;
+    if (sessionId.startsWith('bot:')) {
+      job.origin = { transport: 'telegram', chatId: sessionId.slice(4) };
+    }
     const all = readCronJobs();
     all.push(job);
     writeCronJobs(all);

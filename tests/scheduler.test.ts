@@ -1,6 +1,66 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { cronMatches, expandCronField, validateCron } from '../src/daemon/scheduler.ts';
+import {
+  type Scheduler,
+  createScheduler,
+  cronMatches,
+  expandCronField,
+  validateCron,
+} from '../src/daemon/scheduler.ts';
+import { readCronJobs, writeCronJobs, writeOneShots } from '../src/tools/schedule.ts';
+
+describe('scheduler origin dispatch', () => {
+  let home: string;
+  let scheduler: Scheduler | undefined;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'asterisk-scheduler-origin-'));
+    vi.stubEnv('ASTERISK_HOME', home);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 15, 9, 0));
+  });
+
+  afterEach(async () => {
+    scheduler?.stop();
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it.each(['oneshot', 'cron'] as const)(
+    'forwards a %s origin and accepts legacy jobs',
+    async (kind) => {
+      const origin = { transport: 'telegram', chatId: '42' };
+      const jobs = [
+        { id: 'chat', prompt: 'reminder', createdAt: Date.now(), origin },
+        { id: 'legacy', prompt: 'local job', createdAt: Date.now() },
+      ];
+      if (kind === 'oneshot') {
+        writeOneShots(jobs.map((job) => ({ ...job, fireAt: Date.now() })));
+      } else {
+        writeCronJobs(jobs.map((job) => ({ ...job, cron: '* * * * *', enabled: true })));
+      }
+      const dispatch = vi.fn();
+      scheduler = createScheduler({ dispatch, log: () => {} });
+      scheduler.start();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(dispatch.mock.calls).toEqual([
+        ['reminder', `${kind}:chat`, origin],
+        ['local job', `${kind}:legacy`, undefined],
+      ]);
+      await vi.advanceTimersByTimeAsync(60_000);
+      if (kind === 'cron') {
+        expect(dispatch).toHaveBeenCalledTimes(4);
+        expect(readCronJobs()[0]?.origin).toEqual(origin);
+      } else {
+        expect(dispatch).toHaveBeenCalledTimes(2);
+      }
+    },
+  );
+});
 
 describe('expandCronField', () => {
   it('handles "*"', () => {

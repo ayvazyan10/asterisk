@@ -52,7 +52,7 @@ const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
       sendMessage: async (
         chatId: string,
         text: string,
-        extra: Record<string, unknown>,
+        extra: Record<string, unknown> = {},
       ): Promise<{ message_id: number }> => {
         this.sent.push({ chatId, text, extra });
         return { message_id: 500 + this.sent.length };
@@ -1259,6 +1259,59 @@ describe('permission prompts during a live turn', () => {
 });
 
 describe('bot manager wiring', () => {
+  it.each(['plain', 'html'] as const)(
+    'sends scheduled text with the same %s formatting and chunks as normal replies',
+    async (parseMode) => {
+      const manager = createBotManager({
+        config: ConfigSchema.parse({
+          bots: {
+            telegram: { enabled: true, allowedUserIds: [7], parseMode, streamMode: 'final' },
+          },
+        }),
+        secrets: { ASTERISK_TELEGRAM_BOT_TOKEN: 'tok' },
+      });
+      const text = `**reminder**\n${'x'.repeat(9000)}`;
+      await expect(manager.sendMessage('telegram', '42', text)).rejects.toThrow('not running');
+      await manager.start(async () => text);
+      try {
+        const bot = fakeBotInstances.at(-1);
+        const ctx = new FakeCtx();
+        await bot?.handler?.(ctx);
+        await vi.waitFor(() => expect(ctx.texts('reply')).toHaveLength(3));
+
+        await manager.sendMessage('telegram', '42', text);
+        expect(bot?.sent).toEqual(
+          ctx.calls
+            .filter((call) => call.method === 'reply')
+            .map((call) => ({ chatId: '42', text: call.text, extra: call.opts ?? {} })),
+        );
+        expect(bot?.sent.every((message) => message.text.length <= 4096)).toBe(true);
+      } finally {
+        await manager.stop();
+      }
+      await expect(manager.sendMessage('telegram', '42', text)).rejects.toThrow('not running');
+    },
+  );
+
+  it('uses the ordinary HTML fallback for scheduled sends and propagates network failures', async () => {
+    const adapter = createTelegramAdapter({ token: 'tok', allowedUserIds: [7], parseMode: 'html' });
+    await adapter.start(async () => 'ok');
+    try {
+      const bot = fakeBotInstances.at(-1);
+      if (!bot) throw new Error('missing fake bot');
+      const send = vi.spyOn(bot.api, 'sendMessage');
+      send.mockRejectedValueOnce(telegramError("can't parse entities"));
+      await adapter.sendMessage('42', '**reminder**');
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(bot.sent).toEqual([{ chatId: '42', text: 'reminder', extra: {} }]);
+
+      send.mockRejectedValueOnce(new Error('network down'));
+      await expect(adapter.sendMessage('42', 'next reminder')).rejects.toThrow('network down');
+    } finally {
+      await adapter.stop();
+    }
+  });
+
   it('starts the configured telegram adapter and forwards its options', async () => {
     // The manager is the only place config becomes adapter options. A dropped
     // field here is invisible until a user notices their setting does nothing.

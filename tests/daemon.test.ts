@@ -8,13 +8,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAgentState, runAgentTurn } from '../src/agent/loop.ts';
-import type { Handler, IncomingMessage } from '../src/bots/adapter.ts';
+import type { BotAdapter, Handler, IncomingMessage } from '../src/bots/adapter.ts';
 import type { ImageIntakeResult } from '../src/bots/image-intake.ts';
 import type { VoiceIntakeResult } from '../src/bots/voice-intake.ts';
 import { logs, start, status, stop } from '../src/daemon/lifecycle.ts';
 import { asteriskPaths } from '../src/daemon/paths.ts';
 import { statusFromPidFile } from '../src/daemon/pidfile.ts';
 import { PROJECT_ROOT, entrypointPath } from '../src/daemon/project-root.ts';
+import type { SchedulerOptions } from '../src/daemon/scheduler.ts';
 import { closeDb } from '../src/db/index.ts';
 
 vi.mock('node:os', { spy: true });
@@ -128,7 +129,7 @@ describe('daemon lifecycle', () => {
   );
 });
 
-describe('daemon intake interruption', () => {
+describe('daemon dispatch', () => {
   let home: string;
   let handler: Handler;
   let state = createAgentState();
@@ -137,16 +138,26 @@ describe('daemon intake interruption', () => {
   const runTurn = vi.fn(runAgentTurn);
   const save = vi.fn();
   const command = vi.fn();
+  const send = vi.fn<BotAdapter['sendMessage']>();
+  const log = { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() };
+  let dispatch: SchedulerOptions['dispatch'];
 
   beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
     home = await mkdtemp(join(tmpdir(), 'asterisk-daemon-intake-'));
     vi.stubEnv('ASTERISK_HOME', home);
+    vi.stubEnv('ASTERISK_TELEGRAM_BOT_TOKEN', 'fake');
+    const { loadConfig, saveConfig } = await import('../src/config/load.ts');
+    const { config } = loadConfig();
+    config.bots.telegram.enabled = true;
+    saveConfig(config);
     state = createAgentState();
     state.history = [{ role: 'user', content: [{ type: 'text', text: 'earlier' }] }];
     voice.mockImplementation(async (msg) => ({ text: msg.text }));
     image.mockImplementation(async (msg) => ({ kind: 'accepted', text: msg.text, images: [] }));
+    runTurn.mockResolvedValue({ finalText: 'reminder result', reason: 'end-turn' });
+    send.mockReset().mockResolvedValue(undefined);
     vi.doMock('../src/agent/loop.ts', () => ({
       createAgentState: () => state,
       runAgentTurn: runTurn,
@@ -164,12 +175,14 @@ describe('daemon intake interruption', () => {
       ...(await original<typeof import('../src/bots/commands.ts')>()),
       tryHandleBotCommand: command,
     }));
-    vi.doMock('../src/bots/manager.ts', () => ({
-      createBotManager: () => ({
+    vi.doMock('../src/bots/telegram/index.ts', () => ({
+      createTelegramAdapter: (): BotAdapter => ({
+        name: 'telegram',
         start: async (next: Handler) => {
           handler = next;
-          return [];
         },
+        stop: async () => {},
+        sendMessage: send,
         cancelApprovals: () => 0,
       }),
     }));
@@ -185,10 +198,13 @@ describe('daemon intake interruption', () => {
       createMcpManager: () => ({ tools: [], reload: async () => ({ connected: [], failed: [] }) }),
     }));
     vi.doMock('../src/daemon/scheduler.ts', () => ({
-      createScheduler: () => ({ start: () => {} }),
+      createScheduler: (opts: SchedulerOptions) => {
+        dispatch = opts.dispatch;
+        return { start: () => {} };
+      },
     }));
     vi.doMock('../src/daemon/logger.ts', () => ({
-      createDaemonLogger: () => ({ info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() }),
+      createDaemonLogger: () => log,
     }));
     // Import the actual dispatcher without installing process handlers or leaving timers alive.
     const on = vi.spyOn(process, 'on').mockReturnValue(process);
@@ -208,7 +224,7 @@ describe('daemon intake interruption', () => {
     vi.doUnmock('../src/bots/voice-intake.ts');
     vi.doUnmock('../src/bots/image-intake.ts');
     vi.doUnmock('../src/bots/commands.ts');
-    vi.doUnmock('../src/bots/manager.ts');
+    vi.doUnmock('../src/bots/telegram/index.ts');
     vi.doUnmock('../src/bots/approval-bridge.ts');
     vi.doUnmock('../src/providers/factory.ts');
     vi.doUnmock('../src/mcp/manager.ts');
@@ -233,6 +249,106 @@ describe('daemon intake interruption', () => {
     });
     return { promise, resolve };
   }
+
+  it('delivers the full scheduled result once to its origin and keeps the scheduled session', async () => {
+    const finalText = 'A reminder with **formatting**. '.repeat(20);
+    runTurn.mockResolvedValueOnce({ finalText, reason: 'end-turn' });
+    await dispatch('remind me', 'oneshot:reminder', { transport: 'telegram', chatId: '42' });
+    expect(send).toHaveBeenCalledExactlyOnceWith('42', finalText);
+    expect(runTurn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'remind me',
+      expect.objectContaining({
+        session: { id: 'scheduled:oneshot:reminder', scope: 'scheduled' },
+      }),
+    );
+    expect(log.info).toHaveBeenCalledWith(
+      { source: 'oneshot:reminder', reason: 'end-turn', finalText: finalText.slice(0, 200) },
+      'scheduled run finished',
+    );
+  });
+
+  it('keeps a scheduled result without an origin in the log', async () => {
+    await dispatch('local job', 'cron:local');
+    expect(send).not.toHaveBeenCalled();
+    expect(log.info).toHaveBeenCalledWith(
+      { source: 'cron:local', reason: 'end-turn', finalText: 'reminder result' },
+      'scheduled run finished',
+    );
+  });
+
+  it('warns without throwing when the origin transport is not running', async () => {
+    await expect(
+      dispatch('remind me', 'oneshot:offline', { transport: 'offline', chatId: '42' }),
+    ).resolves.toBeUndefined();
+    expect(send).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      {
+        source: 'oneshot:offline',
+        transport: 'offline',
+        chatId: '42',
+        err: expect.objectContaining({ message: 'offline transport is not running' }),
+      },
+      'scheduled delivery failed',
+    );
+  });
+
+  it('sends a short failure note when a scheduled turn throws', async () => {
+    runTurn.mockRejectedValueOnce(new Error('provider unavailable'));
+    await expect(
+      dispatch('remind me', 'oneshot:failed', { transport: 'telegram', chatId: '42' }),
+    ).rejects.toThrow('provider unavailable');
+    expect(send).toHaveBeenCalledExactlyOnceWith('42', 'Scheduled run failed. Please try again.');
+  });
+
+  it('includes a failure note when the turn returns an error reason', async () => {
+    runTurn.mockResolvedValueOnce({ finalText: 'Partial result', reason: 'auth-error' });
+    await dispatch('remind me', 'cron:failed', { transport: 'telegram', chatId: '42' });
+    expect(send).toHaveBeenCalledExactlyOnceWith(
+      '42',
+      'Partial result\n\nScheduled run failed (auth-error).',
+    );
+  });
+
+  it('logs an adapter send failure without throwing and keeps ticking', async () => {
+    const { createScheduler } = await vi.importActual<typeof import('../src/daemon/scheduler.ts')>(
+      '../src/daemon/scheduler.ts',
+    );
+    const { writeOneShots } = await import('../src/tools/schedule.ts');
+    const origin = { transport: 'telegram', chatId: '42' };
+    const err = new Error('adapter send failed');
+    send.mockRejectedValueOnce(err);
+    const events = vi.fn();
+    const scheduler = createScheduler({ dispatch, log: events });
+    vi.useFakeTimers();
+    try {
+      writeOneShots([{ id: 'first', prompt: 'first', fireAt: 1, createdAt: 1, origin }]);
+      scheduler.start();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(send).toHaveBeenCalledExactlyOnceWith('42', 'reminder result');
+      expect(log.warn).toHaveBeenCalledWith(
+        { source: 'oneshot:first', ...origin, err },
+        'scheduled delivery failed',
+      );
+      expect(log.info).toHaveBeenCalledWith(
+        { source: 'oneshot:first', reason: 'end-turn', finalText: 'reminder result' },
+        'scheduled run finished',
+      );
+      expect(events).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'oneshot_error' }));
+
+      writeOneShots([{ id: 'next', prompt: 'next', fireAt: 1, createdAt: 1, origin }]);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(send.mock.calls).toEqual([
+        ['42', 'reminder result'],
+        ['42', 'reminder result'],
+      ]);
+    } finally {
+      scheduler.stop();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
 
   it.each(['voice', 'image'] as const)(
     'keeps history unchanged after /stop during %s intake',

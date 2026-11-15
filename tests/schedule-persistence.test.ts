@@ -13,10 +13,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { runWithSession } from '../src/agent/context.ts';
 import {
   cronCreateTool,
   readCronJobs,
   readOneShots,
+  scheduleWakeupTool,
   writeOneShots,
 } from '../src/tools/schedule.ts';
 
@@ -34,6 +36,58 @@ describe('schedule.ts persistence', () => {
     if (prevHome === undefined) delete process.env['ASTERISK_HOME'];
     else process.env['ASTERISK_HOME'] = prevHome;
     await rm(home, { recursive: true, force: true });
+  });
+
+  describe.each([
+    {
+      name: 'ScheduleWakeup',
+      tool: scheduleWakeupTool,
+      input: { delaySeconds: 60, prompt: 'remind me' },
+      read: readOneShots,
+      file: 'oneshots.jsonl',
+      legacy: { id: 'old', prompt: 'hello', fireAt: 100, createdAt: 1 },
+    },
+    {
+      name: 'CronCreate',
+      tool: cronCreateTool,
+      input: { cron: '0 9 * * *', prompt: 'remind me' },
+      read: readCronJobs,
+      file: 'cron.jsonl',
+      legacy: { id: 'old', cron: '* * * * *', prompt: 'hello', enabled: true, createdAt: 1 },
+    },
+  ])('$name origin', ({ tool, input, read, file, legacy }) => {
+    it("persists the originating bot chat, even with the daemon's unknown scope", async () => {
+      const result = await runWithSession({ id: 'bot:-100:42', scope: 'unknown' }, () =>
+        tool.execute(input),
+      );
+      expect(result.isError).not.toBe(true);
+      expect(read()).toEqual([
+        expect.objectContaining({ origin: { transport: 'telegram', chatId: '-100:42' } }),
+      ]);
+    });
+
+    it.each([
+      { id: 'repl', scope: 'repl' as const },
+      { id: 'scheduled:oneshot:old', scope: 'scheduled' as const },
+    ])('omits origin in a $scope session', async (session) => {
+      const result = await runWithSession(session, () => tool.execute(input));
+      expect(result.isError).not.toBe(true);
+      expect(read()).toHaveLength(1);
+      expect(read()[0]).not.toHaveProperty('origin');
+    });
+
+    it('omits origin without a session', async () => {
+      await tool.execute(input);
+      expect(read()).toHaveLength(1);
+      expect(read()[0]).not.toHaveProperty('origin');
+    });
+
+    it('loads a legacy job without an origin', () => {
+      const dir = join(home, 'schedule');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, file), `${JSON.stringify(legacy)}\n`);
+      expect(read()).toEqual([legacy]);
+    });
   });
 
   it('refuses an invalid CronCreate weekday without persisting a job', async () => {

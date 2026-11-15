@@ -16,7 +16,7 @@ import {
 
 export interface SchedulerOptions {
   intervalMs?: number;
-  dispatch(prompt: string, source: string): Promise<void> | void;
+  dispatch(prompt: string, source: string, origin?: OneShot['origin']): Promise<void> | void;
   log(event: { type: string; [k: string]: unknown }): void;
 }
 
@@ -65,7 +65,7 @@ export function createScheduler(opts: SchedulerOptions): Scheduler {
       for (const job of due) {
         opts.log({ type: 'oneshot_fire', id: job.id });
         try {
-          await opts.dispatch(job.prompt, `oneshot:${job.id}`);
+          await opts.dispatch(job.prompt, `oneshot:${job.id}`, job.origin);
         } catch (e) {
           opts.log({ type: 'oneshot_error', id: job.id, error: (e as Error).message });
         }
@@ -105,7 +105,7 @@ export function createScheduler(opts: SchedulerOptions): Scheduler {
       for (const job of due) {
         opts.log({ type: 'cron_fire', id: job.id, cron: job.cron });
         try {
-          await opts.dispatch(job.prompt, `cron:${job.id}`);
+          await opts.dispatch(job.prompt, `cron:${job.id}`, job.origin);
         } catch (e) {
           opts.log({ type: 'cron_error', id: job.id, error: (e as Error).message });
         }

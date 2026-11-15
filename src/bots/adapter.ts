@@ -98,6 +98,8 @@ export interface BotAdapter {
   name: string;
   start(handler: Handler): Promise<void>;
   stop(): Promise<void>;
+  /** Sends text through the same formatting and limits as a normal reply. */
+  sendMessage(chatId: string, text: string): Promise<void>;
   /**
    * Asks the chat whether a command may run, if the transport can render a
    * choice. Optional on purpose: a transport without it is genuinely

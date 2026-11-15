@@ -9,6 +9,7 @@ import { createTelegramAdapter } from './telegram/index.ts';
 export interface BotManager {
   start(handler: Handler): Promise<string[]>;
   stop(): Promise<void>;
+  sendMessage(transport: string, chatId: string, text: string): Promise<void>;
   /** True when at least one transport can put a permission prompt in a chat. */
   canPromptApproval(): boolean;
   /** Asks the chat to decide. Denies if no transport can ask. */
@@ -53,6 +54,11 @@ export function createBotManager(loaded: LoadedConfig): BotManager {
       for (const a of adapters) {
         await a.stop().catch(() => {});
       }
+    },
+    async sendMessage(transport: string, chatId: string, text: string): Promise<void> {
+      const adapter = adapters.find((a) => a.name === transport);
+      if (!adapter) throw new Error(`${transport} transport is not running`);
+      await adapter.sendMessage(chatId, text);
     },
     canPromptApproval(): boolean {
       return adapters.some((a) => typeof a.promptApproval === 'function');

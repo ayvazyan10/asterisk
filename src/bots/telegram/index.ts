@@ -235,7 +235,16 @@ export function createTelegramAdapter(opts: TelegramAdapterOptions): TelegramAda
       // going away, and a question nobody can answer must not read as consent.
       approvals.cancelAll();
       if (!started) return;
+      started = false;
       await bot.stop();
+    },
+    async sendMessage(chatId: string, text: string): Promise<void> {
+      if (!started) throw new Error('Telegram transport is not running');
+      await deliverText(
+        { reply: (text, other, signal) => bot.api.sendMessage(chatId, text, other, signal) },
+        text,
+        parseMode,
+      );
     },
     promptApproval(chatId: string, prompt: ApprovalPrompt): Promise<ApprovalOutcome> {
       return approvals.prompt(bot, chatId, prompt);
@@ -350,13 +359,21 @@ async function deliverFinal(
   out: ReturnType<typeof asOutgoingMessage>,
   parseMode: TelegramParseMode,
 ): Promise<void> {
-  if (out.text) {
-    const rendered = parseMode === 'html' ? markdownToTelegramHtml(out.text) : out.text;
+  await deliverText(ctx, out.text, parseMode);
+  await sendAttachments(ctx, out.attachments);
+}
+
+async function deliverText(
+  ctx: Pick<Context, 'reply'>,
+  text: string,
+  parseMode: TelegramParseMode,
+): Promise<void> {
+  if (text) {
+    const rendered = parseMode === 'html' ? markdownToTelegramHtml(text) : text;
     for (const chunk of chunkText(rendered, MAX_TELEGRAM_CHARS, parseMode)) {
       await replyText(ctx, chunk, parseMode);
     }
   }
-  await sendAttachments(ctx, out.attachments);
 }
 
 /**
@@ -381,7 +398,11 @@ async function sendAttachments(ctx: Context, attachments: Attachment[] | undefin
   }
 }
 
-async function replyText(ctx: Context, text: string, parseMode: TelegramParseMode): Promise<void> {
+async function replyText(
+  ctx: Pick<Context, 'reply'>,
+  text: string,
+  parseMode: TelegramParseMode,
+): Promise<void> {
   if (parseMode === 'html') {
     try {
       await ctx.reply(text, { parse_mode: 'HTML' });
