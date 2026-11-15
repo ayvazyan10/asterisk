@@ -443,11 +443,14 @@ function doctorPanel() {
   const d = state.doctor;
   if (!d) return '<section class="card">' + ui.skeletonRows(4) + '</section>';
 
+  // info: a check that is neither passing nor failing — a key for a backend
+  // nothing routes to. It sits under the passing ones with Rules' quiet dash.
   const failing = d.checks.filter((c) => !c.ok);
-  const passing = d.checks.filter((c) => c.ok);
+  const passing = d.checks.filter((c) => c.ok && !c.info);
+  const notes = d.checks.filter((c) => c.ok && c.info);
 
-  const row = (c) => '<div class="check' + (c.ok ? '' : ' check-bad') + '">' +
-    '<span class="check-mark">' + (c.ok ? '✓' : '✗') + '</span>' +
+  const row = (c) => '<div class="check' + (c.ok ? (c.info ? ' check-dim' : '') : ' check-bad') + '">' +
+    '<span class="check-mark">' + (c.ok ? (c.info ? '–' : '✓') : '✗') + '</span>' +
     '<div class="list-row-grow"><div class="check-name">' + esc(c.name) + '</div>' +
     '<div class="check-detail">' + esc(c.detail) + '</div></div></div>';
 
@@ -460,13 +463,14 @@ function doctorPanel() {
     : ui.card('All clear', ui.empty('Every check passed.'),
         { aside: ui.badge('healthy', 'success', true) });
 
-  const fine = passing.length > 0
-    ? ui.card('Passing', passing.map(row).join(''), { aside: ui.badge(passing.length, 'secondary') })
+  const fine = passing.length + notes.length > 0
+    ? ui.card('Passing', passing.concat(notes).map(row).join(''),
+        { aside: ui.badge(passing.length, 'secondary') })
     : '';
 
   return '<div class="section-actions mb">' +
       ui.btn('Run again', { size: 'sm', variant: 'outline', attrs: ' data-action="doctor-rerun"' }) +
-      '<span class="form-hint">' + passing.length + ' of ' + d.checks.length + ' passing</span>' +
+      '<span class="form-hint">' + passing.length + ' of ' + (d.checks.length - notes.length) + ' passing</span>' +
     '</div>' +
     problems + fine;
 }
@@ -664,11 +668,12 @@ document.addEventListener('click', async (ev) => {
     '[data-hook-toggle],[data-hook-delete],' +
     '[data-secret-save],[data-secret-clear],[data-token-revoke],[data-open],[data-record],' +
     '[data-skill-open],[data-agent-open],[data-jump],[data-settings-filter],[data-log-level],' +
-    '[data-expand],[data-reasoning]');
+    '[data-expand],[data-reasoning],[data-chain]');
   if (!t) return;
   const d = t.dataset;
 
   if (d.tab) return goto(d.tab);
+  if (d.chain) return chainAction(d.chain);
   if (d.reasoning) {
     const [path, value] = d.reasoning.split('|');
     return setReasoning(path, value);
@@ -736,6 +741,8 @@ document.addEventListener('click', async (ev) => {
 
   if (d.daemon) {
     const ok = await guard(() => api('/daemon/' + d.daemon, { method: 'POST' }));
+    // A start, stop or restart means the next daemon reads the saved order.
+    if (ok && ok.ok) state.chainSaved = false;
     if (ok) toast(ok.message, ok.ok ? 'good' : 'bad');
     await loadStatus(); return render();
   }

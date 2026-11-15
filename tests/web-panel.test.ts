@@ -130,6 +130,30 @@ describe('settings API', () => {
     expect(config.openaiCompatible.contextWindow).toBe(8192);
   });
 
+  it('writes the whole backend chain — primary and fallback array — in one patch', async () => {
+    const { status } = await call(
+      '/api/settings',
+      send('PATCH', {
+        updates: { provider: 'deepseek', providerFallback: ['anthropic', 'openai-compatible'] },
+      }),
+    );
+    expect(status).toBe(200);
+    const config = readConfig(db);
+    expect(config.provider).toBe('deepseek');
+    expect(config.providerFallback).toEqual(['anthropic', 'openai-compatible']);
+  });
+
+  it('validates providerFallback against the schema', async () => {
+    const { status, body } = await call(
+      '/api/settings',
+      send('PATCH', { updates: { provider: 'anthropic', providerFallback: ['ollama'] } }),
+    );
+    expect(status).toBe(422);
+    expect(body.detail).toHaveProperty('providerFallback');
+    expect(readConfig(db).provider).toBe('openai-compatible');
+    expect(readConfig(db).providerFallback).toEqual(['deepseek']);
+  });
+
   it('rejects the whole patch when one field is invalid', async () => {
     const { status, body } = await call(
       '/api/settings',
@@ -825,6 +849,53 @@ describe('status and system', () => {
       expect(after.chain[1]).toMatchObject({ provider: 'deepseek', ready: true });
       // The secret itself never rides along in the status payload.
       expect(JSON.stringify(after)).not.toContain('sk-test');
+    });
+  });
+
+  describe('diagnostics', () => {
+    const saved = {
+      anthropic: process.env['ANTHROPIC_API_KEY'],
+      deepseek: process.env['DEEPSEEK_API_KEY'],
+    };
+    beforeEach(() => {
+      delete process.env['ANTHROPIC_API_KEY'];
+      delete process.env['DEEPSEEK_API_KEY'];
+      vi.stubGlobal('fetch', async () => {
+        throw new Error('connect ECONNREFUSED');
+      });
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      for (const [key, value] of [
+        ['ANTHROPIC_API_KEY', saved.anthropic],
+        ['DEEPSEEK_API_KEY', saved.deepseek],
+      ] as const) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
+
+    const check = async (name: string) =>
+      (await call('/api/doctor')).body.checks.find((c: { name: string }) => c.name === name);
+
+    it('does not flag a missing key for a hosted backend nothing routes to', async () => {
+      // Default chain: openai-compatible → deepseek. Anthropic is not in it.
+      expect(await check('Anthropic API key')).toMatchObject({ ok: true, info: true });
+      expect(await check('DeepSeek API key')).toMatchObject({ ok: false });
+      expect((await check('DeepSeek API key')).info).toBeUndefined();
+    });
+
+    it('flags a missing key once that backend joins the chain', async () => {
+      await call('/api/settings', send('PATCH', { updates: { providerFallback: ['anthropic'] } }));
+      expect(await check('Anthropic API key')).toMatchObject({ ok: false });
+      expect(await check('DeepSeek API key')).toMatchObject({ ok: true, info: true });
+
+      await call('/api/secrets', send('PUT', { key: 'ANTHROPIC_API_KEY', value: 'sk-test' }));
+      expect(await check('Anthropic API key')).toEqual({
+        name: 'Anthropic API key',
+        ok: true,
+        detail: 'stored in database',
+      });
     });
   });
 

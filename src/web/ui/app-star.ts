@@ -159,11 +159,182 @@ function answeringChain() {
     '<ol class="chain' + (chain.length > 1 ? ' chain-many' : '') + '">' +
       chain.map((entry, i) => chainNode(entry, i, answering)).join('') +
     '</ol>' +
-    '<div class="sky-foot">' +
-      '<span class="form-hint">Change the order or the models in Settings.</span>' +
-      ui.btn('Backend settings', { size: 'sm', variant: 'ghost', attrs: ' data-tab="settings"' }) +
-    '</div>' +
+    (state.chainDraft ? chainEditor(state.chainDraft) : skyFoot()) +
   '</section>';
+}
+
+/**
+ * Under the chart: the way into the editor, or — straight after a save while
+ * the daemon runs — the reminder that the daemon still holds the old chain.
+ * It builds its provider once, at start, so a restart is what applies it.
+ */
+function skyFoot() {
+  const stale = state.chainSaved && state.status.daemon.running;
+  return '<div class="sky-foot' + (stale ? ' sky-foot-notice' : '') + '">' +
+    (stale
+      ? '<span class="form-hint" role="status">Order saved. The running daemon keeps the old one until it restarts.</span>' +
+        '<div class="sky-foot-actions">' +
+          ui.btn('Restart daemon', { size: 'sm', variant: 'default', attrs: ' data-daemon="restart"' }) +
+        '</div>'
+      : '<span class="form-hint">Models and endpoints are in Settings.</span>' +
+        '<div class="sky-foot-actions">' +
+          ui.btn('Backend settings', { size: 'sm', variant: 'ghost', attrs: ' data-tab="settings"' }) +
+          ui.btn('Edit order', { size: 'sm', attrs: ' data-chain="edit"' }) +
+        '</div>') +
+  '</div>';
+}
+
+// --- editing the chain ------------------------------------------------------
+//
+// A draft of provider kinds, first choice first, staged in state.chainDraft and
+// written in one PATCH /settings as provider + providerFallback — the
+// same path, and the same schema validation, as every other setting. Buttons,
+// not dragging: each move is one keypress, and focus follows the backend that
+// moved. The first choice has no Remove; it is replaced by moving another
+// backend above it, so the chain can never be empty.
+
+/** Every backend Asterisk can talk to, in the order Add offers them. */
+const ALL_BACKENDS = Object.keys(BACKEND_GROUP);
+
+/** One edit to a draft chain, returning a new array; the draft is never mutated. */
+function editChain(chain, verb, kind) {
+  const at = chain.indexOf(kind);
+  if (verb === 'add') return at === -1 ? chain.concat(kind) : chain;
+  if (verb === 'remove') return at > 0 ? chain.filter((k) => k !== kind) : chain;
+  const to = verb === 'up' ? at - 1 : verb === 'down' ? at + 1 : -1;
+  if (at === -1 || to < 0 || to >= chain.length) return chain;
+  return chain.map((k, i) => (i === at ? chain[to] : i === to ? kind : k));
+}
+
+/** A backend's name from its kind, for one that may not be in the chain yet. */
+function kindName(kind) {
+  const known = chainOf(state.status).find((e) => e.provider === kind);
+  if (known) return backendName(known);
+  let endpoint = '';
+  const base = kind === 'openai-compatible' && state.settings ? findField('openaiCompatible.baseUrl') : null;
+  try { endpoint = base ? new URL(base.value ?? base.default).host : ''; } catch { endpoint = ''; }
+  return backendName({ provider: kind, endpoint });
+}
+
+function chainEditRow(kind, i, draft) {
+  const name = esc(kindName(kind));
+  const last = i === draft.length - 1;
+  const busy = state.chainBusy;
+  const move = (dir, off) => ui.btn('', {
+    size: 'sm', variant: 'ghost', square: true, icon: dir === 'up' ? 'chevronUp' : 'chevronDown',
+    disabled: off || busy,
+    attrs: ' data-chain="' + dir + ':' + esc(kind) + '" aria-label="Move ' + name + ' ' + dir + '"' +
+      ' title="Move ' + dir + '"',
+  });
+  return '<li class="chain-edit-row' + (i === 0 ? ' is-first' : '') + '">' +
+    markSvg('chain-edit-mark') +
+    '<div class="chain-edit-text">' +
+      '<span class="chain-role">' + (i === 0 ? 'First choice' : 'Fallback ' + i) + '</span>' +
+      '<span class="chain-edit-name">' + name + '</span>' +
+    '</div>' +
+    '<div class="chain-edit-actions">' +
+      move('up', i === 0) + move('down', last) +
+      (i === 0
+        ? '<span class="chain-edit-spacer" aria-hidden="true"></span>'
+        : ui.btn('', {
+            size: 'sm', variant: 'ghost', square: true, icon: 'x', disabled: busy,
+            attrs: ' data-chain="remove:' + esc(kind) + '" aria-label="Remove ' + name + ' from the chain"' +
+              ' title="Remove"',
+          })) +
+    '</div>' +
+  '</li>';
+}
+
+function chainEditor(draft) {
+  const missing = ALL_BACKENDS.filter((k) => !draft.includes(k));
+  const saved = chainOf(state.status).map((e) => e.provider);
+  const unchanged = saved.join() === draft.join();
+  return '<div class="chain-editor" role="group" aria-labelledby="chain-edit-title">' +
+    '<h2 class="chain-edit-title" id="chain-edit-title" tabindex="-1">Order of backends</h2>' +
+    '<p class="form-hint">Asterisk asks the first choice, then each fallback in turn. ' +
+      'To replace the first choice, move another backend above it.</p>' +
+    '<ol class="chain-edit-list">' + draft.map(chainEditRow).join('') + '</ol>' +
+    (missing.length > 0
+      ? '<div class="chain-edit-add"><span class="chain-role">Not in the chain</span>' +
+          missing.map((k) => ui.btn('Add ' + kindName(k), {
+            size: 'sm', icon: 'plus', disabled: state.chainBusy, attrs: ' data-chain="add:' + esc(k) + '"',
+          })).join('') +
+        '</div>'
+      : '') +
+    '<div class="chain-edit-foot">' +
+      '<span class="form-hint">' + (state.status.daemon.running
+        ? 'The daemon reads this order when it starts, so restart it after saving.'
+        : 'The daemon will use this order the next time it starts.') + '</span>' +
+      '<div class="sky-foot-actions">' +
+        ui.btn('Cancel', { size: 'sm', variant: 'ghost', attrs: ' data-chain="cancel"' }) +
+        ui.btn(state.chainBusy ? 'Saving…' : 'Save order', {
+          size: 'sm', variant: 'default', disabled: unchanged || state.chainBusy, attrs: ' data-chain="save"',
+        }) +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+/** Focuses the first selector that matches an enabled element. */
+function focusFirst(selectors) {
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el && !el.disabled) { el.focus(); return; }
+  }
+}
+
+/** data-chain="verb" or "verb:kind" from the hero's buttons. */
+async function chainAction(action) {
+  const [verb, kind] = action.split(':');
+  if (verb === 'edit') {
+    state.chainDraft = chainOf(state.status).map((e) => e.provider);
+    state.chainSaved = false;
+    render();
+    return focusFirst(['#chain-edit-title']);
+  }
+  if (verb === 'cancel') {
+    state.chainDraft = null;
+    render();
+    return focusFirst(['[data-chain="edit"]']);
+  }
+  if (verb === 'save') return saveChain();
+  if (!state.chainDraft) return;
+  state.chainDraft = editChain(state.chainDraft, verb, kind);
+  render();
+  const at = (v) => '[data-chain="' + v + ':' + kind + '"]';
+  const next = {
+    up: [at('up'), at('down')],
+    down: [at('down'), at('up')],
+    add: [at('remove'), at('up')],
+    remove: ['[data-chain^="add:"]', '#chain-edit-title'],
+  };
+  focusFirst(next[verb] || ['#chain-edit-title']);
+}
+
+/**
+ * Writes the draft: the first entry becomes provider, the rest
+ * providerFallback. One request, so the server validates and applies both
+ * or neither.
+ */
+async function saveChain() {
+  const draft = state.chainDraft;
+  if (!draft || draft.length === 0) return;
+  state.chainBusy = true;
+  render();
+  const ok = await guard(() => api('/settings', {
+    method: 'PATCH',
+    body: JSON.stringify({ updates: { provider: draft[0], providerFallback: draft.slice(1) } }),
+  }));
+  state.chainBusy = false;
+  if (ok) {
+    state.chainDraft = null;
+    state.chainSaved = true;
+    state.dirty.delete('provider');
+    toast('Backend order saved', 'good');
+    await Promise.all([loadStatus(), loadSettings()]);
+  }
+  render();
+  focusFirst(ok ? ['[data-daemon="restart"]', '[data-chain="edit"]'] : ['[data-chain="save"]']);
 }
 
 /**

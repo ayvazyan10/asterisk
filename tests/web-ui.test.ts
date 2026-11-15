@@ -437,6 +437,38 @@ describe('the answering chain', () => {
     expect(body).toContain('updates: { [path]: value }');
   });
 
+  it('edits a draft chain without mutating it, and never removes the first choice', () => {
+    const edit = (chain: string[], verb: string, kind: string) =>
+      new Function('args', `${functionSource('editChain')}\nreturn editChain(...args);`)([
+        chain,
+        verb,
+        kind,
+      ]) as string[];
+    const draft = ['openai-compatible', 'deepseek'];
+    expect(edit(draft, 'up', 'deepseek')).toEqual(['deepseek', 'openai-compatible']);
+    expect(edit(draft, 'down', 'openai-compatible')).toEqual(['deepseek', 'openai-compatible']);
+    expect(edit(draft, 'up', 'openai-compatible')).toBe(draft);
+    expect(edit(draft, 'down', 'deepseek')).toBe(draft);
+    expect(edit(draft, 'add', 'anthropic')).toEqual(['openai-compatible', 'deepseek', 'anthropic']);
+    expect(edit(draft, 'add', 'deepseek')).toBe(draft);
+    expect(edit(draft, 'remove', 'deepseek')).toEqual(['openai-compatible']);
+    expect(edit(draft, 'remove', 'openai-compatible')).toBe(draft);
+    expect(draft).toEqual(['openai-compatible', 'deepseek']);
+  });
+
+  it('saves the chain as provider + providerFallback through PATCH /settings', () => {
+    const body = functionSource('saveChain');
+    expect(body).toContain("api('/settings', {");
+    expect(body).toContain("method: 'PATCH'");
+    expect(body).toContain('updates: { provider: draft[0], providerFallback: draft.slice(1) }');
+  });
+
+  it('offers the daemon restart inline after a save, since the daemon builds its chain once', () => {
+    const body = functionSource('skyFoot');
+    expect(body).toContain('state.chainSaved && state.status.daemon.running');
+    expect(body).toContain('data-daemon="restart"');
+  });
+
   it('reads the connectors count from the status payload, like every other counted tab', () => {
     const at = CLIENT.indexOf("id: 'connectors'");
     expect(at).toBeGreaterThan(-1);

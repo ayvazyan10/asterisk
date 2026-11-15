@@ -81,6 +81,12 @@ const KEY_FOR: Partial<Record<AsteriskConfig['provider'], SecretKey>> = {
   anthropic: 'ANTHROPIC_API_KEY',
 };
 
+/** How the diagnostics name each hosted backend. */
+const HOSTED_NAME: Partial<Record<AsteriskConfig['provider'], string>> = {
+  deepseek: 'DeepSeek',
+  anthropic: 'Anthropic',
+};
+
 function hostOf(url: string): string {
   try {
     return new URL(url).host;
@@ -200,7 +206,7 @@ export const getLogs: Handler = ({ url }) => {
 export const getDoctor: Handler = async ({ db }) => {
   const config = readConfig(db);
   const paths = asteriskPaths();
-  const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
+  const checks: Array<{ name: string; ok: boolean; detail: string; info?: boolean }> = [];
 
   // The local endpoint, and what it is actually serving. With the model name
   // detected rather than configured, "reachable" alone is not enough to tell
@@ -224,19 +230,42 @@ export const getDoctor: Handler = async ({ db }) => {
     });
   }
 
-  const anthropicKey = process.env['ANTHROPIC_API_KEY'] ?? '';
-  const storedKey = db.get<{ value: string }>('SELECT value FROM secrets WHERE key = ?', [
-    'ANTHROPIC_API_KEY',
-  ])?.value;
-  checks.push({
-    name: 'Anthropic API key',
-    ok: Boolean(anthropicKey || storedKey),
-    detail: anthropicKey
-      ? 'present in environment'
-      : storedKey
-        ? 'stored in database'
-        : 'not configured — the anthropic provider will fail',
-  });
+  // A hosted backend's key is a problem only when that backend is in the
+  // chain. One nobody routes to is reported as information, the way the
+  // REPL's /doctor prints "· Anthropic  no API key set" without a cross.
+  const inChain = new Set([config.provider, ...config.providerFallback]);
+  for (const [kind, key] of Object.entries(KEY_FOR) as Array<
+    [AsteriskConfig['provider'], SecretKey]
+  >) {
+    const label = HOSTED_NAME[kind] ?? kind;
+    const name = `${label} API key`;
+    const fromEnv = Boolean(process.env[key]);
+    if (fromEnv || getSecret(db, key)) {
+      checks.push({
+        name,
+        ok: true,
+        detail: fromEnv ? 'present in environment' : 'stored in database',
+      });
+    } else if (inChain.has(kind)) {
+      checks.push({
+        name,
+        ok: false,
+        // What createProviderChain does with a keyless link: a primary falls
+        // back to the local server, a fallback is dropped from the chain.
+        detail:
+          config.provider === kind
+            ? `${key} is not set — ${label} is the first choice, so the local model answers instead`
+            : `${key} is not set — ${label} is in the fallback chain but is skipped`,
+      });
+    } else {
+      checks.push({
+        name,
+        ok: true,
+        info: true,
+        detail: `not set — not needed while ${label} is not in the backend chain`,
+      });
+    }
+  }
 
   checks.push({
     name: 'Database',

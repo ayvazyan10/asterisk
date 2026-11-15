@@ -6,7 +6,7 @@
 // [tag, attributes] pairs; `icon()` in ./app-core.ts wraps a set in the same
 // <svg> Lucide's own components emit.
 //
-// Copied rather than depended on: adding a runtime dependency to draw 42 fixed
+// Copied rather than depended on: adding a runtime dependency to draw 44 fixed
 // shapes would put a package in the bundle for data that never changes. Only
 // the icons the panel actually renders are here — the full set is ~1600.
 //
@@ -56,6 +56,7 @@ const ICONS = {
   chevronRight: [["path",{"d":"m9 18 6-6-6-6"}]],
   chevronLeft: [["path",{"d":"m15 18-6-6 6-6"}]],
   chevronDown: [["path",{"d":"m6 9 6 6 6-6"}]],
+  chevronUp: [["path",{"d":"m18 15-6-6-6 6"}]],
   circle: [["circle",{"cx":"12","cy":"12","r":"10"}]],
   search: [["path",{"d":"m21 21-4.34-4.34"}],["circle",{"cx":"11","cy":"11","r":"8"}]],
   plus: [["path",{"d":"M5 12h14"}],["path",{"d":"M12 5v14"}]],

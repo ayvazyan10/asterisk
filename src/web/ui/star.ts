@@ -114,6 +114,59 @@ export const STAR = String.raw`
   background: color-mix(in oklch, var(--surface-high) 60%, transparent);
 }
 
+/* The editor opens in place of the foot, on the same raised strip, so it
+   reads as the chart's own legend being rewritten rather than a new panel.
+   Rows are a plain list — the chart above stays the picture of the saved
+   order; this is the draft. No gold here: gold means "answering now". */
+.sky-foot-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.sky-foot-notice .form-hint { color: var(--ink); }
+
+.chain-editor {
+  padding: 1.25rem 1.75rem 1rem;
+  border-top: 1px solid var(--border);
+  background: color-mix(in oklch, var(--surface-high) 60%, transparent);
+}
+.chain-edit-title {
+  font-family: var(--font-display); font-size: var(--t-lg); font-weight: 600;
+  letter-spacing: -0.01em; color: var(--ink);
+}
+.chain-edit-title:focus { outline: none; }
+.chain-editor > .form-hint { margin-top: 0.25rem; max-width: 60ch; }
+
+.chain-edit-list {
+  list-style: none; margin: 0.9rem 0 0; padding: 0; max-width: 34rem;
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--surface);
+}
+.chain-edit-row {
+  display: grid; grid-template-columns: 1.1rem minmax(0, 1fr) auto;
+  align-items: center; column-gap: 0.8rem;
+  padding: 0.45rem 0.45rem 0.45rem 0.9rem;
+  border-top: 1px solid var(--border);
+}
+.chain-edit-row:first-child { border-top: 0; }
+.chain-edit-mark { width: 1.1rem; height: 1.1rem; display: block; color: var(--ink-dim); }
+.chain-edit-row:not(.is-first) .chain-edit-mark path {
+  fill: none; stroke: currentColor; stroke-width: 3; stroke-linejoin: round;
+}
+.chain-edit-text { display: flex; flex-direction: column; min-width: 0; }
+.chain-edit-name { font-size: var(--t-sm); font-weight: 500; color: var(--ink); overflow-wrap: anywhere; }
+.chain-edit-actions { display: flex; align-items: center; gap: 0.15rem; }
+/* Holds the Remove button's place on the first row, so the arrows line up. */
+.chain-edit-spacer { width: 1.75rem; flex: none; }
+
+.chain-edit-add {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+.chain-edit-add .chain-role { margin-right: 0.25rem; }
+.chain-edit-foot {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  gap: 0.75rem; margin-top: 1.1rem;
+}
+/* When the hint wraps above them, the buttons keep to the right edge. */
+.chain-edit-foot .sky-foot-actions { margin-left: auto; }
+
 /* --- narrow: the constellation turns on its side --------------------------- */
 
 @media (max-width: 820px) {
@@ -132,6 +185,8 @@ export const STAR = String.raw`
   }
   .chain-body { margin-top: 0; }
   .sky-foot { padding-left: 1rem; }
+  .chain-editor { padding: 1rem; }
+  .chain-edit-spacer { width: 2.75rem; }
   /* The levels share the column evenly instead of wrapping onto a second
      line, which read as two separate controls. */
   .chain-reasoning, .chain-reasoning .tabs-list { align-self: stretch; }
