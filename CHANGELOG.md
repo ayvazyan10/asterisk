@@ -5,6 +5,30 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-11-15
+
+### Changed
+
+- **"Allow always" remembers the program, not the exact command.** One
+  session needed ~40 approvals because each remembered rule was the whole
+  invocation (`ps -eo pid,etime,cmd --sort=-etime`, `head -12`). Ordinary
+  programs are now remembered by name (`ps`, `sqlite3`); tools with
+  subcommands keep the subcommand (`git log`, `npm test` — never all of
+  `npm`); interpreters keep their first argument (`node --test`,
+  `python3 -m`), while inline code (`node -e`, `bash -c`) and command
+  re-entry (`sudo`, `env`, `xargs`, `ssh`) are still pinned exactly.
+- `timeout`, `nice`, `nohup`, `time` and `stdbuf` are judged by the command
+  they run, which is also what gets remembered. A grant for a wrapper
+  invocation (`timeout 240`) no longer covers whatever it wraps.
+- Commands that are already allowed (`cd`, `head`, `grep`) no longer show
+  up in the "Always remembers" list.
+- Reading the Asterisk home can be granted once (`read:asterisk-home`)
+  instead of asking every time. Environment dumps and writes to protected
+  paths still ask every time, and forbidden arguments (`find -exec`,
+  `sort -o`) still ask even when the program is granted.
+- The voice docs show how to call a Whisper service on your own host and
+  port from `stt.command`.
+
 ## [0.7.0] - 2026-11-15
 
 A security pass driven by a full code audit, a local-first provider chain
