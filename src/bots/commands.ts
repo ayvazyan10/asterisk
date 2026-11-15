@@ -14,7 +14,10 @@ import { dirname, join } from 'node:path';
 import type { AgentSession } from '../agent/context.ts';
 import { currentSession, currentSessionId } from '../agent/context.ts';
 import type { AgentState } from '../agent/loop.ts';
-import { loadConfig } from '../config/load.ts';
+import { loadConfig, saveConfig } from '../config/load.ts';
+import { ConfigSchema } from '../config/schema.ts';
+import { getDb } from '../db/index.ts';
+import { listGrantedRules, revokeAllRules, revokeRule } from '../db/permissions.ts';
 import {
   OUTPUT_STYLES,
   type OutputStyle,
@@ -46,6 +49,7 @@ export const BOT_COMMAND_LIST: BotCommandSpec[] = [
   // Telegram still offers it in autocomplete.
   { command: 'stop', description: 'Stop what I am doing right now' },
   { command: 'plan', description: 'Toggle plan mode (read-only research mode)' },
+  { command: 'permissions', description: 'Permission mode and remembered grants' },
   { command: 'soul', description: 'Show / set / clear your personal persona' },
   {
     command: 'style',
@@ -63,6 +67,7 @@ Commands:
 /tasks   — list your tasks
 /stop    — stop the turn I'm running for you and drop anything queued
 /plan    — toggle Plan Mode (read-only research mode)
+/permissions — permission mode and remembered grants
 /soul    — show / set / clear your personal persona (try /soul help)
 
 Otherwise just type what you want me to do.`;
@@ -148,6 +153,9 @@ export function tryHandleBotCommand(text: string, ctx: CommandContext): Outgoing
     case 'soul':
       return { text: handleSoulCommand(rest) };
 
+    case 'permissions':
+      return { text: handlePermissionsCommand(rest) };
+
     case 'style':
     case 'output-style':
     case 'output_style':
@@ -197,6 +205,70 @@ function renderTasks(): string {
     );
   }
   return lines.join('\n');
+}
+
+function handlePermissionsCommand(rest: string): string {
+  const { config } = loadConfig();
+  const modeSchema = ConfigSchema.shape.permissions.removeDefault().shape.mode;
+  const modes = ['ask', 'relaxed'].filter((mode) => modeSchema.safeParse(mode).success);
+  const usage = `Usage: /permissions mode <${modes.join('|')}> · /permissions list · /permissions revoke <rule>`;
+  const [verb, ...args] = rest.trim().split(/\s+/);
+  const value = args.join(' ');
+
+  if (!verb) {
+    const meanings: Record<string, string> = {
+      ask: 'Allowlisted actions run without asking; other actions need approval.',
+      relaxed:
+        'Sandboxed Bash runs without asking except dangerous commands; without an active sandbox, behaves like ask.',
+      allowlist: 'Only allowlisted actions run; everything else is refused.',
+      unrestricted: 'Actions run without permission checks.',
+    };
+    return [
+      `Permission mode: ${config.permissions.mode}`,
+      meanings[config.permissions.mode],
+      `Remembered grants: ${listGrantedRules(getDb()).length} (/permissions list)`,
+      '',
+      `Switch with: ${modes.map((mode) => `/permissions mode ${mode}`).join(' · ')}`,
+    ].join('\n');
+  }
+
+  if (verb === 'mode') {
+    if (value === 'allowlist' || value === 'unrestricted') {
+      return `Can't set permissions.mode to "${value}" from chat; change that in the panel or the REPL.`;
+    }
+    const mode = modeSchema.safeParse(value);
+    if ((value !== 'ask' && value !== 'relaxed') || !mode.success) return usage;
+    saveConfig({ ...config, permissions: { ...config.permissions, mode: mode.data } });
+    return `✓ permissions.mode set to "${mode.data}".`;
+  }
+
+  if (verb === 'list') {
+    const granted = listGrantedRules(getDb());
+    if (granted.length === 0) return '(no remembered grants)';
+    return [
+      `Remembered grants: ${granted.length}`,
+      ...granted.map((g) => `${g.rule} · granted via ${g.grantedBy}`),
+    ].join('\n');
+  }
+
+  if (verb === 'revoke') {
+    let rule = value;
+    const first = rule[0];
+    if ((first === '"' || first === "'") && rule.length > 1 && rule.endsWith(first)) {
+      rule = rule.slice(1, -1).trim();
+    }
+    if (!rule) return usage;
+    if (rule === '*') {
+      revokeAllRules(getDb());
+      return 'Revoked every remembered rule.';
+    }
+    const known = listGrantedRules(getDb()).some((g) => g.rule === rule);
+    if (!known) return `"${rule}" is not a remembered rule. Run /permissions list to see the list.`;
+    revokeRule(getDb(), rule);
+    return `Revoked "${rule}". It will prompt again next time.`;
+  }
+
+  return usage;
 }
 
 const SOUL_HELP = [

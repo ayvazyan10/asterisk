@@ -14,6 +14,9 @@ import {
   tryHandleBotCommand,
 } from '../src/bots/commands.ts';
 import { loadConfig, saveConfig } from '../src/config/load.ts';
+import { ConfigSchema } from '../src/config/schema.ts';
+import { getDb } from '../src/db/index.ts';
+import { grantRules, listGrantedRules } from '../src/db/permissions.ts';
 import { readSessionSoul } from '../src/soul/loader.ts';
 import { isPlanMode, setPlanMode } from '../src/tools/planmode.ts';
 import {
@@ -124,6 +127,121 @@ describe('bot commands', () => {
     expect(r?.text).toMatch(/History\s+1 message/);
     expect(r?.text).toMatch(/Plan Mode\s+off/);
   });
+
+  it('/permissions shows the stored mode, its meaning, grant count and supported chat choices', async () => {
+    const { config } = loadConfig();
+    saveConfig({ ...config, permissions: { ...config.permissions, mode: 'allowlist' } });
+    grantRules(getDb(), ['npm test', 'git push'], 'telegram:7');
+
+    const r = await runWithSession(SESSION, async () =>
+      tryHandleBotCommand('/permissions', ctx(state)),
+    );
+    const text = r?.text ?? '';
+    expect(text).toContain('Permission mode: allowlist');
+    expect(text).toContain('Only allowlisted actions run; everything else is refused.');
+    expect(text).toContain('Remembered grants: 2');
+    expect(text).toContain('/permissions mode ask');
+    expect(text.includes('/permissions mode relaxed')).toBe(
+      ConfigSchema.shape.permissions.removeDefault().shape.mode.safeParse('relaxed').success,
+    );
+    expect(text).not.toContain('/permissions mode allowlist');
+    expect(text).not.toContain('/permissions mode unrestricted');
+  });
+
+  it('/permissions mode persists relaxed when supported, and can switch back to ask', async () => {
+    const { config } = loadConfig();
+    saveConfig({ ...config, permissions: { ...config.permissions, mode: 'unrestricted' } });
+    const before = loadConfig().config;
+    const requested = ConfigSchema.shape.permissions.removeDefault().shape.mode.safeParse('relaxed')
+      .success
+      ? 'relaxed'
+      : 'ask';
+
+    await runWithSession(SESSION, async () => {
+      const r = tryHandleBotCommand(`/permissions mode ${requested}`, ctx(state));
+      expect(r?.text).toContain(`✓ permissions.mode set to "${requested}".`);
+      expect(loadConfig().config).toEqual({
+        ...before,
+        permissions: { ...before.permissions, mode: requested },
+      });
+      expect(tryHandleBotCommand('/permissions', ctx(state))?.text).toContain(
+        `Permission mode: ${requested}`,
+      );
+
+      const ask = tryHandleBotCommand('/permissions mode ask', ctx(state));
+      expect(ask?.text).toContain('✓ permissions.mode set to "ask".');
+      expect(loadConfig().config.permissions.mode).toBe('ask');
+    });
+  });
+
+  it.each(['allowlist', 'unrestricted'])(
+    '/permissions mode %s refuses the change from chat',
+    async (mode) => {
+      const before = loadConfig().config;
+      const r = await runWithSession(SESSION, async () =>
+        tryHandleBotCommand(`/permissions mode ${mode}`, ctx(state)),
+      );
+      expect(r?.text).toContain('change that in the panel or the REPL');
+      expect(loadConfig().config).toEqual(before);
+    },
+  );
+
+  it.each(['npm test', '"npm test"', "'npm test'"])(
+    '/permissions lists grants with their source and revokes exactly %s',
+    async (rule) => {
+      const { config } = loadConfig();
+      saveConfig({ ...config, permissions: { ...config.permissions, allow: ['npm test'] } });
+      const before = loadConfig().config;
+      const db = getDb();
+      grantRules(db, ['npm test'], 'telegram:7');
+      grantRules(db, ['npm test:unit'], 'repl');
+
+      await runWithSession(SESSION, async () => {
+        const list = tryHandleBotCommand('/permissions list', ctx(state));
+        expect(list?.text).toContain('npm test · granted via telegram:7');
+        expect(list?.text).toContain('npm test:unit · granted via repl');
+
+        const revoked = tryHandleBotCommand(`/permissions revoke ${rule}`, ctx(state));
+        expect(revoked?.text).toBe('Revoked "npm test". It will prompt again next time.');
+        expect(listGrantedRules(db).map((g) => g.rule)).toEqual(['npm test:unit']);
+        expect(tryHandleBotCommand('/permissions list', ctx(state))?.text).not.toContain(
+          'npm test ·',
+        );
+        expect(loadConfig().config).toEqual(before);
+
+        const missing = tryHandleBotCommand('/permissions revoke npm test', ctx(state));
+        expect(missing?.text).toContain('"npm test" is not a remembered rule.');
+        expect(listGrantedRules(db).map((g) => g.rule)).toEqual(['npm test:unit']);
+      });
+    },
+  );
+
+  it('/permissions revoke * forgets all grants, as in the REPL', async () => {
+    grantRules(getDb(), ['npm test', 'git push']);
+    await runWithSession(SESSION, async () => {
+      const r = tryHandleBotCommand('/permissions revoke *', ctx(state));
+      expect(r?.text).toBe('Revoked every remembered rule.');
+      expect(listGrantedRules(getDb())).toEqual([]);
+      expect(tryHandleBotCommand('/permissions list', ctx(state))?.text).toBe(
+        '(no remembered grants)',
+      );
+    });
+  });
+
+  it.each(['mode', 'mode unknown', 'mode ask extra', 'revoke', 'revoke ""', 'allow rm'])(
+    '/permissions %s returns usage without changing settings or grants',
+    async (args) => {
+      const before = loadConfig().config;
+      grantRules(getDb(), ['npm test']);
+      const grants = listGrantedRules(getDb());
+      const r = await runWithSession(SESSION, async () =>
+        tryHandleBotCommand(`/permissions ${args}`, ctx(state)),
+      );
+      expect(r?.text).toMatch(/^Usage: \/permissions/);
+      expect(loadConfig().config).toEqual(before);
+      expect(listGrantedRules(getDb())).toEqual(grants);
+    },
+  );
 
   it('/help@botname (group-chat suffix) is recognised', async () => {
     const r = await runWithSession(SESSION, async () =>
@@ -373,7 +491,7 @@ describe('bot commands', () => {
     const repo = await mkdtemp(join(tmpdir(), 'asterisk-bot-wt-'));
     const cwd = process.cwd();
     const git = (...args: string[]): void => {
-      execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+      execFileSync('git', args, { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'] });
     };
     try {
       git('init', '-b', 'master');

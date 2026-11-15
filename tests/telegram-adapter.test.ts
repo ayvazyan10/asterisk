@@ -16,6 +16,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { runWithSession } from '../src/agent/context.ts';
+import { createAgentState } from '../src/agent/loop.ts';
+import { tryHandleBotCommand } from '../src/bots/commands.ts';
+import { loadConfig } from '../src/config/load.ts';
+import { closeDb, getDb } from '../src/db/index.ts';
+import { grantRules } from '../src/db/permissions.ts';
+
 const { FakeBot, fakeBotInstances, FakeInputFile } = vi.hoisted(() => {
   type Handler = (ctx: unknown) => Promise<void>;
 
@@ -226,12 +233,19 @@ describe('lifecycle', () => {
     await start({}, async () => 'ok');
     const bot = fakeBotInstances.at(-1);
     expect(bot?.setMyCommandsCalls).toHaveLength(1);
-    const registered = bot?.setMyCommandsCalls[0]?.[0] as { command: string }[];
+    const registered = bot?.setMyCommandsCalls[0]?.[0] as {
+      command: string;
+      description: string;
+    }[];
     expect(registered.length).toBeGreaterThan(0);
     expect(registered.every((c) => typeof c.command === 'string')).toBe(true);
     // /stop is handled by the daemon rather than by tryHandleBotCommand, so
     // this registration is the only thing that puts it in autocomplete.
     expect(registered.map((c) => c.command)).toContain('stop');
+    expect(registered).toContainEqual({
+      command: 'permissions',
+      description: 'Permission mode and remembered grants',
+    });
   });
 
   it('still starts when Telegram rejects the command list', async () => {
@@ -334,6 +348,74 @@ describe('the allowlist', () => {
     await onMessage(ctx);
     expect(chatId).toBe('7');
   });
+});
+
+describe('permissions commands', () => {
+  let home: string;
+  let prevHome: string | undefined;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'asterisk-tg-permissions-'));
+    prevHome = process.env['ASTERISK_HOME'];
+    process.env['ASTERISK_HOME'] = home;
+  });
+
+  afterEach(async () => {
+    closeDb();
+    if (prevHome === undefined) delete process.env['ASTERISK_HOME'];
+    else process.env['ASTERISK_HOME'] = prevHome;
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('does not let a non-allowlisted user change permission mode', async () => {
+    const before = loadConfig().config;
+    const handler = vi.fn(async (msg: IncomingMessage) =>
+      runWithSession(
+        { id: `bot:${msg.chatId}`, scope: 'unknown' },
+        async () =>
+          tryHandleBotCommand(msg.text, { state: createAgentState(), providerName: 'test' }) ?? '',
+      ),
+    );
+    const onMessage = await start({ allowedUserIds: [7] }, handler);
+    const ctx = new FakeCtx();
+    ctx.from = { id: 999 };
+    ctx.message = { text: '/permissions mode relaxed' };
+
+    await onMessage(ctx);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(ctx.texts('reply')[0]).toMatch(/restricted/i);
+    expect(loadConfig().config).toEqual(before);
+  });
+
+  it.each(['plain', 'html'] as const)(
+    'chunks the full remembered grant list in %s mode',
+    async (parseMode) => {
+      const rules = Array.from({ length: 80 }, (_, i) => `npm test:${i} ${'x'.repeat(60)}`);
+      grantRules(getDb(), rules, 'telegram:7');
+      const onMessage = await start({ parseMode }, async (msg) =>
+        runWithSession(
+          { id: `bot:${msg.chatId}`, scope: 'unknown' },
+          async () =>
+            tryHandleBotCommand(msg.text, { state: createAgentState(), providerName: 'test' }) ??
+            '',
+        ),
+      );
+      const ctx = new FakeCtx();
+      ctx.message = { text: '/permissions list' };
+
+      await onMessage(ctx);
+
+      const replies = ctx.texts('reply');
+      expect(replies.length).toBeGreaterThan(1);
+      expect(replies.every((text) => text.length <= 4096)).toBe(true);
+      expect(replies.join('')).toBe(
+        ['Remembered grants: 80', ...rules.map((rule) => `${rule} · granted via telegram:7`)].join(
+          '\n',
+        ),
+      );
+    },
+  );
 });
 
 describe('final mode', () => {
