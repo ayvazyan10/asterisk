@@ -50,6 +50,16 @@ describe('fireHooks', () => {
     expect(payload.toolOutput).toBe('wrote 5 bytes');
   });
 
+  it('survives a hook exiting without reading a payload larger than its stdin pipe', async () => {
+    const results = await fireHooks([{ ...baseHook, command: 'true' }], {
+      event: 'after_tool',
+      tool: 'Read',
+      toolOutput: 'x'.repeat(5 * 1024 * 1024),
+    });
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
   it('parses a before_tool block decision from stdout JSON', async () => {
     const hook: HookConfig = {
       name: 'block-rm',

@@ -197,6 +197,10 @@ function runShellHook(
 
     proc.stdout?.on('data', (chunk: Buffer) => stdoutSink.push(chunk));
     proc.stderr?.on('data', (chunk: Buffer) => stderrSink.push(chunk));
+    proc.stdin?.on('error', () => {
+      // Hooks may exit without reading stdin (EPIPE). Ignore stdin errors so
+      // a closed input pipe can never crash the daemon.
+    });
     proc.stdin?.write(stdin);
     proc.stdin?.end();
 

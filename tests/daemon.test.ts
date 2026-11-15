@@ -1,7 +1,9 @@
-import { existsSync } from 'node:fs';
+import * as childProcess from 'node:child_process';
+import { existsSync, statSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import * as os from 'node:os';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,7 +14,11 @@ import type { VoiceIntakeResult } from '../src/bots/voice-intake.ts';
 import { logs, start, status, stop } from '../src/daemon/lifecycle.ts';
 import { asteriskPaths } from '../src/daemon/paths.ts';
 import { statusFromPidFile } from '../src/daemon/pidfile.ts';
+import { PROJECT_ROOT, entrypointPath } from '../src/daemon/project-root.ts';
 import { closeDb } from '../src/db/index.ts';
+
+vi.mock('node:os', { spy: true });
+vi.mock('node:child_process', { spy: true });
 
 describe('daemon lifecycle', () => {
   let home: string;
@@ -26,6 +32,8 @@ describe('daemon lifecycle', () => {
     process.env['ASTERISK_HOME'] = home;
     // Fast heartbeat so the test exercises the logger path quickly.
     process.env['ASTERISK_HEARTBEAT_MS'] = '200';
+    vi.stubEnv('ASTERISK_WORKSPACE', join(home, 'workspace'));
+    vi.stubEnv('ASTERISK_ENTRY_FROM_SOURCE', '1');
   });
 
   afterEach(async () => {
@@ -34,6 +42,8 @@ describe('daemon lifecycle', () => {
     else process.env['ASTERISK_HOME'] = prevHome;
     if (prevHeartbeat === undefined) delete process.env['ASTERISK_HEARTBEAT_MS'];
     else process.env['ASTERISK_HEARTBEAT_MS'] = prevHeartbeat;
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
     await rm(home, { recursive: true, force: true });
   });
 
@@ -80,6 +90,42 @@ describe('daemon lifecycle', () => {
     const s = status();
     expect(s.message).toBe('not running');
   });
+
+  it.each(['unset', 'empty', 'whitespace', 'absolute', 'relative'] as const)(
+    'spawns in an owner-only workspace with an absolute entrypoint (%s override)',
+    async (kind) => {
+      vi.spyOn(os, 'homedir').mockReturnValue(home);
+      const workspace = join(
+        home,
+        kind === 'absolute' || kind === 'relative' ? 'custom-workspace' : 'asterisk-workspace',
+      );
+      const overrides = {
+        unset: undefined,
+        empty: '',
+        whitespace: ' \t ',
+        absolute: workspace,
+        relative: relative(process.cwd(), workspace),
+      };
+      vi.stubEnv('ASTERISK_WORKSPACE', overrides[kind]);
+      const spawn = vi.spyOn(childProcess, 'spawn');
+
+      const result = await start();
+      expect(result.ok, result.message).toBe(true);
+      expect(spawn).toHaveBeenCalledWith(
+        'bun',
+        [entrypointPath('daemon')],
+        expect.objectContaining({
+          cwd: workspace,
+          env: expect.objectContaining({ ASTERISK_WORKSPACE: workspace, ASTERISK_DAEMON: '1' }),
+        }),
+      );
+      expect(isAbsolute(entrypointPath('daemon'))).toBe(true);
+      expect(workspace).not.toBe(PROJECT_ROOT);
+      expect(statSync(workspace).isDirectory()).toBe(true);
+      expect(statSync(workspace).mode & 0o777).toBe(0o700);
+    },
+    15_000,
+  );
 });
 
 describe('daemon intake interruption', () => {

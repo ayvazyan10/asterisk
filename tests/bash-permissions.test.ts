@@ -8,6 +8,7 @@
 // through the 14-regex denylist in bash-safety.ts, which is why that denylist
 // is documented as defence in depth rather than as the boundary.
 
+import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { openDriver } from '../src/db/driver.ts';
@@ -100,9 +101,45 @@ describe('command parser', () => {
     ["echo $'\\x41'", 'ANSI-C quoted string'],
     ['echo $"hi"', 'locale-translated string'],
     ['FOO=1 ls', 'environment assignment'],
+    ['echo {a,b}', 'brace expansion'],
+    ['echo {a..b}', 'brace expansion'],
+    ['find . -delet?', 'pathname expansion'],
+    ['find . -name zz -e*', 'pathname expansion'],
+    ['find . -delet[ex]', 'pathname expansion'],
   ])('marks %s opaque', (command, reason) => {
     expect(parseCommand(command).opaque).toContain(reason);
   });
+
+  it.skipIf(spawnSync('bash', ['-c', 'exit 0']).status !== 0)(
+    'agrees with bash argv for auto-approved literal words',
+    () => {
+      for (const command of [
+        'ls -la',
+        'git log --oneline -5',
+        'grep -rn foo src',
+        "grep -r 'foo*' src",
+        'grep -r "foo*" src',
+        "find . -name '*.ts'",
+        'echo "{a,b}"',
+        'echo \\{a,b\\}',
+        'find . -name \\*.ts',
+      ]) {
+        expect(decide(command).action).toBe('allow');
+        const parsed = parseCommand(command);
+        expect(parsed.opaque).toEqual([]);
+        expect(parsed.segments).toHaveLength(1);
+        const segment = parsed.segments[0];
+        const bash = spawnSync('bash', ['-c', `printf '%s\\0' ${command}`], {
+          encoding: 'utf8',
+        });
+        expect(bash.status).toBe(0);
+        expect(bash.stdout.split('\0').slice(0, -1)).toEqual([
+          segment?.bin,
+          ...(segment?.args ?? []),
+        ]);
+      }
+    },
+  );
 });
 
 describe('policy — commands that run without asking', () => {
@@ -113,9 +150,22 @@ describe('policy — commands that run without asking', () => {
     'git status',
     'git status --short',
     'git log --oneline -20',
+    'git log --oneline -5',
+    'git diff',
     'git diff HEAD~1',
     'rg -n "TODO" src/',
     'find . -name "*.ts"',
+    "find . -name '*.ts'",
+    "grep -r 'foo*' src",
+    'grep -rn foo src',
+    'sort file',
+    'sort -u file',
+    'echo "{a,b}"',
+    "echo '{a..b}'",
+    'echo \\{a,b\\}',
+    'find . -name \\*.ts',
+    "find . -name '[ab]?.ts'",
+    'git diff -- src/file.ts',
     'wc -l README.md',
     'ls && pwd',
     'git status; ls',
@@ -177,11 +227,53 @@ const BYPASS_ATTEMPTS: ReadonlyArray<[label: string, command: string]> = [
   ['git reading config from the environment', 'git --config-env=core.pager=EVIL log'],
   ['date setting the clock', 'date -s "2000-01-01"'],
   ['egrep reading devices', 'egrep --devices=read x /dev/zero'],
+  ['brace-expanded find exec', 'find . -maxdepth 0 {-exec,touch,/tmp/PWNED,\\;}'],
+  ['brace-expanded ripgrep preprocessor', 'rg {--pre,/tmp/x.sh} foo'],
+  ['brace-expanded words', 'echo {a,b}'],
+  ['brace-expanded range', 'echo {a..b}'],
+  ['glob-expanded find delete', 'find . -delet?'],
+  ['glob-expanded find exec', 'find . -name zz -e*'],
+  ['bracket-glob-expanded find option', 'find . -delet[ex]'],
+  ['glob-expanded ripgrep arguments', 'rg * foo'],
+  ['glob-expanded sort arguments', 'sort *'],
+  ['glob-expanded git arguments', 'git diff *'],
+  ['glob-expanded tree arguments', 'tree *'],
+  ['sort attached output', 'sort -o/tmp/out /etc/hostname'],
+  ['sort clustered output', 'sort -uo /tmp/out x'],
+  ['sort longer clustered output', 'sort -ruo /tmp/out x'],
+  ['tree attached output', 'tree -o/tmp/x'],
+  ['tree clustered output', 'tree -ao/tmp/x'],
+  ['date attached set', 'date -s2020'],
+  ['date clustered set', 'date -us2020'],
+  ['git remote prefix adding a remote', 'git remote --verbose add x y'],
+  ['git remote prefix fetching updates', 'git remote --verbose update'],
+  ['git branch prefix editing descriptions', 'git branch --list --edit-description'],
+  ['git branch prefix deleting branches', 'git branch --list -D foo'],
+  ['git diff abbreviated output', 'git diff --outpu=/tmp/x'],
+  ['git log abbreviated output', 'git log --outp=/tmp/x'],
+  ['git show abbreviated output', 'git show --outp=/tmp/zzz HEAD'],
+  ['git textconv execution', 'git diff --no-index --textconv a b'],
+  ['git abbreviated textconv execution', 'git diff --textc a b'],
+  ['git abbreviated external diff', 'git diff --ext a b'],
+  ['git abbreviated upload-pack', 'git ls-files --upload=/tmp/x'],
+  ['git abbreviated receive-pack', 'git ls-files --receive=/tmp/x'],
+  ['date abbreviated set', 'date --se=2020'],
+  ['file compiling magic', 'file -C -m /tmp/x'],
+  ['file clustered compile', 'file -vC -m /tmp/x'],
+  ['file abbreviated compile', 'file --comp -m /tmp/x'],
+  ['sort abbreviated compress program', 'sort --compress-prog=/bin/sh big.txt'],
+  ['sort abbreviated output', 'sort --out=/tmp/x file'],
+  ['tree abbreviated output', 'tree --out=/tmp/x'],
+  ['ripgrep abbreviated preprocessor', 'rg --pr=/tmp/x.sh foo'],
+  ['ripgrep abbreviated hostname program', 'rg --hostname-b=/tmp/x.sh foo'],
+  ['grep abbreviated devices', 'grep --dev=read x /dev/zero'],
+  ['egrep abbreviated devices', 'egrep --dev=read x /dev/zero'],
+  ['fgrep abbreviated devices', 'fgrep --dev=read x /dev/zero'],
 ];
 
 describe('policy — bypass attempts', () => {
   it.each(BYPASS_ATTEMPTS)('never silently allows: %s', (_label, command) => {
-    expect(decide(command).action).not.toBe('allow');
+    expect(decide(command).action).toBe('ask');
   });
 
   it.each(BYPASS_ATTEMPTS)('refuses outright in allowlist mode: %s', (_label, command) => {
@@ -229,6 +321,11 @@ describe('policy — arguments that break a read-only promise', () => {
     expect(decide('git -c core.pager=sh log', { allow: ['git'] }).action).toBe('ask');
     expect(decide('git --git-dir=/tmp/evil.git status', { allow: ['git'] }).action).toBe('ask');
     expect(decide('git --config-env=core.pager=EVIL log', { allow: ['git'] }).action).toBe('ask');
+    expect(decide('git -ccore.pager=sh log', { allow: ['git'] }).action).toBe('ask');
+    expect(decide('git -Pc core.pager=sh log', { allow: ['git'] }).action).toBe('ask');
+    expect(decide('git --git-d=/tmp/evil.git status', { allow: ['git'] }).action).toBe('ask');
+    expect(decide('git --config-e=core.pager=EVIL log', { allow: ['git'] }).action).toBe('ask');
+    expect(decide('git --exe=/tmp/x status', { allow: ['git'] }).action).toBe('ask');
     expect(decide('git status', { allow: ['git'] }).action).toBe('allow');
   });
 

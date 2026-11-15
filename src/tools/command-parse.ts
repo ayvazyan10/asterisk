@@ -174,6 +174,12 @@ function tokenize(src: string, opaque: string[]): Token[] {
       continue;
     }
 
+    // Expansion can create extra arguments or filenames that are options.
+    // Quotes and backslashes have already been consumed above, so only bare
+    // expansion characters reach here. Over-approximate rather than expand.
+    if (c === '{') opaque.push('brace expansion');
+    if (c === '*' || c === '?' || c === '[') opaque.push('pathname expansion');
+
     push(c);
     i += 1;
   }

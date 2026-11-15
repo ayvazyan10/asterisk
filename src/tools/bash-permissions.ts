@@ -27,52 +27,66 @@ export interface PolicyInput {
 }
 
 /**
- * Argument patterns that turn an otherwise read-only command into an
- * arbitrary-execution primitive. Checked against every argument of a command
+ * Options that turn an otherwise read-only command into an execution or
+ * write primitive. Checked against every argument of a command
  * that would otherwise be auto-approved, keyed by binary; `*` applies to all.
  *
  * These exist because "the binary is read-only" is not a property of the
  * binary. `find` deletes with `-delete`, `rg` runs a preprocessor with
  * `--pre`, and `git -c core.pager=… log` runs whatever the pager is.
  */
-const FORBIDDEN_ARGS: Record<string, readonly RegExp[]> = {
-  '*': [/^--?exec(dir)?$/i, /^-{1,2}eval$/i],
-  find: [/^-exec(dir)?$/, /^-ok(dir)?$/, /^-delete$/, /^-fprint/, /^-fls$/],
-  rg: [/^--pre(=|$)/, /^--hostname-bin(=|$)/],
-  grep: [/^--devices(=|$)/],
+const FORBIDDEN_ARGS: Record<string, readonly string[]> = {
+  '*': ['-exec', '--exec', '-execdir', '--execdir', '-eval', '--eval'],
+  find: [
+    '-exec',
+    '-execdir',
+    '-ok',
+    '-okdir',
+    '-delete',
+    '-fprint',
+    '-fprint0',
+    '-fprintf',
+    '-fls',
+  ],
+  rg: ['--pre', '--hostname-bin'],
+  grep: ['--devices'],
   // egrep and fgrep are grep under another name, and the lookup is by the
   // binary as written, so the same guard has to be spelled out for each.
-  egrep: [/^--devices(=|$)/],
-  fgrep: [/^--devices(=|$)/],
+  egrep: ['--devices'],
+  fgrep: ['--devices'],
   git: [
-    /^-c$/,
-    /^--exec-path(=|$)/,
-    /^--ext-diff$/,
-    /^--(upload|receive)-pack(=|$)/,
-    /^-P$/,
+    '-c',
+    '--exec-path',
+    '--ext-diff',
+    '--textconv',
+    '--upload-pack',
+    '--receive-pack',
+    '-P',
     // `git diff --output=FILE` truncates FILE. Every git subcommand on the
     // allowlist is there as a reader; this flag makes any of them a writer.
-    /^--output(=|$)/,
+    '--output',
     // Both hand git configuration it would not otherwise read, and git config
     // names programs to run — core.pager, core.fsmonitor, diff.external. This
     // is the same hole `-c` is already listed for, reached through a file or
     // an environment variable instead of the command line.
-    /^--config-env(=|$)/,
-    /^--git-dir(=|$)/,
+    '--config-env',
+    '--git-dir',
   ],
   sort: [
     // Runs PROG on every temporary spill, so a sort of a large enough file is
     // arbitrary execution: `sort --compress-program=/bin/sh big.txt`.
-    /^--compress-program(=|$)/,
+    '--compress-program',
     // `-o FILE` / `--output=FILE` write the sorted result over FILE.
-    /^-o$/,
-    /^--output(=|$)/,
+    '-o',
+    '--output',
   ],
   // `tree -o FILE` sends the listing to FILE, overwriting it.
-  tree: [/^-o$/, /^--output(=|$)/],
+  tree: ['-o', '--output'],
   // `date -s` / `--set` set the system clock. A clock reader is on the list;
   // a clock writer is not.
-  date: [/^-s$/, /^--set(=|$)/],
+  date: ['-s', '--set'],
+  // `file -C` writes a compiled magic database.
+  file: ['-C', '--compile'],
   ls: [],
 };
 
@@ -137,12 +151,10 @@ const DEFAULT_ALLOW: readonly string[] = [
   'git diff',
   'git show',
   'git blame',
-  'git branch --list',
   'git rev-parse',
   'git ls-files',
   'git shortlog',
   'git describe',
-  'git remote --verbose',
   'node --version',
   'bun --version',
   'npm --version',
@@ -315,10 +327,22 @@ function denyForms(segment: CommandSegment): CommandSegment[] {
 
 /** The first argument that disqualifies this segment, described for a human. */
 function forbiddenArg(segment: CommandSegment): string | null {
-  const patterns = [...(FORBIDDEN_ARGS['*'] ?? []), ...(FORBIDDEN_ARGS[segment.bin] ?? [])];
+  const options = [...(FORBIDDEN_ARGS['*'] ?? []), ...(FORBIDDEN_ARGS[segment.bin] ?? [])];
   for (const arg of segment.args) {
-    for (const pattern of patterns) {
-      if (pattern.test(arg)) return `the argument "${arg}"`;
+    const flag = arg.split('=')[0] as string;
+    for (const option of options) {
+      // Long options may be abbreviated, with an attached or detached value.
+      // Short options may carry a value (-oFILE) or appear in a cluster (-uo).
+      if (
+        arg === option ||
+        (flag.startsWith('--') && flag.length > 2 && option.startsWith(flag)) ||
+        (option.length === 2 &&
+          arg.startsWith('-') &&
+          !arg.startsWith('--') &&
+          arg.slice(1).includes(option[1] as string))
+      ) {
+        return `the argument "${arg}"`;
+      }
     }
   }
   const operand = writtenOperand(segment);

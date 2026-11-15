@@ -3,8 +3,11 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync, openSync, readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { ensureOwnerOnlyDir } from '../utils/fs-safe.ts';
 import { asteriskPaths, ensurePaths } from './paths.ts';
 import {
   clearPid,
@@ -13,7 +16,7 @@ import {
   writePid,
   writePidExclusive,
 } from './pidfile.ts';
-import { PROJECT_ROOT, entrypointPath } from './project-root.ts';
+import { entrypointPath } from './project-root.ts';
 
 function daemonEntry(): string {
   return entrypointPath('daemon');
@@ -34,6 +37,11 @@ export async function start(): Promise<LifecycleResult> {
   }
   if (status.stale) clearPidIfUnchanged(paths.pidFile, status);
 
+  const workspace = resolve(
+    process.env['ASTERISK_WORKSPACE']?.trim() || join(homedir(), 'asterisk-workspace'),
+  );
+  ensureOwnerOnlyDir(workspace);
+
   // Reserve the pidfile before spawning. Checking the status and then spawning
   // left a window in which two `asterisk start` calls both passed the check and
   // both spawned a daemon, orphaning the first one — two bots answering every
@@ -50,8 +58,8 @@ export async function start(): Promise<LifecycleResult> {
   const child = spawn('bun', [daemonEntry()], {
     detached: true,
     stdio: ['ignore', out, err],
-    cwd: PROJECT_ROOT,
-    env: { ...process.env, ASTERISK_DAEMON: '1' },
+    cwd: workspace,
+    env: { ...process.env, ASTERISK_DAEMON: '1', ASTERISK_WORKSPACE: workspace },
   });
   child.unref();
 
