@@ -55,6 +55,9 @@ jobs:
       - name: Test
         run: bun run test
 
+      - name: Bun smoke tests
+        run: bun run test:bun
+
       # The coverage thresholds in vitest.config.ts had never run:
       # @vitest/coverage-v8 was not installed, so --coverage errored out.
       - name: Coverage
