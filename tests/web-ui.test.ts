@@ -463,10 +463,10 @@ describe('the answering chain', () => {
     expect(body).toContain('updates: { provider: draft[0], providerFallback: draft.slice(1) }');
   });
 
-  it('offers the daemon restart inline after a save, since the daemon builds its chain once', () => {
+  it('does not ask for a daemon restart after a save — the daemon re-reads the chain per message', () => {
     const body = functionSource('skyFoot');
-    expect(body).toContain('state.chainSaved && state.status.daemon.running');
-    expect(body).toContain('data-daemon="restart"');
+    expect(body).not.toContain('data-daemon="restart"');
+    expect(functionSource('chainEditor')).toContain('from its next message');
   });
 
   it('reads the connectors count from the status payload, like every other counted tab', () => {

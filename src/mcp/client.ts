@@ -24,8 +24,11 @@ export interface ConnectedMcpServer {
   config: McpServerConfig;
   client: Client;
   remoteTools: RemoteToolDefinition[];
+  ensureConnected(): Promise<void>;
   close(): Promise<void>;
 }
+
+const RECONNECT_BACKOFF_MS = 30_000;
 
 /**
  * Variables a spawned MCP server needs to function at all.
@@ -105,53 +108,67 @@ function authFailure(name: string, e: unknown): Error {
 
 export async function connectMcpServer(config: McpServerConfig): Promise<ConnectedMcpServer> {
   const client = new Client({ name: 'asterisk', version: '0.1.0' }, { capabilities: {} });
+  let disconnected = false;
+  let closed = false;
+  let nextReconnectAt = 0;
+  let reconnecting: Promise<void> | undefined;
+  client.onclose = () => {
+    disconnected = true;
+  };
+  client.onerror = () => {
+    disconnected = true;
+  };
 
-  if (config.transport === 'stdio') {
-    const transport = new StdioClientTransport({
-      command: config.command,
-      args: config.args,
-      env: stdioEnv(config.env),
-    });
-    await client.connect(transport);
-  } else {
-    // A connector (auth: 'oauth') gets a provider that reads the stored token
-    // and lets the SDK refresh it when the endpoint answers 401. It is
-    // deliberately non-interactive: this function runs at startup, inside the
-    // daemon, and from a bot turn, where opening a browser and waiting five
-    // minutes on a consent screen is not an option. A server that needs fresh
-    // consent surfaces as a connect failure naming the command that fixes it.
-    const authProvider =
-      config.auth === 'oauth'
-        ? createConnectorAuthProvider({
-            serverName: config.name,
-            serverUrl: config.url,
-            scopes: config.scopes,
-          })
-        : undefined;
-
-    // `token` is the mode for endpoints whose authorization server offers no
-    // dynamic client registration, so OAuth is closed to us and the user
-    // supplies a token instead. It lives in mcp_credentials rather than in
-    // `headers` — same reason as an OAuth token: headers are exported.
-    const headers =
-      config.auth === 'token'
-        ? { ...config.headers, ...bearerHeader(config.name, config.url) }
-        : config.headers;
-
-    // The SDK's StreamableHTTPClientTransport types `sessionId` as `string |
-    // undefined` while the Transport interface declares it `string`. Under
-    // exactOptionalPropertyTypes that's an incompatibility we resolve at the
-    // boundary; the SDK accepts it at runtime.
-    const transport = new StreamableHTTPClientTransport(new URL(config.url), {
-      requestInit: { headers },
-      ...(authProvider ? { authProvider } : {}),
-    }) as unknown as Parameters<Client['connect']>[0];
-    try {
+  async function connect(): Promise<void> {
+    if (config.transport === 'stdio') {
+      const transport = new StdioClientTransport({
+        command: config.command,
+        args: config.args,
+        env: stdioEnv(config.env),
+      });
       await client.connect(transport);
-    } catch (e) {
-      throw authFailure(config.name, e);
+    } else {
+      // A connector (auth: 'oauth') gets a provider that reads the stored token
+      // and lets the SDK refresh it when the endpoint answers 401. It is
+      // deliberately non-interactive: this function runs at startup, inside the
+      // daemon, and from a bot turn, where opening a browser and waiting five
+      // minutes on a consent screen is not an option. A server that needs fresh
+      // consent surfaces as a connect failure naming the command that fixes it.
+      const authProvider =
+        config.auth === 'oauth'
+          ? createConnectorAuthProvider({
+              serverName: config.name,
+              serverUrl: config.url,
+              scopes: config.scopes,
+            })
+          : undefined;
+
+      // `token` is the mode for endpoints whose authorization server offers no
+      // dynamic client registration, so OAuth is closed to us and the user
+      // supplies a token instead. It lives in mcp_credentials rather than in
+      // `headers` — same reason as an OAuth token: headers are exported.
+      const headers =
+        config.auth === 'token'
+          ? { ...config.headers, ...bearerHeader(config.name, config.url) }
+          : config.headers;
+
+      // The SDK's StreamableHTTPClientTransport types `sessionId` as `string |
+      // undefined` while the Transport interface declares it `string`. Under
+      // exactOptionalPropertyTypes that's an incompatibility we resolve at the
+      // boundary; the SDK accepts it at runtime.
+      const transport = new StreamableHTTPClientTransport(new URL(config.url), {
+        requestInit: { headers },
+        ...(authProvider ? { authProvider } : {}),
+      }) as unknown as Parameters<Client['connect']>[0];
+      try {
+        await client.connect(transport);
+      } catch (e) {
+        throw authFailure(config.name, e);
+      }
     }
   }
+
+  await connect();
 
   let remoteTools: RemoteToolDefinition[] = [];
   if (client.getServerCapabilities()?.tools) {
@@ -172,7 +189,40 @@ export async function connectMcpServer(config: McpServerConfig): Promise<Connect
     config,
     client,
     remoteTools,
+    async ensureConnected() {
+      if (closed) throw new Error(`MCP server ${config.name} is closed`);
+      if (reconnecting) return reconnecting;
+      if (!disconnected) return;
+      const waitMs = nextReconnectAt - Date.now();
+      if (waitMs > 0) {
+        throw new Error(
+          `MCP server ${config.name} disconnected; retry in ${Math.ceil(waitMs / 1000)}s`,
+        );
+      }
+      nextReconnectAt = Date.now() + RECONNECT_BACKOFF_MS;
+      reconnecting = (async () => {
+        // An error need not close the transport. Release it before replacing it.
+        await client.close().catch(() => {});
+        if (closed) throw new Error(`MCP server ${config.name} is closed`);
+        disconnected = false;
+        try {
+          await connect();
+          if (disconnected || closed) throw new Error('connection closed');
+        } catch (e) {
+          disconnected = true;
+          await client.close().catch(() => {});
+          throw new Error(`MCP server ${config.name} reconnect failed: ${(e as Error).message}`);
+        }
+      })();
+      try {
+        await reconnecting;
+      } finally {
+        reconnecting = undefined;
+      }
+    },
     async close() {
+      closed = true;
+      disconnected = true;
       await client.close().catch(() => {});
     },
   };
@@ -205,6 +255,7 @@ export function asLocalTool(server: ConnectedMcpServer, remote: RemoteToolDefini
           },
     async execute(input, opts) {
       try {
+        await server.ensureConnected();
         // The signal lets ESC / /stop cancel the request (and tells the
         // server so) instead of waiting out the SDK's 60s request timeout.
         const res = await server.client.callTool(

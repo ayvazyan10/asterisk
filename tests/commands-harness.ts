@@ -107,6 +107,7 @@ export function fakeServer(name: string, client: Record<string, unknown> = {}): 
     config: { name, transport: 'stdio', command: 'noop', args: [], env: {}, enabled: true },
     client: client as unknown as ConnectedMcpServer['client'],
     remoteTools: [],
+    async ensureConnected() {},
     async close() {},
   };
 }

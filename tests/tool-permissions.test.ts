@@ -57,6 +57,7 @@ function mcpTool(server = 'fake', name = 'send') {
   const connected = {
     config: { name: server },
     client: { callTool },
+    ensureConnected: async () => {},
   } as unknown as ConnectedMcpServer;
   const tool = asLocalTool(connected, {
     name,

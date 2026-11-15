@@ -82,10 +82,8 @@ const state = {
 
   // The backend chain being edited on the home page: an array of provider
   // kinds while the editor is open, null otherwise — see ./app-star.ts.
-  // chainSaved keeps the restart reminder up until the daemon is restarted.
   chainDraft: null,
   chainBusy: false,
-  chainSaved: false,
 };
 
 const $ = (sel) => document.querySelector(sel);

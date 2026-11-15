@@ -19,7 +19,7 @@ import {
 } from '../bots/interrupt.ts';
 import { createBotManager } from '../bots/manager.ts';
 import { intakeVoice } from '../bots/voice-intake.ts';
-import { loadConfig } from '../config/load.ts';
+import { type LoadedConfig, loadConfig } from '../config/load.ts';
 import { createDaemonLogger } from '../daemon/logger.ts';
 import { asteriskPaths, ensurePaths } from '../daemon/paths.ts';
 import { closeDb } from '../db/index.ts';
@@ -38,26 +38,63 @@ const log = createDaemonLogger(paths.daemonLog);
 log.info({ pid: process.pid }, 'asterisk daemon starting');
 
 const loaded = loadConfig();
+let cachedProvider: Provider | undefined;
+let providerFingerprint = '';
 
-function pickProvider(): Provider {
-  const chosen = createProviderChain(loaded);
+function pickProvider(latest: LoadedConfig): Provider {
+  const { config, secrets } = latest;
+  const fingerprint = JSON.stringify({
+    provider: config.provider,
+    providerFallback: config.providerFallback,
+    openaiCompatible: config.openaiCompatible,
+    deepseek: config.deepseek,
+    anthropic: config.anthropic,
+    // Only presence participates: never retain secret values in the fingerprint.
+    secrets: [
+      !!secrets.ASTERISK_OPENAI_API_KEY,
+      !!secrets.DEEPSEEK_API_KEY,
+      !!secrets.ANTHROPIC_API_KEY,
+    ],
+  });
+  if (cachedProvider && fingerprint === providerFingerprint) return cachedProvider;
+
+  const chosen = createProviderChain(latest);
   if (chosen.fallbackReason) {
     log.warn({ reason: chosen.fallbackReason, using: chosen.kind }, 'provider fallback');
   }
+  log.info(
+    { provider: chosen.provider.name },
+    cachedProvider ? 'provider reloaded' : 'provider ready',
+  );
+  cachedProvider = chosen.provider;
+  providerFingerprint = fingerprint;
   return chosen.provider;
 }
 
-const provider = pickProvider();
-log.info({ provider: provider.name }, 'provider ready');
+pickProvider(loaded);
 
+const MCP_STARTUP_TIMEOUT_MS = 15_000;
 const mcp = createMcpManager();
-mcp
+const mcpReady = mcp
   .reload()
   .then((res) => {
     setExtraTools(mcp.tools);
     log.info({ connected: res.connected, failed: res.failed.map((f) => f.name) }, 'mcp servers');
   })
   .catch((e) => log.warn({ err: e }, 'mcp reload failed'));
+let mcpStartupTimer: ReturnType<typeof setTimeout> | undefined;
+await Promise.race([
+  mcpReady,
+  new Promise<void>((resolve) => {
+    mcpStartupTimer = setTimeout(() => {
+      log.warn('mcp startup timed out; remaining servers will connect in the background');
+      resolve();
+    }, MCP_STARTUP_TIMEOUT_MS);
+  }),
+]);
+clearTimeout(mcpStartupTimer);
+// The manager appends tools as each server connects, including after the cap.
+setExtraTools(mcp.tools);
 
 function formatToolStatus(name: string, input: Record<string, unknown>): string {
   // Concise single-line status for streaming bot placeholders. Pick the most
@@ -179,6 +216,9 @@ manager
       const ctrl = new AbortController();
       registerTurn(msg.chatId, ctrl);
       try {
+        // Capture once so another chat's reload cannot change this turn's provider.
+        const latest = loadConfig();
+        const provider = pickProvider(latest);
         log.debug({ chatId: msg.chatId }, 'incoming message');
         const state = stateFor(msg.chatId);
         const sessionId = `bot:${msg.chatId}`;
@@ -244,7 +284,7 @@ manager
         const rules = loadRules();
         const session = { id: sessionId, scope: 'unknown' as const };
         const souls = loadSouls(process.cwd(), session);
-        const cfg = loadConfig().config;
+        const cfg = latest.config;
         const hooks = cfg.hooks;
         // Session-first, same precedence loadSouls already applies above: a
         // chat's own /style choice (if any) wins over the daemon-wide default.
@@ -422,11 +462,13 @@ const scheduler = createScheduler({
   dispatch: async (prompt, source, origin) => {
     let text = 'Scheduled run failed. Please try again.';
     try {
+      const latest = loadConfig();
+      const provider = pickProvider(latest);
       const sched = createAgentState();
       const rules = loadRules();
       const session = { id: `scheduled:${source}`, scope: 'scheduled' as const };
       const souls = loadSouls(process.cwd(), session);
-      const sCfg = loadConfig().config;
+      const sCfg = latest.config;
       const hooks = sCfg.hooks;
       // Same session-aware resolution as the bot-turn path above, mirroring
       // how loadSouls is already applied uniformly to both. In practice a

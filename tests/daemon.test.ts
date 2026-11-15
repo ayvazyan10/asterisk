@@ -11,12 +11,15 @@ import { createAgentState, runAgentTurn } from '../src/agent/loop.ts';
 import type { BotAdapter, Handler, IncomingMessage } from '../src/bots/adapter.ts';
 import type { ImageIntakeResult } from '../src/bots/image-intake.ts';
 import type { VoiceIntakeResult } from '../src/bots/voice-intake.ts';
+import type { LoadedConfig } from '../src/config/load.ts';
 import { logs, start, status, stop } from '../src/daemon/lifecycle.ts';
 import { asteriskPaths } from '../src/daemon/paths.ts';
 import { statusFromPidFile } from '../src/daemon/pidfile.ts';
 import { PROJECT_ROOT, entrypointPath } from '../src/daemon/project-root.ts';
 import type { SchedulerOptions } from '../src/daemon/scheduler.ts';
 import { closeDb } from '../src/db/index.ts';
+import type { McpManager } from '../src/mcp/manager.ts';
+import type { Tool } from '../src/tools/types.ts';
 
 vi.mock('node:os', { spy: true });
 vi.mock('node:child_process', { spy: true });
@@ -139,6 +142,16 @@ describe('daemon dispatch', () => {
   const save = vi.fn();
   const command = vi.fn();
   const send = vi.fn<BotAdapter['sendMessage']>();
+  const startAdapter = vi.fn<BotAdapter['start']>();
+  const createChain = vi.fn((loaded: LoadedConfig) => ({
+    provider: {
+      name: `fake:${loaded.config.provider}:${loaded.config.providerFallback.join(',')}`,
+      send: async () => ({ content: [], stopReason: 'end_turn' as const }),
+    },
+    kind: loaded.config.provider,
+  }));
+  const reloadMcp = vi.fn<McpManager['reload']>();
+  const mcpTools: Tool[] = [];
   const log = { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() };
   let dispatch: SchedulerOptions['dispatch'];
 
@@ -148,6 +161,9 @@ describe('daemon dispatch', () => {
     home = await mkdtemp(join(tmpdir(), 'asterisk-daemon-intake-'));
     vi.stubEnv('ASTERISK_HOME', home);
     vi.stubEnv('ASTERISK_TELEGRAM_BOT_TOKEN', 'fake');
+    for (const key of ['ASTERISK_OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'ANTHROPIC_API_KEY']) {
+      vi.stubEnv(key, '');
+    }
     const { loadConfig, saveConfig } = await import('../src/config/load.ts');
     const { config } = loadConfig();
     config.bots.telegram.enabled = true;
@@ -158,6 +174,11 @@ describe('daemon dispatch', () => {
     image.mockImplementation(async (msg) => ({ kind: 'accepted', text: msg.text, images: [] }));
     runTurn.mockResolvedValue({ finalText: 'reminder result', reason: 'end-turn' });
     send.mockReset().mockResolvedValue(undefined);
+    startAdapter.mockImplementation(async (next) => {
+      handler = next;
+    });
+    reloadMcp.mockReset().mockResolvedValue({ connected: [], failed: [] });
+    mcpTools.length = 0;
     vi.doMock('../src/agent/loop.ts', () => ({
       createAgentState: () => state,
       runAgentTurn: runTurn,
@@ -178,9 +199,7 @@ describe('daemon dispatch', () => {
     vi.doMock('../src/bots/telegram/index.ts', () => ({
       createTelegramAdapter: (): BotAdapter => ({
         name: 'telegram',
-        start: async (next: Handler) => {
-          handler = next;
-        },
+        start: startAdapter,
         stop: async () => {},
         sendMessage: send,
         cancelApprovals: () => 0,
@@ -189,13 +208,13 @@ describe('daemon dispatch', () => {
     await importDaemon();
   });
 
-  async function importDaemon(): Promise<void> {
+  async function importDaemon(whileImporting?: () => Promise<void>): Promise<void> {
     vi.doMock('../src/bots/approval-bridge.ts', () => ({ attachChatApprovals: () => () => {} }));
     vi.doMock('../src/providers/factory.ts', () => ({
-      createProviderChain: () => ({ provider: { name: 'fake' } }),
+      createProviderChain: createChain,
     }));
     vi.doMock('../src/mcp/manager.ts', () => ({
-      createMcpManager: () => ({ tools: [], reload: async () => ({ connected: [], failed: [] }) }),
+      createMcpManager: () => ({ tools: mcpTools, reload: reloadMcp }),
     }));
     vi.doMock('../src/daemon/scheduler.ts', () => ({
       createScheduler: (opts: SchedulerOptions) => {
@@ -210,7 +229,9 @@ describe('daemon dispatch', () => {
     const on = vi.spyOn(process, 'on').mockReturnValue(process);
     vi.useFakeTimers();
     try {
-      await import('../src/entrypoints/daemon.ts');
+      const importing = import('../src/entrypoints/daemon.ts');
+      if (whileImporting) await whileImporting();
+      await importing;
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -249,6 +270,182 @@ describe('daemon dispatch', () => {
     });
     return { promise, resolve };
   }
+
+  it.each(['provider', 'providerFallback'] as const)(
+    'rebuilds the chain once when the stored %s changes between bot turns',
+    async (setting) => {
+      await handler(message('first'));
+      const original = runTurn.mock.calls[0]?.[0];
+      const { loadConfig, saveConfig } = await import('../src/config/load.ts');
+      const { config } = loadConfig();
+      if (setting === 'provider') config.provider = 'anthropic';
+      else config.providerFallback = ['anthropic'];
+      saveConfig(config);
+
+      await handler(message('second'));
+      await handler(message('third'));
+      expect(createChain).toHaveBeenCalledTimes(2);
+      const rebuilt = createChain.mock.results[1]?.value.provider;
+      expect(rebuilt).toBeDefined();
+      expect(rebuilt).not.toBe(original);
+      expect(runTurn.mock.calls.map(([provider]) => provider)).toEqual([
+        original,
+        rebuilt,
+        rebuilt,
+      ]);
+      expect(log.info).toHaveBeenCalledWith({ provider: rebuilt?.name }, 'provider reloaded');
+    },
+  );
+
+  it.each(['openaiCompatible', 'deepseek', 'anthropic'] as const)(
+    'reloads %s model and reasoning changes on the next bot turn',
+    async (kind) => {
+      const { loadConfig, saveConfig } = await import('../src/config/load.ts');
+      await handler(message('first'));
+      const { config } = loadConfig();
+      config[kind].model = 'new-model';
+      saveConfig(config);
+      await handler(message('new model'));
+      expect(createChain).toHaveBeenCalledTimes(2);
+      expect(createChain.mock.calls[1]?.[0].config[kind].model).toBe('new-model');
+
+      config[kind].reasoningEffort = 'high';
+      saveConfig(config);
+      await handler(message('new reasoning'));
+      await handler(message('same settings'));
+      expect(createChain).toHaveBeenCalledTimes(3);
+      expect(createChain.mock.calls[2]?.[0].config[kind].reasoningEffort).toBe('high');
+    },
+  );
+
+  it('keeps the same provider after an unrelated setting change', async () => {
+    await handler(message('first'));
+    const { loadConfig, saveConfig } = await import('../src/config/load.ts');
+    const { config } = loadConfig();
+    config.daemon.heartbeatSeconds += 1;
+    saveConfig(config);
+    await handler(message('second'));
+    expect(createChain).toHaveBeenCalledTimes(1);
+    expect(runTurn.mock.calls[1]?.[0]).toBe(runTurn.mock.calls[0]?.[0]);
+  });
+
+  it.each(['ASTERISK_OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'ANTHROPIC_API_KEY'] as const)(
+    'tracks presence of %s without fingerprinting or logging its value',
+    async (key) => {
+      const { saveSecrets } = await import('../src/config/load.ts');
+      await handler(message('first'));
+      saveSecrets({ [key]: 'secret-added' });
+      await handler(message('key added'));
+      expect(createChain).toHaveBeenCalledTimes(2);
+      saveSecrets({ [key]: 'secret-rotated' });
+      await handler(message('key rotated'));
+      expect(createChain).toHaveBeenCalledTimes(2);
+      saveSecrets({ [key]: '' });
+      await handler(message('key removed'));
+      expect(createChain).toHaveBeenCalledTimes(3);
+      expect(JSON.stringify([log.info.mock.calls, log.warn.mock.calls])).not.toContain('secret-');
+    },
+  );
+
+  it('checks for provider changes before scheduled dispatches too', async () => {
+    await dispatch('first', 'cron:first');
+    const original = runTurn.mock.calls[0]?.[0];
+    const { loadConfig, saveConfig } = await import('../src/config/load.ts');
+    const { config } = loadConfig();
+    config.provider = 'anthropic';
+    config.providerFallback = ['openai-compatible'];
+    saveConfig(config);
+    await dispatch('second', 'cron:second');
+    await dispatch('third', 'cron:third');
+    expect(createChain).toHaveBeenCalledTimes(2);
+    expect(runTurn.mock.calls[1]?.[0]).not.toBe(original);
+    expect(runTurn.mock.calls[2]?.[0]).toBe(runTurn.mock.calls[1]?.[0]);
+  });
+
+  it('keeps the captured provider when another chat reloads during an ongoing turn', async () => {
+    const entered = gate();
+    const release = gate();
+    image.mockImplementationOnce(async (msg) => {
+      entered.resolve();
+      await release.promise;
+      return { kind: 'accepted', text: msg.text, images: [] };
+    });
+    const running = handler(message('first'));
+    await entered.promise;
+    try {
+      const { loadConfig, saveConfig } = await import('../src/config/load.ts');
+      const { config } = loadConfig();
+      config.provider = 'anthropic';
+      saveConfig(config);
+      await handler({ ...message('second'), chatId: 'other' });
+    } finally {
+      release.resolve();
+      await running;
+    }
+    expect(createChain).toHaveBeenCalledTimes(2);
+    expect(runTurn.mock.calls[0]?.[0]).toBe(createChain.mock.results[1]?.value.provider);
+    expect(runTurn.mock.calls[1]?.[0]).toBe(createChain.mock.results[0]?.value.provider);
+  });
+
+  it('waits for MCP startup before accepting bot messages and clears the startup timer', async () => {
+    vi.resetModules();
+    startAdapter.mockClear();
+    const entered = gate();
+    const release = gate();
+    reloadMcp.mockImplementationOnce(async () => {
+      entered.resolve();
+      await release.promise;
+      return { connected: ['fake'], failed: [] };
+    });
+    await importDaemon(async () => {
+      await entered.promise;
+      try {
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(startAdapter).not.toHaveBeenCalled();
+      } finally {
+        release.resolve();
+      }
+    });
+    expect(startAdapter).toHaveBeenCalledOnce();
+    expect(log.warn).not.toHaveBeenCalledWith(expect.stringContaining('startup timed out'));
+  });
+
+  it('starts adapters at the startup cap and exposes tools that finish connecting later', async () => {
+    vi.resetModules();
+    startAdapter.mockClear();
+    const entered = gate();
+    const release = gate();
+    reloadMcp.mockImplementationOnce(async () => {
+      entered.resolve();
+      await release.promise;
+      return { connected: ['late'], failed: [] };
+    });
+    const ready: Tool = {
+      name: 'ready__echo',
+      description: 'ready',
+      input_schema: { type: 'object', properties: {} },
+      execute: async () => ({ output: 'ok', isError: false }),
+    };
+    mcpTools.push(ready);
+    try {
+      await importDaemon(async () => {
+        await entered.promise;
+        await vi.advanceTimersByTimeAsync(14_999);
+        expect(startAdapter).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(startAdapter).toHaveBeenCalledOnce();
+      expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('mcp startup timed out'));
+      const { listTools } = await import('../src/tools/registry.ts');
+      expect(listTools().some((tool) => tool.name === ready.name)).toBe(true);
+      mcpTools.push({ ...ready, name: 'late__echo' });
+      // The shared tool array publishes late connections even while reload is pending.
+      expect(listTools().some((tool) => tool.name === 'late__echo')).toBe(true);
+    } finally {
+      release.resolve();
+      await reloadMcp.mock.results[1]?.value;
+    }
+  });
 
   it('delivers the full scheduled result once to its origin and keeps the scheduled session', async () => {
     const finalText = 'A reminder with **formatting**. '.repeat(20);

@@ -37,19 +37,27 @@ export function createMcpManager(): McpManager {
     async reload() {
       await disconnectAll();
       const enabled = loadConfig().config.mcpServers.filter((s: McpServerConfig) => s.enabled);
+      const servers = state.servers;
       const connected: string[] = [];
       const failed: { name: string; error: string }[] = [];
 
-      for (const cfg of enabled) {
-        try {
-          const server = await connectMcpServer(cfg);
-          state.servers.push(server);
-          for (const r of server.remoteTools) state.tools.push(asLocalTool(server, r));
-          connected.push(`${cfg.name} (${server.remoteTools.length} tools)`);
-        } catch (e) {
-          failed.push({ name: cfg.name, error: (e as Error).message });
-        }
-      }
+      await Promise.allSettled(
+        enabled.map(async (cfg) => {
+          try {
+            const server = await connectMcpServer(cfg);
+            // A startup connection can finish after shutdown or a later reload.
+            if (state.servers !== servers) {
+              await server.close();
+              return;
+            }
+            state.servers.push(server);
+            for (const r of server.remoteTools) state.tools.push(asLocalTool(server, r));
+            connected.push(`${cfg.name} (${server.remoteTools.length} tools)`);
+          } catch (e) {
+            failed.push({ name: cfg.name, error: (e as Error).message });
+          }
+        }),
+      );
       return { connected, failed };
     },
     async shutdown() {

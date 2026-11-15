@@ -163,24 +163,15 @@ function answeringChain() {
   '</section>';
 }
 
-/**
- * Under the chart: the way into the editor, or — straight after a save while
- * the daemon runs — the reminder that the daemon still holds the old chain.
- * It builds its provider once, at start, so a restart is what applies it.
- */
+/** Under the chart: the way into the editor. The daemon re-reads the chain
+ *  before each message, so a saved order needs no restart. */
 function skyFoot() {
-  const stale = state.chainSaved && state.status.daemon.running;
-  return '<div class="sky-foot' + (stale ? ' sky-foot-notice' : '') + '">' +
-    (stale
-      ? '<span class="form-hint" role="status">Order saved. The running daemon keeps the old one until it restarts.</span>' +
-        '<div class="sky-foot-actions">' +
-          ui.btn('Restart daemon', { size: 'sm', variant: 'default', attrs: ' data-daemon="restart"' }) +
-        '</div>'
-      : '<span class="form-hint">Models and endpoints are in Settings.</span>' +
-        '<div class="sky-foot-actions">' +
-          ui.btn('Backend settings', { size: 'sm', variant: 'ghost', attrs: ' data-tab="settings"' }) +
-          ui.btn('Edit order', { size: 'sm', attrs: ' data-chain="edit"' }) +
-        '</div>') +
+  return '<div class="sky-foot">' +
+    '<span class="form-hint">Models and endpoints are in Settings.</span>' +
+    '<div class="sky-foot-actions">' +
+      ui.btn('Backend settings', { size: 'sm', variant: 'ghost', attrs: ' data-tab="settings"' }) +
+      ui.btn('Edit order', { size: 'sm', attrs: ' data-chain="edit"' }) +
+    '</div>' +
   '</div>';
 }
 
@@ -262,9 +253,7 @@ function chainEditor(draft) {
         '</div>'
       : '') +
     '<div class="chain-edit-foot">' +
-      '<span class="form-hint">' + (state.status.daemon.running
-        ? 'The daemon reads this order when it starts, so restart it after saving.'
-        : 'The daemon will use this order the next time it starts.') + '</span>' +
+      '<span class="form-hint">The daemon uses the new order from its next message.</span>' +
       '<div class="sky-foot-actions">' +
         ui.btn('Cancel', { size: 'sm', variant: 'ghost', attrs: ' data-chain="cancel"' }) +
         ui.btn(state.chainBusy ? 'Saving…' : 'Save order', {
@@ -288,7 +277,6 @@ async function chainAction(action) {
   const [verb, kind] = action.split(':');
   if (verb === 'edit') {
     state.chainDraft = chainOf(state.status).map((e) => e.provider);
-    state.chainSaved = false;
     render();
     return focusFirst(['#chain-edit-title']);
   }
@@ -328,13 +316,12 @@ async function saveChain() {
   state.chainBusy = false;
   if (ok) {
     state.chainDraft = null;
-    state.chainSaved = true;
     state.dirty.delete('provider');
     toast('Backend order saved', 'good');
     await Promise.all([loadStatus(), loadSettings()]);
   }
   render();
-  focusFirst(ok ? ['[data-daemon="restart"]', '[data-chain="edit"]'] : ['[data-chain="save"]']);
+  focusFirst(ok ? ['[data-chain="edit"]'] : ['[data-chain="save"]']);
 }
 
 /**

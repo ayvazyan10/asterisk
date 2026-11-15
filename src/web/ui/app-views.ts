@@ -741,8 +741,6 @@ document.addEventListener('click', async (ev) => {
 
   if (d.daemon) {
     const ok = await guard(() => api('/daemon/' + d.daemon, { method: 'POST' }));
-    // A start, stop or restart means the next daemon reads the saved order.
-    if (ok && ok.ok) state.chainSaved = false;
     if (ok) toast(ok.message, ok.ok ? 'good' : 'bad');
     await loadStatus(); return render();
   }
