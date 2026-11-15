@@ -14,18 +14,21 @@
 // The first draft of this module unified them on the grounds that refusing
 // `/tmp` to `Write` merely pushed the agent toward `Bash`, which could do it
 // anyway. That reasoning was wrong. `touch /tmp/x` is not on the read-only
-// allowlist, so the Bash route costs a consent prompt; `Write` costs nothing.
+// allowlist, so the Bash route costs a consent prompt; an ordinary `Write`
+// costs nothing.
 // Granting the file tools `/tmp` would not have removed an inconsistency, it
 // would have removed the approval step that stood in the way — so the shell
 // keeps its scratch space and the file tools stay bounded by what the user
 // actually named.
 //
-// Two things this deliberately does not do:
+// Consent for protected writes and secret reads is checked by the registry's
+// execution wrapper, using the path classification below. Ordinary workspace
+// writes still need no approval; this module also keeps their writable set.
 //
-//   * It does not restrict reading. The sandbox does not either — it confines
-//     what a command can change, not what it can see — and a read policy that
-//     disagreed with the sandbox would reintroduce exactly the split this
-//     module exists to remove.
+// Two things the writable-set check deliberately does not do:
+//
+//   * It does not confine reading. Read and Bash separately require consent
+//     before reading the Asterisk home, which can contain secrets.
 //   * It does not make the in-process tools as safe as the sandboxed ones.
 //     A path check is a check; bubblewrap is a kernel boundary. Code running
 //     in this process can bypass this function by not calling it. What is
@@ -40,9 +43,12 @@
 // this process, as the note above says. `resolvesInside` is the answer, shared
 // with the panel's content and skills endpoints, which had the same hole.
 
-import { resolve, sep } from 'node:path';
+import { homedir } from 'node:os';
+import { join, resolve, sep } from 'node:path';
 
 import { loadConfig } from '../config/load.ts';
+import { asteriskPaths } from '../daemon/paths.ts';
+import { PROJECT_ROOT } from '../daemon/project-root.ts';
 import { resolveWriteTarget, resolvesInside } from '../utils/fs-safe.ts';
 import { normaliseWritablePaths } from './sandbox-profiles.ts';
 import { workspaceRoot } from './workspace.ts';
@@ -97,6 +103,28 @@ export function isWritablePath(
   roots: readonly string[] = writablePaths(),
 ): boolean {
   return roots.some((root) => absPath === root || absPath.startsWith(root + sep));
+}
+
+/** Includes the default home even with an override: it can still hold secrets.
+ *  Check both the spelling and the destination, including dangling symlinks. */
+export function isAsteriskHomePath(rawPath: string): boolean {
+  const abs = resolve(rawPath);
+  const roots = [resolve(asteriskPaths().root), join(homedir(), '.asterisk')];
+  return isWritablePath(abs, roots) || roots.some((root) => resolvesInside(root, abs));
+}
+
+/** Sensitive write targets require consent even inside a writable workspace. */
+export function protectedWriteReason(rawPath: string): string | null {
+  const abs = resolve(rawPath);
+  const paths = [abs, resolveWriteTarget(abs)];
+  if (paths.some((path) => /(?:^|\/)\.git\/(?:config$|hooks(?:\/|$))/.test(path))) {
+    return 'Git configuration and hooks can execute commands';
+  }
+  if (isAsteriskHomePath(abs)) return 'the Asterisk home holds secrets and permission grants';
+  if (isWritablePath(abs, [PROJECT_ROOT]) || resolvesInside(PROJECT_ROOT, abs)) {
+    return 'the Asterisk install directory contains the running assistant';
+  }
+  return null;
 }
 
 /**

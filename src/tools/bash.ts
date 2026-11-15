@@ -1,11 +1,12 @@
 // Bash tool — runs shell commands via execa with a 60s default timeout.
 // Reference: https://github.com/sindresorhus/execa
 //
-// Commands pass a permission gate first (bash-gate.ts): read-only commands
-// run straight through, anything else needs the user to approve it. See
+// Commands pass a permission gate first (bash-gate.ts): ordinary allowlisted
+// reads run straight through; secret reads and other commands need consent. See
 // bash-permissions.ts for what that does and, importantly, does not promise.
 
 import { execa } from 'execa';
+import { SECRET_KEYS } from '../config/schema.ts';
 import { authoriseBashCommand } from './bash-gate.ts';
 import { checkBashSafety } from './bash-safety.ts';
 import { confineBashCommand } from './bash-sandbox.ts';
@@ -100,7 +101,21 @@ export const bashTool: Tool = {
     opts?.signal?.addEventListener('abort', killOnAbort, { once: true });
 
     try {
+      // Keep ordinary shell configuration, but never hand the assistant's
+      // credentials to model-directed children. Hooks are user-configured and
+      // trusted; their runner deliberately keeps the full environment.
+      const env = { ...process.env };
+      for (const key of Object.keys(env)) {
+        if (
+          SECRET_KEYS.some((secret) => secret === key) ||
+          /(_API_KEY|_TOKEN|_SECRET|PASSWORD)$/i.test(key)
+        ) {
+          delete env[key];
+        }
+      }
       const child = execa(confined.file, confined.args, {
+        env,
+        extendEnv: false,
         timeout: timeoutMs,
         reject: false,
         all: true,

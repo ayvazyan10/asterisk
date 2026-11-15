@@ -1,4 +1,4 @@
-// `/permissions` — inspect and edit the Bash permission boundary.
+// `/permissions` — inspect tool consent, including Bash, network and MCP grants.
 //
 // Grants made by answering "allow always" at a prompt land in the database,
 // where nothing else would show them. A security control the user cannot
@@ -18,7 +18,7 @@ function summary(): string {
   const granted = listGrantedRules(getDb());
 
   const lines = [
-    `Permissions · Bash · mode ${p.mode} · unattended runs ${p.headless}`,
+    `Permissions · tools · mode ${p.mode} · unattended runs ${p.headless}`,
     '',
     'A consent boundary, not a sandbox — an approved command runs with your',
     'full privileges. What it buys is that nothing runs unreviewed.',
@@ -120,7 +120,7 @@ function revokePicker(): ListSpec | string {
     onPick: (value: string) => {
       if (value === '*') {
         revokeAllRules(getDb());
-        return 'Revoked every remembered rule. Those commands will prompt again.';
+        return 'Revoked every remembered rule. Those actions will prompt again.';
       }
       revokeRule(getDb(), value);
       return `Revoked "${value}". It will prompt again next time.`;
@@ -130,7 +130,7 @@ function revokePicker(): ListSpec | string {
 
 export const permissionsCommand: SlashCommand = {
   name: '/permissions',
-  description: 'Inspect and edit what the Bash tool may run without asking',
+  description: 'Inspect and edit which tool actions may run without asking',
   usage: '/permissions [allow <rule>|deny <rule>|revoke [rule]|builtin]',
   execute(_ctx, args) {
     const trimmed = args.trim();

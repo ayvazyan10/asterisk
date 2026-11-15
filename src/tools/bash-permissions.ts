@@ -9,7 +9,11 @@
 // chained command is judged segment by segment: `git status && rm -rf ~`
 // needs approval because `rm` does, even though `git status` is allowlisted.
 
+import { resolve } from 'node:path';
+import { resolveWriteTarget } from '../utils/fs-safe.ts';
+import { expandHome } from '../utils/path.ts';
 import { type CommandSegment, parseCommand } from './command-parse.ts';
+import { isAsteriskHomePath, protectedWriteReason } from './write-policy.ts';
 
 export type PermissionMode = 'ask' | 'allowlist' | 'unrestricted';
 
@@ -207,6 +211,9 @@ export function evaluateCommand(command: string, input: PolicyInput): Permission
 
   const allow = [...DEFAULT_ALLOW, ...input.allow];
   for (const segment of parsed.segments) {
+    const secret = secretRead(segment);
+    if (secret) return refuse(`"${segment.raw}" ${secret}`);
+
     const rule = matchingRule(segment, allow);
     if (!rule) return refuse(`"${segment.raw}" is not on the allowlist`);
 
@@ -217,6 +224,33 @@ export function evaluateCommand(command: string, input: PolicyInput): Permission
   }
 
   return { action: 'allow', reason: 'every part of the command is allowlisted' };
+}
+
+/** Secret access is never covered by an ordinary read-only or remembered
+ *  binary rule. Expansions and redirections already require consent above. */
+function secretRead(segment: CommandSegment): string | null {
+  for (const form of denyForms(segment)) {
+    if (
+      form.bin === 'env' ||
+      form.bin === 'printenv' ||
+      form.bin === 'set' ||
+      (form.bin === 'jq' && form.args.some((arg) => /\benv\b|\$ENV\b/.test(arg))) ||
+      (form.bin === 'export' && form.args.some((arg) => /^-[^-]*p/.test(arg))) ||
+      (form.bin === 'declare' && form.args.some((arg) => /^-[^-]*x/.test(arg)))
+    ) {
+      return 'can dump environment variables';
+    }
+  }
+  for (const arg of segment.args) {
+    // Include option values such as grep --file=PATH and jq --from-file=PATH.
+    const value = arg.startsWith('-') && arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg;
+    const path = resolve(expandHome(value));
+    if (isAsteriskHomePath(path)) return 'reads the Asterisk home, which can contain secrets';
+    if ([path, resolveWriteTarget(path)].some((p) => /^\/proc\/[^/]+\/environ$/.test(p))) {
+      return 'reads a process environment';
+    }
+  }
+  return null;
 }
 
 /**
@@ -273,7 +307,11 @@ function suggestRule(segment: CommandSegment): string[] {
  * must not hand approval to `./git`, which is a file the agent can create.
  */
 export function ruleMatches(rule: string, segment: CommandSegment): boolean {
-  const words = rule.trim().split(/\s+/).filter(Boolean);
+  // These grants share the table, not the shell matcher. A local executable
+  // named `mcp:server/tool` must not inherit an MCP grant.
+  const trimmed = rule.trim();
+  if (trimmed.startsWith('mcp:') || trimmed.startsWith('network:')) return false;
+  const words = trimmed.split(/\s+/).filter(Boolean);
   if (words.length === 0) return false;
   const argv = [segment.bin, ...segment.args];
   if (words.length > argv.length) return false;
@@ -346,7 +384,9 @@ function forbiddenArg(segment: CommandSegment): string | null {
     }
   }
   const operand = writtenOperand(segment);
-  return operand === null ? null : `"${operand}" as an output file`;
+  if (operand === null) return null;
+  const protectedReason = protectedWriteReason(expandHome(operand));
+  return `"${operand}" as an output file${protectedReason ? ` (${protectedReason})` : ''}`;
 }
 
 /** The operand past this binary's read-only limit, if it has one. */

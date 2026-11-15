@@ -192,6 +192,7 @@ export function asLocalTool(server: ConnectedMcpServer, remote: RemoteToolDefini
     // Namespace the tool name so two MCP servers can each expose a tool
     // called `search` without colliding.
     name: `${server.config.name}__${remote.name}`,
+    permissionRule: `mcp:${encodeURIComponent(server.config.name)}/${encodeURIComponent(remote.name)}`,
     description:
       remote.description ?? `MCP tool from ${server.config.name} (no description provided)`,
     input_schema:

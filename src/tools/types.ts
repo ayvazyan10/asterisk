@@ -10,8 +10,11 @@ export interface ToolExecuteOptions {
 export interface Tool {
   name: string;
   description: string;
+  /** Exact remembered grant for an MCP server/tool pair, set by its adapter.
+   *  The registry checks it before forwarding execution to the server. */
+  permissionRule?: string;
   /** Set when the tool can legitimately spend minutes waiting on a person —
-   *  AskUserQuestion, or Bash pausing for approval. The agent loop's default
+   *  AskUserQuestion, or a tool pausing for approval. The agent loop's default
    *  120s deadline exists to stop runaway work, and a human reading a prompt
    *  is not runaway work; without this flag the loop kills the tool before the
    *  answer can arrive. Interactive tools must enforce their own bound, since

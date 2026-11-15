@@ -1,4 +1,4 @@
-// The REPL as the user drives it: the Bash approval prompt, AskUserQuestion,
+// The REPL as the user drives it: tool approval prompts, AskUserQuestion,
 // and the collapsed tool output that Ctrl+O reveals.
 //
 // The emitter halves of approval/ask are covered in bash-gate.test.ts and
@@ -378,8 +378,12 @@ describe('tool output collapsing and Ctrl+O', () => {
     h.write('read it');
     await flush();
     await press(h, KEY.enter);
+    // The fixture is in ASTERISK_HOME: Read now asks through the same UI as
+    // Bash. Approve it before exercising the resulting transcript.
+    await waitFor(h, (f) => f.includes('Approve this command?'), 'Read approval');
+    expect(h.lastFrame()).toContain(path);
+    await press(h, KEY.enter);
     await waitFor(h, (f) => f.includes('Read →'), 'tool result', 15_000);
-    void path;
   }
 
   function readThenAnswer(path: string): Provider {

@@ -395,6 +395,12 @@ describe('policy — modes and rule precedence', () => {
     expect(decide('npm test', { allow: ['npm test'] }).action).toBe('allow');
   });
 
+  it('does not interpret MCP or network grants as Bash rules', () => {
+    for (const rule of ['mcp:fake/send', 'network:https://example.com']) {
+      expect(decide(rule, { allow: [rule] }).action).toBe('ask');
+    }
+  });
+
   it('a user rule does not leak to a sibling subcommand', () => {
     expect(decide('npm publish', { allow: ['npm test'] }).action).toBe('ask');
   });
@@ -407,6 +413,37 @@ describe('policy — modes and rule precedence', () => {
     const d = decide('git status; rm -rf ~');
     expect(d.action).toBe('ask');
     expect(d.reason).toContain('rm -rf ~');
+  });
+});
+
+describe('policy — secret reads', () => {
+  it.each([
+    'cat ~/.asterisk/secrets.env',
+    'cat ~/.asterisk/key=backup',
+    'grep --file=~/.asterisk/secrets.env README.md',
+    'grep -a sk- ~/.asterisk/asterisk.db',
+    'env',
+    'printenv',
+    'jq -n env',
+    "jq -n '$ENV'",
+    'export -p',
+    'set',
+    'declare -x',
+    'cat /proc/self/environ',
+    'cat /proc/123/environ',
+    'command /usr/bin/env',
+  ])('requires fresh approval for %s, even with a matching allow rule', (command) => {
+    expect(decide(command).action).toBe('ask');
+    expect(
+      decide(command, { allow: [command, ...suggestRules(parseCommand(command).segments)] }).action,
+    ).toBe('ask');
+    expect(decide(command, { mode: 'allowlist' }).action).toBe('deny');
+    expect(decide(command, { mode: 'unrestricted' }).action).toBe('allow');
+  });
+
+  it('still allows ordinary reads and jq filters', () => {
+    expect(decide('cat README.md').action).toBe('allow');
+    expect(decide("jq '.name' package.json").action).toBe('allow');
   });
 });
 

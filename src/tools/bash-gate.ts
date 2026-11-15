@@ -1,9 +1,9 @@
-// Wires the Bash permission policy to its inputs: the stored config, the
-// rules the user has remembered, and whatever UI can show a prompt.
+// Shared tool consent: stored policy, remembered grants and the approval UI.
+// Bash keeps command-level analysis; the registry calls authoriseTool for
+// protected file access, network sends and MCP calls, including from RunCode.
 //
-// Kept separate from bash-permissions.ts so the policy itself stays pure and
-// testable without a database, and separate from bash.ts so the tool body
-// stays about running commands.
+// Command analysis stays testable without a database, and tool bodies stay
+// about their own work rather than how to reach a person.
 
 import { currentSession } from '../agent/context.ts';
 import { loadConfig } from '../config/load.ts';
@@ -11,6 +11,9 @@ import { getDb } from '../db/index.ts';
 import { grantRules, grantedAllowRules } from '../db/permissions.ts';
 import { requestApproval } from './approval.ts';
 import { type PolicyInput, evaluateCommand, suggestRules } from './bash-permissions.ts';
+import { checkOutboundUrl } from './ssrf-guard.ts';
+import type { Tool } from './types.ts';
+import { isAsteriskHomePath, protectedWriteReason } from './write-policy.ts';
 
 export interface GateResult {
   allowed: boolean;
@@ -85,8 +88,69 @@ export async function authoriseBashCommand(
   }
 
   const rules = suggestRules(decision.segments);
+  return approve(command, decision.reason, rules, policy, signal);
+}
+
+/** Non-Bash checks run once, in the registry's execution wrapper. */
+export async function authoriseTool(
+  tool: Tool,
+  input: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<GateResult> {
+  let reason: string | null = null;
+  const rules: string[] = [];
+  const path = typeof input['path'] === 'string' ? input['path'] : '';
+
+  if ((tool.name === 'Write' || tool.name === 'Edit') && path) {
+    reason = protectedWriteReason(path);
+  } else if (tool.name === 'Read' && path && isAsteriskHomePath(path)) {
+    reason = 'the Asterisk home can contain secrets';
+  } else if (tool.name === 'RemoteTrigger' || tool.name === 'PushNotification') {
+    const url =
+      tool.name === 'PushNotification'
+        ? (typeof input['url'] === 'string' && input['url'].trim()) ||
+          process.env['ASTERISK_NOTIFY_URL'] ||
+          ''
+        : typeof input['url'] === 'string'
+          ? input['url']
+          : '';
+    const check = checkOutboundUrl(url);
+    if (check.reason) return { allowed: false, message: `refused: ${check.reason}` };
+    // Freeze the configured webhook too: execution must use the URL approved
+    // here even if its environment setting changes while the prompt is open.
+    input['url'] = url;
+    const origin = new URL(url).origin;
+    rules.push(`network:${origin}`);
+    reason = `sends data to ${origin}`;
+  } else if (tool.permissionRule) {
+    rules.push(tool.permissionRule);
+    reason = `calls MCP tool ${tool.permissionRule.slice('mcp:'.length)}`;
+  }
+
+  if (!reason) return ALLOWED;
+  const policy = resolvePolicy();
+  if (policy.mode === 'unrestricted') return ALLOWED;
+  if (rules.some((rule) => policy.deny.includes(rule))) {
+    return { allowed: false, message: `refused: ${reason} matches a deny rule.` };
+  }
+  if (rules.length > 0 && rules.every((rule) => policy.allow.includes(rule))) return ALLOWED;
+  if (policy.mode === 'allowlist') {
+    return { allowed: false, message: `refused: ${reason} (permissions.mode is allowlist).` };
+  }
+  // Protected paths deliberately have no persistent grant: writes there and
+  // reads of the secret store require a fresh decision every time.
+  return approve(`${tool.name} ${JSON.stringify(input)}`, reason, rules, policy, signal);
+}
+
+async function approve(
+  command: string,
+  reason: string,
+  rules: readonly string[],
+  policy: Resolved,
+  signal?: AbortSignal,
+): Promise<GateResult> {
   const approval = await requestApproval(
-    { command, reason: decision.reason, rules },
+    { command, reason, rules },
     {
       timeoutMs: policy.timeoutMs,
       headless: policy.headless,
@@ -96,7 +160,7 @@ export async function authoriseBashCommand(
 
   if (approval.outcome === 'allow-always') {
     try {
-      grantRules(getDb(), rules);
+      grantRules(getDb(), rules, currentSession().id);
     } catch {
       // The command was approved for this call either way; failing to persist
       // the grant costs the user another prompt next time, nothing worse.
@@ -106,17 +170,17 @@ export async function authoriseBashCommand(
 
   if (approval.outcome === 'allow-once') return ALLOWED;
 
-  return { allowed: false, message: refusalMessage(decision.reason, rules, approval.automatic) };
+  return { allowed: false, message: refusalMessage(reason, rules, approval.automatic) };
 }
 
 function refusalMessage(reason: string, rules: readonly string[], automatic?: boolean): string {
   const quoted = rules.map((r) => `"${r}"`).join(', ');
   if (!automatic) {
-    return `refused by the user: ${reason}. Do not retry this command; ask what to do instead.`;
+    return `refused by the user: ${reason}. Do not retry this action; ask what to do instead.`;
   }
   return [
     `refused: ${reason}, and no one was available to approve it`,
-    '(unattended run — the daemon and the bot bridges have no prompt).',
+    '(unattended run or approval timed out).',
     rules.length > 0
       ? `To allow this, the user can add ${quoted} to permissions.allow — via \`asterisk web\` → Settings, or \`/permissions allow <rule>\` in the REPL.`
       : '',

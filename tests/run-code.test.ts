@@ -419,6 +419,9 @@ describe('RunCode does not route around the permission boundary', () => {
 
   it('still applies the write policy to Write', async () => {
     const outside = join(home, 'escaped.txt');
+    // This target also needs secret-store consent. Approval must not widen
+    // the writable set, so allow it and verify the workspace guard still holds.
+    onApprovalRequest((req) => resolveApproval(req.id, 'allow-once'));
 
     const r = await run(
       `return tool('Write', { path: ${JSON.stringify(outside)}, content: 'x' }).output`,

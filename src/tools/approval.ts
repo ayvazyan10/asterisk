@@ -1,4 +1,4 @@
-// The approval channel — carries a permission request from the Bash tool to
+// The approval channel — carries a permission request from any gated tool to
 // whatever UI is attached, and the answer back.
 //
 // Same shape as ask.ts: subscribers on one side, a pending map keyed by request
@@ -14,7 +14,7 @@
 //     never about the process as a whole.
 //   * The timeout denies rather than allowing, and has to stay under the agent
 //     loop's deadline for the calling tool — past that the loop kills the tool
-//     and the user's answer lands nowhere. Bash is `interactive`, so that
+//     and the user's answer lands nowhere. Gated tools are `interactive`, so that
 //     deadline is loop.ts INTERACTIVE_TOOL_TIMEOUT_MS (15 minutes), not the
 //     120s default.
 //   * An aborted turn denies.
@@ -27,7 +27,7 @@ export interface ApprovalRequest {
   id: string;
   /** Which session raised it — the chat id for bot turns, `repl` locally. */
   sessionId: string;
-  /** The command as the model asked for it. */
+  /** The Bash command or tool call as the model asked for it. */
   command: string;
   /** Why the policy could not decide on its own, in plain language. */
   reason: string;

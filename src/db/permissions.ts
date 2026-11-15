@@ -1,8 +1,8 @@
-// Persistence for Bash rules the user answered "always allow" to.
+// Persistence for tool rules the user answered "always allow" to.
 //
 // These are grants rather than settings, so they live in their own table:
 // each one is revocable on its own and records where it came from. The rule
-// text is the matcher understood by tools/bash-permissions.ts.
+// text is a Bash matcher, an exact `network:<origin>`, or `mcp:<server>/<tool>`.
 
 import type { SqliteDriver } from './driver.ts';
 

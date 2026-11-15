@@ -5,8 +5,9 @@
 // re-implemented here, which is the entire point: `Bash` invoked from a program
 // runs checkBashSafety → authoriseBashCommand → confineBashCommand exactly as
 // it does when the model calls it directly, because it *is* the same call.
-// `Write` and `Edit` reach checkWritable the same way. There is no second path
-// to a tool's behaviour that could drift from the first.
+// The registry wrapper checks protected file access, network sends and MCP
+// grants before executing; Write/Edit also retain checkWritable. There is no
+// second path to a tool's behaviour that could drift from the first.
 //
 // Going through `getTool()` rather than a private table also means Plan Mode
 // keeps working: `listTools()` hides mutating tools while it is on, so a

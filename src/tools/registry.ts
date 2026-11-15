@@ -1,11 +1,14 @@
 // Tool registry — central registration. The built-in set is static; MCP tools
 // can be added at runtime via setExtraTools so the agent loop sees them
 // alongside the built-ins without a special code path.
+// Every dispatched execute goes through the wrapper in listTools — both the
+// agent loop and RunCode resolve here, so non-Bash consent has one entry point.
 
 import { MCP_RESOURCE_TOOLS } from '../mcp/resources.ts';
 import { agentBatchTool } from './agent-batch.ts';
 import { ASK_TOOLS } from './ask.ts';
 import { attachTool } from './attach.ts';
+import { authoriseTool } from './bash-gate.ts';
 import { bashTool } from './bash.ts';
 import { BROWSER_TOOLS } from './browser/tools.ts';
 import { codeIntelTool } from './code-intel.ts';
@@ -25,7 +28,7 @@ import { subAgentTool } from './subagent.ts';
 import { TASK_TOOLS } from './tasks.ts';
 import { toolSearchTool } from './tool-search.ts';
 import { transcribeTool } from './transcribe.ts';
-import type { Tool } from './types.ts';
+import { type Tool, err } from './types.ts';
 import { webFetchTool } from './webfetch.ts';
 import { webSearchTool } from './websearch.ts';
 import { WORKTREE_TOOLS } from './worktree.ts';
@@ -69,8 +72,23 @@ export function setExtraTools(tools: Tool[]): void {
 export function listTools(): Tool[] {
   const all = [...BUILTIN_TOOLS, ...extraTools];
   // Plan Mode hides write/mutating tools so the agent can only research.
-  if (isPlanMode()) return all.filter((t) => isReadOnlyToolName(t.name));
-  return all;
+  const visible = isPlanMode() ? all.filter((t) => isReadOnlyToolName(t.name)) : all;
+  return visible.map((tool) => ({
+    ...tool,
+    // The configured approval wait can be up to 600s; the loop must not kill
+    // these calls at its ordinary 120s deadline while a person is answering.
+    interactive:
+      tool.interactive === true ||
+      tool.permissionRule !== undefined ||
+      ['Read', 'Write', 'Edit', 'RemoteTrigger', 'PushNotification'].includes(tool.name),
+    async execute(input, opts) {
+      const checkedInput = { ...input };
+      const gate = await authoriseTool(tool, checkedInput, opts?.signal);
+      if (!gate.allowed) return err(gate.message);
+      if (opts?.signal?.aborted) return err('tool cancelled before it started');
+      return tool.execute(checkedInput, opts);
+    },
+  }));
 }
 
 export function getTool(name: string): Tool | undefined {

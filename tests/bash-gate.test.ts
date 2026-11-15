@@ -8,12 +8,12 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runWithSession } from '../src/agent/context.ts';
 import { permissionsCommand } from '../src/commands/permissions.ts';
 import { loadConfig, saveConfig } from '../src/config/load.ts';
-import { type AsteriskConfig, ConfigSchema } from '../src/config/schema.ts';
+import { type AsteriskConfig, ConfigSchema, SECRET_KEYS } from '../src/config/schema.ts';
 import { closeDb, getDb } from '../src/db/index.ts';
 import { grantedAllowRules } from '../src/db/permissions.ts';
 import {
@@ -45,6 +45,7 @@ beforeEach(async () => {
 afterEach(async () => {
   _resetApprovalsForTesting();
   closeDb();
+  vi.unstubAllEnvs();
   if (prevHome === undefined) delete process.env['ASTERISK_HOME'];
   else process.env['ASTERISK_HOME'] = prevHome;
   await rm(home, { recursive: true, force: true });
@@ -62,6 +63,42 @@ describe('Bash tool with the permission gate', () => {
     expect(asked).toBe(0);
     expect(r.isError).toBe(false);
     expect(r.output).toContain('hello');
+  });
+
+  it('withholds secret variables from Bash children while keeping PATH and HOME', async () => {
+    for (const key of [...SECRET_KEYS, 'FOO_TOKEN', 'CUSTOM_SECRET', 'dbPassword']) {
+      vi.stubEnv(key, 'test-only-secret');
+    }
+    const config = ConfigSchema.parse({});
+    saveConfig({ ...config, sandbox: { ...config.sandbox, mode: 'off' } });
+    onApprovalRequest((req) => resolveApproval(req.id, 'allow-once'));
+    const keys = [...SECRET_KEYS, 'FOO_TOKEN', 'CUSTOM_SECRET', 'dbPassword'];
+    const variables = keys.map((key) => `"\${${key}-unset}"`).join(' ');
+    const result = await bashTool.execute({
+      command: `printf '%s\\n' ${variables} "$PATH" "$HOME"`,
+    });
+    expect(result.isError).toBe(false);
+    const values = result.output
+      .replace(/^exit=0\n/, '')
+      .trimEnd()
+      .split('\n');
+    expect(values.slice(0, keys.length)).toEqual(keys.map(() => 'unset'));
+    expect(values[keys.length]).toBeTruthy(); // PATH
+    expect(values[keys.length + 1]).toBe(process.env['HOME']);
+    expect(process.env['FOO_TOKEN']).toBe('test-only-secret');
+  });
+
+  it('asks before reading a custom ASTERISK_HOME despite a remembered cat rule', async () => {
+    withPermissions({ allow: ['cat'] });
+    const seen: string[] = [];
+    onApprovalRequest((req) => {
+      seen.push(req.command);
+      resolveApproval(req.id, 'deny');
+    });
+    const command = `cat ${home}/secrets.env`;
+    const result = await bashTool.execute({ command });
+    expect(result.isError).toBe(true);
+    expect(seen).toEqual([command]);
   });
 
   it('refuses an unattended command and never executes it', async () => {
